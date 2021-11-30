@@ -9,9 +9,10 @@ type StateType int32
 
 // StateType 服务状态枚举值
 const (
-	ST_INITED  = 0 // 初始化状态
-	ST_RUNNING = 1 // 运行状态
-	ST_CLOSE   = 2 // 关闭状态
+	ST_UNKNOWN = 0 // 未知状态
+	ST_INITED  = 1 // 初始化状态
+	ST_RUNNING = 2 // 运行状态
+	ST_CLOSE   = 3 // 关闭状态
 )
 
 // ErrorType 错误类型
@@ -83,6 +84,7 @@ type IServer interface {
 	Stop()
 
 	/* ------------------------ 事件 ------------------------ */
+
 	SetConnectedEvent(handler ConnectedHandler)
 	SetDisconnectedEvent(handler DisconnectedHandler)
 	SetPrevRunEvent(handler PrevRunHandler)
@@ -98,20 +100,48 @@ type IServer interface {
 
 // IConn 会话接口
 type IConn interface {
-	Set(conn interface{})
-	Reset()
+
+	/* ------------------------ 属性 ------------------------ */
+
+	// RemoteAddr 获取远端地址
 	RemoteAddr() net.Addr
+
+	// LocalAddr 获取本端地址
 	LocalAddr() net.Addr
+
+	// RecvSeq 获取接收序列
 	RecvSeq() uint32
+
+	// SendSeq 获取发送序列
 	SendSeq() uint32
 
-	Close()
-	Write(data []byte, sync ...bool) error
+	// SetUserData 设置用户数据
 	SetUserData(userData interface{})
+
+	// GetUserData 获取用户数据
 	GetUserData() interface{}
+
+	/* ------------------------ 方法 ------------------------ */
+
+	// Set 设置会话
+	Set(conn interface{}) bool
+
+	// Reset 重置会话
+	Reset()
+
+	// Close 关闭会话
+	Close()
+
+	// Write 发送数据
+	Write(data []byte, sync ...bool) error
 }
 
+// IProcessor 处理器接口
 type IProcessor interface {
+	// OnProcess 消息处理
+	//  @c:      发送消息的连接对象
+	//  @data:   发送的消息
+	//  @return: 成功返回nil, 否则返回相应错误, 当返回错误时, 连接对象将会断开并重置
 	OnProcess(c IConn, data []byte) error
 }
 

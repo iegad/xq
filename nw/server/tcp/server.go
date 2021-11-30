@@ -12,13 +12,14 @@ import (
 	"github.com/iegad/xq/nw/server"
 )
 
+// Server tcp 服务端
 type Server struct {
-	state       int32
-	maxConn     int32
-	currentConn int32
-	timeout     time.Duration
-	listener    *net.TCPListener
-	processor   server.IProcessor
+	state       int32             // 当前状态
+	maxConn     int32             // 最大连接数
+	currentConn int32             // 当前连接数
+	timeout     time.Duration     // 超时, 会话读超时
+	listener    *net.TCPListener  // 监听对象
+	processor   server.IProcessor // 处理机
 
 	connectedHandler    server.ConnectedHandler
 	disconnectedHandler server.DisconnectedHandler
@@ -30,10 +31,13 @@ type Server struct {
 	encodeHandler       server.EncodeHandler
 	decodeHandler       server.DecodeHandler
 
-	wg sync.WaitGroup
+	wg sync.WaitGroup // 协程控制
 }
 
+// NewServer tcp.Server构造函数
 func NewServer(processor server.IProcessor, option *server.Option) (server.IServer, error) {
+
+	// step 1: 入参检查
 	if reflect.ValueOf(processor).IsNil() {
 		return nil, server.ErrProcNil
 	}
@@ -50,10 +54,15 @@ func NewServer(processor server.IProcessor, option *server.Option) (server.IServ
 		return nil, server.ErrOptMaxConn
 	}
 
+	if option.MaxConn == 0 {
+		option.MaxConn = nw.DEFAULT_MAX_CONN
+	}
+
 	if option.Timeout < 0 {
 		return nil, server.ErrOptTimeout
 	}
 
+	// step 2: 构建监听对象
 	addr, err := net.ResolveTCPAddr(nw.PROTOCOL_TCP, option.Host)
 	if err != nil {
 		return nil, err
@@ -64,6 +73,7 @@ func NewServer(processor server.IProcessor, option *server.Option) (server.IServ
 		return nil, err
 	}
 
+	// step 3: 构建服务对象
 	return &Server{
 		maxConn:   option.MaxConn,
 		timeout:   time.Duration(option.Timeout) * time.Second,
@@ -72,6 +82,8 @@ func NewServer(processor server.IProcessor, option *server.Option) (server.IServ
 		state:     int32(server.ST_INITED),
 	}, nil
 }
+
+/* --------------------------------- 属性 --------------------------------- */
 
 func (this_ *Server) Host() net.Addr {
 	if this_.listener == nil {
@@ -92,6 +104,8 @@ func (this_ *Server) CurrentConn() int32 {
 func (this_ *Server) State() server.StateType {
 	return server.StateType(atomic.LoadInt32(&this_.state))
 }
+
+/* --------------------------------- 事件 --------------------------------- */
 
 func (this_ *Server) SetConnectedEvent(handler server.ConnectedHandler) {
 	this_.connectedHandler = handler
@@ -129,8 +143,13 @@ func (this_ *Server) SetDecodeEvent(handler server.DecodeHandler) {
 	this_.decodeHandler = handler
 }
 
+/* --------------------------------- 方法 --------------------------------- */
+
+// Run 运行服务
 func (this_ *Server) Run() {
 	this_.wg.Add(int(this_.maxConn))
+
+	// step 1: 触发前置运行事件
 	if this_.prevRunHandler != nil {
 		err := this_.prevRunHandler(this_)
 		if err != nil {
@@ -138,30 +157,39 @@ func (this_ *Server) Run() {
 		}
 	}
 
+	// step 2: 开启工作协程
 	for i := int32(0); i < this_.maxConn; i++ {
 		go this_._run(this_.listener)
 	}
 
+	// step 3: 设置运行状态
 	atomic.StoreInt32(&this_.state, int32(server.ST_RUNNING))
 
+	// step 4: 触发后置运行事件
 	if this_.postRunHandler != nil {
 		this_.postRunHandler(this_)
 	}
 
+	// step 5: 挂起, 直到工作协程正常退出
 	this_.wg.Wait()
 }
 
+// Stop 停止服务
 func (this_ *Server) Stop() {
+
+	// step 1: 触发前置停止事件
 	if this_.prevStopHandler != nil {
 		this_.prevStopHandler(this_)
 	}
 
+	// step 2: 停止服务
 	this_.wg.Add(1)
 	if this_.listener != nil {
 		atomic.StoreInt32(&this_.state, int32(server.ST_CLOSE))
 		this_.listener.Close()
 	}
 
+	// step 3: 触发后置停止事件
 	if this_.postStopHandler != nil {
 		this_.postStopHandler(this_)
 	}
@@ -169,6 +197,7 @@ func (this_ *Server) Stop() {
 	this_.wg.Done()
 }
 
+// handleConn 会话处理
 func (this_ *Server) handleConn(c *conn) {
 	var (
 		err  error
@@ -201,6 +230,7 @@ func (this_ *Server) handleConn(c *conn) {
 	}
 }
 
+// _run 工作协程
 func (this_ *Server) _run(l *net.TCPListener) {
 	var (
 		c    = newConn(this_)
@@ -209,6 +239,7 @@ func (this_ *Server) _run(l *net.TCPListener) {
 	)
 
 	for {
+		// step 1: 接收连接对象
 		conn, err = l.AcceptTCP()
 		if err != nil {
 			if nerr, ok := err.(net.Error); ok && nerr.Temporary() {
@@ -220,6 +251,9 @@ func (this_ *Server) _run(l *net.TCPListener) {
 					this_.errorHandler(server.ET_SERVER, this_, err)
 				}
 			}
+
+			// 当出现错误时, 退出工作协程
+			// 只有当listener 出现异常或服务被关闭时才会退出工作协程
 			break
 		}
 
@@ -227,6 +261,7 @@ func (this_ *Server) _run(l *net.TCPListener) {
 			continue
 		}
 
+		// step 2: 设置会话
 		c.Set(conn)
 
 		if this_.connectedHandler != nil {
@@ -237,6 +272,7 @@ func (this_ *Server) _run(l *net.TCPListener) {
 			}
 		}
 
+		// step 3: 处理会话
 		atomic.AddInt32(&this_.currentConn, 1)
 		this_.handleConn(c)
 		atomic.AddInt32(&this_.currentConn, -1)
@@ -245,6 +281,7 @@ func (this_ *Server) _run(l *net.TCPListener) {
 			this_.disconnectedHandler(c)
 		}
 
+		// step 4: 当会话结束时, 重置会话
 		c.Reset()
 	}
 
