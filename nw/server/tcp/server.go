@@ -13,11 +13,12 @@ import (
 )
 
 type Server struct {
-	state     int32
-	maxConn   int
-	timeout   time.Duration
-	listener  *net.TCPListener
-	processor server.IProcessor
+	state       int32
+	maxConn     int32
+	currentConn int32
+	timeout     time.Duration
+	listener    *net.TCPListener
+	processor   server.IProcessor
 
 	connectedHandler    server.ConnectedHandler
 	disconnectedHandler server.DisconnectedHandler
@@ -72,12 +73,20 @@ func NewServer(processor server.IProcessor, option *server.Option) (server.IServ
 	}, nil
 }
 
-func (this_ *Server) Host() string {
-	return this_.listener.Addr().String()
+func (this_ *Server) Host() net.Addr {
+	if this_.listener == nil {
+		return nil
+	}
+
+	return this_.listener.Addr()
 }
 
-func (this_ *Server) MaxConn() int {
+func (this_ *Server) MaxConn() int32 {
 	return this_.maxConn
+}
+
+func (this_ *Server) CurrentConn() int32 {
+	return atomic.LoadInt32(&this_.currentConn)
 }
 
 func (this_ *Server) State() server.StateType {
@@ -121,7 +130,7 @@ func (this_ *Server) SetDecodeEvent(handler server.DecodeHandler) {
 }
 
 func (this_ *Server) Run() {
-	this_.wg.Add(this_.maxConn)
+	this_.wg.Add(int(this_.maxConn))
 	if this_.prevRunHandler != nil {
 		err := this_.prevRunHandler(this_)
 		if err != nil {
@@ -129,7 +138,7 @@ func (this_ *Server) Run() {
 		}
 	}
 
-	for i := 0; i < this_.maxConn; i++ {
+	for i := int32(0); i < this_.maxConn; i++ {
 		go this_._run(this_.listener)
 	}
 
@@ -228,7 +237,9 @@ func (this_ *Server) _run(l *net.TCPListener) {
 			}
 		}
 
+		atomic.AddInt32(&this_.currentConn, 1)
 		this_.handleConn(c)
+		atomic.AddInt32(&this_.currentConn, -1)
 
 		if this_.disconnectedHandler != nil {
 			this_.disconnectedHandler(c)

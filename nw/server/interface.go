@@ -57,14 +57,32 @@ type EncodeHandler func(c IConn, data []byte) ([]byte, error)
 // DecodeHandler 解码句柄, 用于解密
 type DecodeHandler func(c IConn, data []byte) ([]byte, error)
 
+// IServer 服务接口
 type IServer interface {
-	Host() string
-	MaxConn() int
+
+	/* ------------------------ 属性 ------------------------ */
+
+	// Host 服务端地址
+	Host() net.Addr
+
+	// MaxConn 最大连接数
+	MaxConn() int32
+
+	// CurrentConn 当前连接数
+	CurrentConn() int32
+
+	// State 当前状态
 	State() StateType
 
+	/* ------------------------ 方法 ------------------------ */
+
+	// Run 运行服务
 	Run()
+
+	// Stop 停止服务
 	Stop()
 
+	/* ------------------------ 事件 ------------------------ */
 	SetConnectedEvent(handler ConnectedHandler)
 	SetDisconnectedEvent(handler DisconnectedHandler)
 	SetPrevRunEvent(handler PrevRunHandler)
@@ -78,6 +96,7 @@ type IServer interface {
 	SetDecodeEvent(handler DecodeHandler)
 }
 
+// IConn 会话接口
 type IConn interface {
 	Set(conn interface{})
 	Reset()
