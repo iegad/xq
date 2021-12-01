@@ -3,6 +3,7 @@ package ex
 import (
 	"github.com/iegad/xq/nw"
 	"github.com/iegad/xq/nw/server"
+	"github.com/iegad/xq/nw/server/kcp"
 	"github.com/iegad/xq/nw/server/tcp"
 	"github.com/iegad/xq/nw/server/ws"
 )
@@ -15,6 +16,9 @@ func NewServer(protocol string, processor server.IProcessor, option *server.Opti
 
 	case nw.PROTOCOL_WS:
 		return ws.NewServer(processor, option)
+
+	case nw.PROTOCOL_KCP:
+		return kcp.NewServer(processor, option)
 
 	default:
 		return nil, nw.ErrProtoc

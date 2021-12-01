@@ -15,16 +15,17 @@ type conn struct {
 	sendSeq  uint32          // 发送序列
 	server   *Server         // 所属服务
 	conn     *websocket.Conn // 连接对象
+	cMtx     *sync.Mutex     // 连接对象操作锁
 	userData interface{}     // 用户数据
 	wch      chan []byte     // 异步发送管道
 	done     chan bool       // 停止管道
-	cMtx     sync.Mutex
 }
 
 // newConn conn构造函数
 func newConn(server *Server) *conn {
 	this_ := &conn{
 		server: server,
+		cMtx:   &sync.Mutex{},
 		wch:    make(chan []byte, nw.DEFAULT_CHAN_SIZE),
 		done:   make(chan bool, 1),
 	}

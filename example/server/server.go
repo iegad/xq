@@ -33,7 +33,7 @@ func (this_ *Processor) OnPrevRun(svr server.IServer) error {
 }
 
 func (this_ *Processor) OnPostRun(svr server.IServer) {
-	log.Debug("postRun event: %s is running", svr.Host())
+	log.Debug("postRun event: %v server[%d] is running on %v", protocol, svr.MaxConn(), svr.Host())
 }
 
 func (this_ *Processor) OnPrevStop(svr server.IServer) {

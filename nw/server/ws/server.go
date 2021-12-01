@@ -157,6 +157,8 @@ func (this_ *Server) SetDecodeEvent(handler server.DecodeHandler) {
 
 // Run 运行服务
 func (this_ *Server) Run() {
+	var err error
+
 	this_.wg.Add(int(this_.maxConn))
 
 	for i := int32(0); i < this_.maxConn; i++ {
@@ -170,21 +172,23 @@ func (this_ *Server) Run() {
 	atomic.StoreInt32(&this_.state, server.ST_RUNNING)
 
 	if this_.prevRunHandler != nil {
-		err := this_.prevRunHandler(this_)
+		err = this_.prevRunHandler(this_)
 		if err != nil {
 			return
 		}
 	}
 
-	err := router.RunListener(this_.listener)
-	if err != nil {
-		if server.StateType(atomic.LoadInt32(&this_.state)) != server.ST_CLOSE {
-			if this_.errorHandler != nil {
-				this_.errorHandler(server.ET_SERVER, this_, err)
+	go func() {
+		err = router.RunListener(this_.listener)
+		if err != nil {
+			if server.StateType(atomic.LoadInt32(&this_.state)) != server.ST_CLOSE {
+				if this_.errorHandler != nil {
+					this_.errorHandler(server.ET_SERVER, this_, err)
+				}
+				this_.Stop()
 			}
-			this_.Stop()
 		}
-	}
+	}()
 
 	this_.wg.Wait()
 }
