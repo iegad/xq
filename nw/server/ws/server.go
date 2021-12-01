@@ -210,6 +210,7 @@ func (this_ *Server) Stop() {
 
 // handle http升级为ws协议
 func (this_ *Server) handle(c *gin.Context) {
+
 	if atomic.LoadInt32(&this_.currentConn) >= this_.maxConn {
 		c.Status(http.StatusBadGateway)
 		return

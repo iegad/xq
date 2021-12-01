@@ -144,8 +144,3 @@ type IProcessor interface {
 	//  @return: 成功返回nil, 否则返回相应错误, 当返回错误时, 连接对象将会断开并重置
 	OnProcess(c IConn, data []byte) error
 }
-
-func New(option *Option) (IServer, error) {
-	// TODO
-	return nil, nil
-}

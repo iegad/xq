@@ -5,9 +5,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/iegad/xq/ex"
 	"github.com/iegad/xq/log"
 	"github.com/iegad/xq/nw/client"
-	"github.com/iegad/xq/nw/client/tcp"
 	"github.com/iegad/xq/utils"
 )
 
@@ -23,7 +23,7 @@ var (
 func _worker(data []byte) {
 	defer wg.Done()
 
-	client, err := tcp.NewClient(&client.Option{
+	client, err := ex.NewClient(protocol, &client.Option{
 		Async:   true,
 		Timeout: 28,
 		Host:    host,

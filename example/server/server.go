@@ -6,9 +6,9 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/iegad/xq/ex"
 	"github.com/iegad/xq/log"
 	"github.com/iegad/xq/nw/server"
-	"github.com/iegad/xq/nw/server/tcp"
 )
 
 type Processor struct {
@@ -75,7 +75,7 @@ func main() {
 
 	proc := &Processor{}
 
-	server, err := tcp.NewServer(proc, &server.Option{
+	server, err := ex.NewServer(protocol, proc, &server.Option{
 		MaxConn: int32(maxConn),
 		Host:    host,
 		Timeout: 30,

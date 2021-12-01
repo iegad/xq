@@ -1,30 +1,30 @@
-package tcp
+package ws
 
 import (
+	"fmt"
 	"net"
 	"sync"
 	"time"
 
+	"github.com/gorilla/websocket"
 	"github.com/iegad/xq/log"
 	"github.com/iegad/xq/nw"
 	"github.com/iegad/xq/nw/client"
-	"github.com/iegad/xq/nw/io"
 )
 
-// Client tcp客户端
 type Client struct {
 	async   bool                 // 异步标识
 	recvSeq uint32               // 接收序列
 	sendSeq uint32               // 发送序列
 	timeout time.Duration        // 超时
-	conn    *net.TCPConn         // 连接对象
+	conn    *websocket.Conn      // 连接对象
 	wg      *sync.WaitGroup      // 异步协程控制
 	encoder client.EncodeHandler // 编码
 	decoder client.DecodeHandler // 解码
 	wch     chan []byte          // 异步发送管道
 }
 
-// NewClient tcp client构造函数
+// NewClient websocket client构造函数
 func NewClient(option *client.Option) (client.IClient, error) {
 
 	// step 1: 入参检查
@@ -40,18 +40,13 @@ func NewClient(option *client.Option) (client.IClient, error) {
 		return nil, client.ErrOptTimo
 	}
 
-	// step 2: 构建tcp连接对象
-	raddr, err := net.ResolveTCPAddr(nw.PROTOCOL_TCP, option.Host)
+	// step 2: 构建 websocket 连接对象
+	conn, _, err := websocket.DefaultDialer.Dial(fmt.Sprintf("ws://%s", option.Host), nil)
 	if err != nil {
 		return nil, err
 	}
 
-	conn, err := net.DialTCP(nw.PROTOCOL_TCP, nil, raddr)
-	if err != nil {
-		return nil, err
-	}
-
-	// step 3: 构建tcp client
+	// step 3: 构建websocket client
 	this_ := &Client{
 		timeout: time.Duration(option.Timeout) * time.Second,
 		conn:    conn,
@@ -119,7 +114,7 @@ func (this_ *Client) Write(data []byte) error {
 		return nil
 	}
 
-	err = io.Writen(this_.conn, data)
+	err = this_.conn.WriteMessage(websocket.BinaryMessage, data)
 	if err != nil {
 		return err
 	}
@@ -136,9 +131,13 @@ func (this_ *Client) Read() ([]byte, error) {
 		}
 	}
 
-	data, err := io.Readn(this_.conn)
+	mt, data, err := this_.conn.ReadMessage()
 	if err != nil {
 		return nil, err
+	}
+
+	if mt != websocket.BinaryMessage {
+		return nil, client.ErrMsgType
 	}
 
 	if this_.decoder != nil {
@@ -170,7 +169,7 @@ func (this_ *Client) _handleWrite() {
 	)
 
 	for data = range this_.wch {
-		err = io.Writen(this_.conn, data)
+		err = this_.conn.WriteMessage(websocket.BinaryMessage, data)
 		if err != nil {
 			log.Error(err)
 			continue
