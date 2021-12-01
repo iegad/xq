@@ -1,6 +1,8 @@
 package main
 
 import (
+	"flag"
+	"sync"
 	"time"
 
 	"github.com/iegad/xq/log"
@@ -9,29 +11,29 @@ import (
 	"github.com/iegad/xq/utils"
 )
 
-const (
-	NTIME = 100000
+var (
+	host     = ""
+	protocol = ""
+	nconn    = 0
+	ntimes   = 0
+	content  = ""
+	wg       = sync.WaitGroup{}
 )
 
-func main() {
-	log.Init()
-	src := "Hello world"
-	data := []byte(src)
+func _worker(data []byte) {
+	defer wg.Done()
 
 	client, err := tcp.NewClient(&client.Option{
 		Async:   true,
 		Timeout: 28,
-		Host:    "127.0.0.1:9090",
+		Host:    host,
 	})
 
 	if err != nil {
 		log.Fatal(err)
 	}
 
-	log.Debug("%s has connected", client.RemoteAddr().String())
-
-	beg := time.Now()
-	for i := 0; i < NTIME; i++ {
+	for i := 0; i < ntimes; i++ {
 		if i != int(client.RecvSeq()) || i != int(client.SendSeq()) {
 			log.Error("序号错误")
 		}
@@ -48,17 +50,37 @@ func main() {
 			break
 		}
 
-		if utils.Bytes2String(rbuf) != src {
+		if utils.Bytes2String(rbuf) != content {
 			log.Error("数据传输异常")
 			break
 		}
 	}
 
-	for client.SendSeq() < NTIME {
+	for client.SendSeq() < uint32(ntimes) {
 	}
 
-	log.Debug("传输%d字节， %d次， 总共耗时: %v", len(data), NTIME, time.Since(beg))
-
 	client.Close()
+}
+
+func main() {
+	flag.StringVar(&host, "h", "127.0.0.1:9090", "host")
+	flag.StringVar(&protocol, "p", "tcp", "protocol")
+	flag.IntVar(&nconn, "n", 10, "number of connection")
+	flag.IntVar(&ntimes, "t", 10000, "number of translate times")
+	flag.StringVar(&content, "c", "Hello world", "content")
+
+	flag.Parse()
+	log.Init()
+
+	data := []byte(content)
+
+	wg.Add(nconn)
+	beg := time.Now()
+	for i := 0; i < nconn; i++ {
+		go _worker(data)
+	}
+
+	wg.Wait()
+	log.Debug("传输 %d字节， %d 个客户端, 每个传输 %d次， 总共耗时: %v", len(data), nconn, ntimes, time.Since(beg))
 	log.Release()
 }

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"flag"
 	"os"
 	"os/signal"
 	"syscall"
@@ -58,14 +59,25 @@ func (this_ *Processor) Decode(c server.IConn, data []byte) ([]byte, error) {
 	return data, nil
 }
 
+var (
+	host     = ""
+	protocol = ""
+	maxConn  = 0
+)
+
 func main() {
 	log.Init()
+
+	flag.StringVar(&host, "h", "127.0.0.1:9090", "host")
+	flag.StringVar(&protocol, "p", "tcp", "protocol")
+	flag.IntVar(&maxConn, "m", 0, "max connection")
+	flag.Parse()
 
 	proc := &Processor{}
 
 	server, err := tcp.NewServer(proc, &server.Option{
-		MaxConn: 100,
-		Host:    ":9090",
+		MaxConn: int32(maxConn),
+		Host:    host,
 		Timeout: 30,
 	})
 

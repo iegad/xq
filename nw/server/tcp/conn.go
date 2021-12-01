@@ -54,18 +54,22 @@ func (this_ *conn) LocalAddr() net.Addr {
 	return this_.conn.LocalAddr()
 }
 
+// RecvSeq 接收序列
 func (this_ *conn) RecvSeq() uint32 {
 	return this_.recvSeq
 }
 
+// SendSeq 发送序列
 func (this_ *conn) SendSeq() uint32 {
 	return this_.sendSeq
 }
 
+// SetUserData 设置用户数据
 func (this_ *conn) SetUserData(userData interface{}) {
 	this_.userData = userData
 }
 
+// GetUserData 获取用户数据
 func (this_ *conn) GetUserData() interface{} {
 	return this_.userData
 }

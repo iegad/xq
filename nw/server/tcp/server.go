@@ -54,12 +54,12 @@ func NewServer(processor server.IProcessor, option *server.Option) (server.IServ
 		return nil, server.ErrOptMaxConn
 	}
 
-	if option.MaxConn == 0 {
-		option.MaxConn = nw.DEFAULT_MAX_CONN
-	}
-
 	if option.Timeout < 0 {
 		return nil, server.ErrOptTimeout
+	}
+
+	if option.MaxConn == 0 {
+		option.MaxConn = nw.DEFAULT_MAX_CONN
 	}
 
 	// step 2: 构建监听对象
@@ -79,7 +79,7 @@ func NewServer(processor server.IProcessor, option *server.Option) (server.IServ
 		timeout:   time.Duration(option.Timeout) * time.Second,
 		listener:  listener,
 		processor: processor,
-		state:     int32(server.ST_INITED),
+		state:     server.ST_INITED,
 	}, nil
 }
 
@@ -211,7 +211,7 @@ func (this_ *Server) handleConn(c *conn) {
 
 		data, err = c.read(this_.timeout)
 		if err != nil {
-			if err != io.EOF && atomic.LoadInt32(&this_.state) != int32(server.ST_CLOSE) {
+			if err != io.EOF && atomic.LoadInt32(&this_.state) != server.ST_CLOSE {
 				if this_.errorHandler != nil {
 					this_.errorHandler(server.ET_CONN, c, err)
 				}

@@ -2,6 +2,9 @@ package client
 
 import "net"
 
+type EncodeHandler func(IClient, []byte) ([]byte, error)
+type DecodeHandler EncodeHandler
+
 type IClient interface {
 	RemoteAddr() net.Addr
 	LocalAddr() net.Addr
@@ -9,7 +12,10 @@ type IClient interface {
 	SendSeq() uint32
 	Async() bool
 
-	Write(data []byte, mt ...int) error
-	Read(mt ...int) ([]byte, error)
+	Write(data []byte) error
+	Read() ([]byte, error)
 	Close()
+
+	SetEncodeEvent(handler EncodeHandler)
+	SetDecodeEvent(handler DecodeHandler)
 }

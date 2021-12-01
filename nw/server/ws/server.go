@@ -1,6 +1,7 @@
 package ws
 
 import (
+	"io"
 	"net"
 	"net/http"
 	"reflect"
@@ -11,20 +12,18 @@ import (
 	"github.com/gin-contrib/cors"
 	"github.com/gin-gonic/gin"
 	"github.com/gorilla/websocket"
-	"github.com/iegad/xq/log"
 	"github.com/iegad/xq/nw"
 	"github.com/iegad/xq/nw/server"
 )
 
 type Server struct {
-	state       int32
-	currentConn int32
-	maxConn     int
-	timeout     time.Duration
-
-	listener  *net.TCPListener
-	processor server.IProcessor
-	uper      *websocket.Upgrader
+	state       int32               // 当前状态
+	maxConn     int32               // 最大连接数
+	currentConn int32               // 当前连接数
+	timeout     time.Duration       // 超时, 会话读超时
+	listener    *net.TCPListener    // 监听对象
+	processor   server.IProcessor   // 处理机
+	uper        *websocket.Upgrader // ws升级
 
 	connectedHandler    server.ConnectedHandler
 	disconnectedHandler server.DisconnectedHandler
@@ -36,11 +35,14 @@ type Server struct {
 	encodeHandler       server.EncodeHandler
 	decodeHandler       server.DecodeHandler
 
-	cch chan *websocket.Conn
-	wg  sync.WaitGroup
+	cch chan *websocket.Conn // 连接管道
+	wg  sync.WaitGroup       // 协程控制
 }
 
+// NewServer tcp.Server构造函数
 func NewServer(processor server.IProcessor, option *server.Option) (server.IServer, error) {
+
+	// step 1: 入参检查
 	if reflect.ValueOf(processor).IsNil() {
 		return nil, server.ErrProcNil
 	}
@@ -65,6 +67,7 @@ func NewServer(processor server.IProcessor, option *server.Option) (server.IServ
 		option.MaxConn = nw.DEFAULT_MAX_CONN
 	}
 
+	// step 2: 构建监听对象
 	gin.SetMode(gin.ReleaseMode)
 	addr, err := net.ResolveTCPAddr(nw.PROTOCOL_TCP, option.Host)
 	if err != nil {
@@ -80,23 +83,39 @@ func NewServer(processor server.IProcessor, option *server.Option) (server.IServ
 		maxConn:   option.MaxConn,
 		timeout:   time.Duration(option.Timeout) * time.Second,
 		listener:  listener,
-		state:     server.ST_INITED,
 		processor: processor,
+		state:     server.ST_INITED,
 		cch:       make(chan *websocket.Conn, nw.DEFAULT_CHAN_SIZE),
+		uper: &websocket.Upgrader{
+			HandshakeTimeout: time.Duration(option.Timeout) * time.Second,
+			CheckOrigin: func(r *http.Request) bool {
+				return true
+			},
+		},
 	}, nil
 }
 
-func (this_ *Server) Host() string {
-	return this_.listener.Addr().String()
+/* --------------------------------- 属性 --------------------------------- */
+
+func (this_ *Server) Host() net.Addr {
+	if this_.listener == nil {
+		return nil
+	}
+	return this_.listener.Addr()
 }
 
-func (this_ *Server) MaxConn() int {
+func (this_ *Server) MaxConn() int32 {
 	return this_.maxConn
 }
 
+func (this_ *Server) CurrentConn() int32 {
+	return atomic.LoadInt32(&this_.currentConn)
+}
 func (this_ *Server) State() server.StateType {
 	return server.StateType(atomic.LoadInt32(&this_.state))
 }
+
+/* --------------------------------- 事件 --------------------------------- */
 
 func (this_ *Server) SetConnectedEvent(handler server.ConnectedHandler) {
 	this_.connectedHandler = handler
@@ -134,17 +153,13 @@ func (this_ *Server) SetDecodeEvent(handler server.DecodeHandler) {
 	this_.decodeHandler = handler
 }
 
+/* --------------------------------- 方法 --------------------------------- */
+
+// Run 运行服务
 func (this_ *Server) Run() {
-	this_.uper = &websocket.Upgrader{
-		HandshakeTimeout: this_.timeout,
-		CheckOrigin: func(r *http.Request) bool {
-			return true
-		},
-	}
+	this_.wg.Add(int(this_.maxConn))
 
-	this_.wg.Add(this_.maxConn)
-
-	for i := 0; i < this_.maxConn; i++ {
+	for i := int32(0); i < this_.maxConn; i++ {
 		go this_._run()
 	}
 
@@ -174,6 +189,7 @@ func (this_ *Server) Run() {
 	this_.wg.Wait()
 }
 
+// Stop 停止服务
 func (this_ *Server) Stop() {
 	if this_.prevStopHandler != nil {
 		this_.prevStopHandler(this_)
@@ -192,8 +208,9 @@ func (this_ *Server) Stop() {
 	this_.wg.Done()
 }
 
+// handle http升级为ws协议
 func (this_ *Server) handle(c *gin.Context) {
-	if int(atomic.LoadInt32(&this_.currentConn)) >= this_.maxConn {
+	if atomic.LoadInt32(&this_.currentConn) >= this_.maxConn {
 		c.Status(http.StatusBadGateway)
 		return
 	}
@@ -207,6 +224,7 @@ func (this_ *Server) handle(c *gin.Context) {
 	this_.cch <- wc
 }
 
+// handleConn 会话处理
 func (this_ *Server) handleConn(c *conn) {
 	var (
 		err  error
@@ -220,8 +238,12 @@ func (this_ *Server) handleConn(c *conn) {
 		}
 
 		data, err = c.read(this_.timeout)
-		if err != nil && server.StateType(atomic.LoadInt32(&this_.state)) != server.ST_CLOSE {
-			log.Error(err)
+		if err != nil {
+			if err != io.EOF && atomic.LoadInt32(&this_.state) != server.ST_CLOSE {
+				if this_.errorHandler != nil {
+					this_.errorHandler(server.ET_CONN, c, err)
+				}
+			}
 			break
 		}
 
@@ -231,7 +253,6 @@ func (this_ *Server) handleConn(c *conn) {
 
 		err = this_.processor.OnProcess(c, data)
 		if err != nil {
-			log.Error(err)
 			break
 		}
 	}
