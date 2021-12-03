@@ -32,6 +32,7 @@ type Server struct {
 	decodeHandler       server.DecodeHandler
 
 	wg sync.WaitGroup // 协程控制
+	cm sync.Map
 }
 
 // NewServer tcp.Server构造函数
@@ -146,14 +147,14 @@ func (this_ *Server) SetDecodeEvent(handler server.DecodeHandler) {
 /* --------------------------------- 方法 --------------------------------- */
 
 // Run 运行服务
-func (this_ *Server) Run() {
+func (this_ *Server) Run() error {
 	this_.wg.Add(int(this_.maxConn))
 
 	// step 1: 触发前置运行事件
 	if this_.prevRunHandler != nil {
 		err := this_.prevRunHandler(this_)
 		if err != nil {
-			return
+			return err
 		}
 	}
 
@@ -172,6 +173,7 @@ func (this_ *Server) Run() {
 
 	// step 5: 挂起, 直到工作协程正常退出
 	this_.wg.Wait()
+	return nil
 }
 
 // Stop 停止服务
@@ -188,6 +190,11 @@ func (this_ *Server) Stop() {
 		atomic.StoreInt32(&this_.state, int32(server.ST_CLOSE))
 		this_.listener.Close()
 	}
+
+	this_.cm.Range(func(k, v interface{}) bool {
+		v.(*conn).Close()
+		return true
+	})
 
 	// step 3: 触发后置停止事件
 	if this_.postStopHandler != nil {
@@ -263,6 +270,7 @@ func (this_ *Server) _run(l *net.TCPListener) {
 
 		// step 2: 设置会话
 		c.Set(conn)
+		this_.cm.Store(c.RemoteAddr().String(), c)
 
 		if this_.connectedHandler != nil {
 			err = this_.connectedHandler(c)
@@ -282,6 +290,7 @@ func (this_ *Server) _run(l *net.TCPListener) {
 		}
 
 		// step 4: 当会话结束时, 重置会话
+		this_.cm.Delete(c.RemoteAddr().String())
 		c.Reset()
 	}
 

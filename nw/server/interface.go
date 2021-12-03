@@ -78,7 +78,7 @@ type IServer interface {
 	/* ------------------------ 方法 ------------------------ */
 
 	// Run 运行服务
-	Run()
+	Run() error
 
 	// Stop 停止服务
 	Stop()

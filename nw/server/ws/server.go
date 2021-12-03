@@ -37,6 +37,7 @@ type Server struct {
 
 	cch chan *websocket.Conn // 连接管道
 	wg  sync.WaitGroup       // 协程控制
+	cm  sync.Map
 }
 
 // NewServer tcp.Server构造函数
@@ -156,7 +157,7 @@ func (this_ *Server) SetDecodeEvent(handler server.DecodeHandler) {
 /* --------------------------------- 方法 --------------------------------- */
 
 // Run 运行服务
-func (this_ *Server) Run() {
+func (this_ *Server) Run() error {
 	var err error
 
 	this_.wg.Add(int(this_.maxConn))
@@ -174,7 +175,7 @@ func (this_ *Server) Run() {
 	if this_.prevRunHandler != nil {
 		err = this_.prevRunHandler(this_)
 		if err != nil {
-			return
+			return err
 		}
 	}
 
@@ -191,6 +192,7 @@ func (this_ *Server) Run() {
 	}()
 
 	this_.wg.Wait()
+	return nil
 }
 
 // Stop 停止服务
@@ -205,6 +207,11 @@ func (this_ *Server) Stop() {
 		this_.listener.Close()
 		close(this_.cch)
 	}
+
+	this_.cm.Range(func(k, v interface{}) bool {
+		v.(*conn).Close()
+		return true
+	})
 
 	if this_.postStopHandler != nil {
 		this_.postStopHandler(this_)
@@ -273,7 +280,9 @@ func (this_ *Server) _run() {
 	)
 
 	for conn = range this_.cch {
+
 		c.Set(conn)
+		this_.cm.Store(c.RemoteAddr().String(), c)
 
 		if this_.connectedHandler != nil {
 			err = this_.connectedHandler(c)
@@ -288,6 +297,9 @@ func (this_ *Server) _run() {
 			this_.disconnectedHandler(c)
 		}
 
+		this_.cm.Delete(c.RemoteAddr().String())
 		c.Reset()
 	}
+
+	this_.wg.Done()
 }

@@ -4,6 +4,7 @@ import (
 	"flag"
 	"os"
 	"os/signal"
+	"sync"
 	"syscall"
 
 	"github.com/iegad/xq/ex"
@@ -41,7 +42,7 @@ func (this_ *Processor) OnPrevStop(svr server.IServer) {
 }
 
 func (this_ *Processor) OnPostStop(svr server.IServer) {
-	log.Exit("postStop event: %s has stopped", svr.Host())
+	log.Debug("postStop event: %s has stopped", svr.Host())
 }
 
 func (this_ *Processor) OnError(et server.ErrorType, obj interface{}, err error) error {
@@ -95,11 +96,15 @@ func main() {
 	done := make(chan os.Signal, 1)
 	signal.Notify(done, syscall.SIGINT)
 
+	wg := &sync.WaitGroup{}
+	wg.Add(1)
 	go func() {
+		defer wg.Done()
 		<-done
 		server.Stop()
 	}()
 
 	server.Run()
+	wg.Wait()
 	log.Release()
 }
