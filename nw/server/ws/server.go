@@ -227,6 +227,8 @@ func (this_ *Server) handle(c *gin.Context) {
 		return
 	}
 
+	atomic.AddInt32(&this_.currentConn, 1)
+
 	wc, err := this_.uper.Upgrade(c.Writer, c.Request, nil)
 	if err != nil {
 		c.Status(http.StatusBadRequest)
@@ -243,7 +245,6 @@ func (this_ *Server) handleConn(c *conn) {
 		data []byte
 	)
 
-	atomic.AddInt32(&this_.currentConn, 1)
 	for {
 		if c.conn == nil {
 			break
