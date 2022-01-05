@@ -47,6 +47,9 @@ func NewClient(option *client.Option) (client.IClient, error) {
 		return nil, err
 	}
 
+	conn.SetNoDelay(1, 10, 2, 1)
+	conn.SetStreamMode(true)
+
 	// step 3: 构建tcp client
 	this_ := &Client{
 		timeout: time.Duration(option.Timeout) * time.Second,

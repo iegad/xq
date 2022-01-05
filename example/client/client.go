@@ -3,6 +3,7 @@ package main
 import (
 	"flag"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/iegad/xq/ex"
@@ -18,6 +19,7 @@ var (
 	ntimes   = 0
 	content  = ""
 	wg       = sync.WaitGroup{}
+	nrecv    = uint32(0)
 )
 
 func _worker(data []byte) {
@@ -54,6 +56,8 @@ func _worker(data []byte) {
 			log.Error("数据传输异常")
 			break
 		}
+
+		atomic.AddUint32(&nrecv, 1)
 	}
 
 	for client.SendSeq() < uint32(ntimes) {
@@ -81,6 +85,6 @@ func main() {
 	}
 
 	wg.Wait()
-	log.Debug("传输 %d字节， %d 个客户端, 每个传输 %d次， 总共耗时: %v", len(data), nconn, ntimes, time.Since(beg))
+	log.Debug("传输 %d字节， %d 个客户端, 每个传输 %d次， 总共传输%d, 总共耗时: %v", len(data), nconn, ntimes, nrecv, time.Since(beg))
 	log.Release()
 }

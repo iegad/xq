@@ -26,11 +26,11 @@ const (
 
 // ConnectedHandler 客户端连接句柄
 //  当有客户端连接成功后触发, 如果返回错误, 将主动断开客户端
-type ConnectedHandler func(c IConn) error
+type ConnectedHandler func(c IConn, grid uint64) error
 
 // DisconnectedHandler 客户端断开连接句柄
 //  当有客户端连接断开后触发
-type DisconnectedHandler func(c IConn)
+type DisconnectedHandler func(c IConn, grid uint64)
 
 // PrevRunHandler 前置服务运行句柄
 //  服务运行前触发, 如果返回错误, 服务将不会运行

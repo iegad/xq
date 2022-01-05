@@ -15,13 +15,13 @@ import (
 type Processor struct {
 }
 
-func (this_ *Processor) OnConnected(c server.IConn) error {
-	log.Debug("connected event: %s has connected", c.RemoteAddr().String())
+func (this_ *Processor) OnConnected(c server.IConn, grid uint64) error {
+	log.Debug("connected event: %s has connected working on %d", c.RemoteAddr().String(), grid)
 	return nil
 }
 
-func (this_ *Processor) OnDisconnect(c server.IConn) {
-	log.Debug("disconnected event: %s has disconnected", c.RemoteAddr().String())
+func (this_ *Processor) OnDisconnect(c server.IConn, grid uint64) {
+	log.Debug("disconnected event: %s has disconnected worked on %d", c.RemoteAddr().String(), grid)
 }
 
 func (this_ *Processor) OnProcess(c server.IConn, data []byte) error {
@@ -29,7 +29,7 @@ func (this_ *Processor) OnProcess(c server.IConn, data []byte) error {
 }
 
 func (this_ *Processor) OnPrevRun(svr server.IServer) error {
-	log.Debug("prevRun event: %s ready to run", svr.Host())
+	log.Debug("prevRun event: %v server[%d] is running on %v", protocol, svr.MaxConn(), svr.Host())
 	return nil
 }
 
@@ -71,7 +71,7 @@ func main() {
 
 	flag.StringVar(&host, "h", "127.0.0.1:9090", "host")
 	flag.StringVar(&protocol, "p", "tcp", "protocol")
-	flag.IntVar(&maxConn, "m", 0, "max connection")
+	flag.IntVar(&maxConn, "m", 100, "max connection")
 	flag.Parse()
 
 	proc := &Processor{}

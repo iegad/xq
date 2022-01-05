@@ -3,6 +3,7 @@ package ws
 import (
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/gorilla/websocket"
@@ -56,7 +57,7 @@ func (this_ *conn) LocalAddr() net.Addr {
 
 // RecvSeq 接收序列
 func (this_ *conn) RecvSeq() uint32 {
-	return this_.recvSeq
+	return atomic.LoadUint32(&this_.recvSeq)
 }
 
 // SendSeq 发送序列
@@ -112,7 +113,6 @@ func (this_ *conn) Write(data []byte, sync ...bool) (err error) {
 		if err != nil {
 			return
 		}
-
 		this_.sendSeq++
 		return
 	}
@@ -182,7 +182,6 @@ func (this_ *conn) _handleWrite() {
 
 	for {
 		select {
-
 		// 写管道数据处理
 		case data = <-this_.wch:
 			err = this_.conn.WriteMessage(websocket.BinaryMessage, data)
@@ -192,7 +191,7 @@ func (this_ *conn) _handleWrite() {
 				}
 				continue
 			}
-			this_.sendSeq++
+			atomic.AddUint32(&this_.sendSeq, 1)
 
 		// 会话关闭处理
 		case <-this_.done:

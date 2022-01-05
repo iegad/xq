@@ -10,6 +10,7 @@ import (
 
 	"github.com/iegad/xq/nw"
 	"github.com/iegad/xq/nw/server"
+	"github.com/iegad/xq/utils"
 )
 
 // Server tcp 服务端
@@ -240,6 +241,7 @@ func (this_ *Server) handleConn(c *conn) {
 // _run 工作协程
 func (this_ *Server) _run(l *net.TCPListener) {
 	var (
+		grid = utils.GetGoroutineID()
 		c    = newConn(this_)
 		conn *net.TCPConn
 		err  error
@@ -270,10 +272,10 @@ func (this_ *Server) _run(l *net.TCPListener) {
 
 		// step 2: 设置会话
 		c.Set(conn)
-		this_.cm.Store(c.RemoteAddr().String(), c)
+		this_.cm.Store(grid, c)
 
 		if this_.connectedHandler != nil {
-			err = this_.connectedHandler(c)
+			err = this_.connectedHandler(c, grid)
 			if err != nil {
 				c.Reset()
 				continue
@@ -282,15 +284,17 @@ func (this_ *Server) _run(l *net.TCPListener) {
 
 		// step 3: 处理会话
 		atomic.AddInt32(&this_.currentConn, 1)
-		this_.handleConn(c)
+		if atomic.LoadInt32(&this_.state) == int32(server.ST_RUNNING) {
+			this_.handleConn(c)
+		}
 		atomic.AddInt32(&this_.currentConn, -1)
 
 		if this_.disconnectedHandler != nil {
-			this_.disconnectedHandler(c)
+			this_.disconnectedHandler(c, grid)
 		}
 
 		// step 4: 当会话结束时, 重置会话
-		this_.cm.Delete(c.RemoteAddr().String())
+		this_.cm.Delete(grid)
 		c.Reset()
 	}
 

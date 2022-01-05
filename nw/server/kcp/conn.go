@@ -156,6 +156,8 @@ func (this_ *conn) newConn(c *kcp.UDPSession) bool {
 		}
 	}
 
+	this_.conn.SetNoDelay(1, 10, 2, 1)
+	this_.conn.SetStreamMode(true)
 	return true
 
 }

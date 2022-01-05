@@ -3,6 +3,7 @@ package tcp
 import (
 	"net"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/iegad/xq/nw"
@@ -62,7 +63,7 @@ func (this_ *conn) RecvSeq() uint32 {
 
 // SendSeq 发送序列
 func (this_ *conn) SendSeq() uint32 {
-	return this_.sendSeq
+	return atomic.LoadUint32(&this_.sendSeq)
 }
 
 // SetUserData 设置用户数据
@@ -156,7 +157,6 @@ func (this_ *conn) newConn(c *net.TCPConn) bool {
 	}
 
 	return true
-
 }
 
 // delete 删除会话的连接对象
@@ -213,7 +213,7 @@ func (this_ *conn) _handleWrite() {
 				}
 				continue
 			}
-			this_.sendSeq++
+			atomic.AddUint32(&this_.sendSeq, 1)
 
 		// 会话关闭处理
 		case <-this_.done:

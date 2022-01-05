@@ -9,36 +9,42 @@ import (
 )
 
 const (
-	HEAD_SIZE        = 4
-	PACK_MAX_SIZE    = math.MaxInt32
-	DEFAULT_MAX_RBUF = 1024 * 1024
-	DEFAULT_MAX_WBUF = 1024 * 512
-	_V_HEAD_KEY      = 0xFAFBFCFD
+	HEAD_SIZE        = 4             // 消息头长度
+	PACK_MAX_SIZE    = math.MaxInt32 // 包最大长度
+	DEFAULT_MAX_RBUF = 1024 * 1024   // 默认读缓冲区, 1M(TCP专用)
+	DEFAULT_MAX_WBUF = 1024 * 512    // 默认写缓冲区, 512K(TCP专用)
+	_V_HEAD_KEY      = 0xFAFBFCFD    // 默认消息头密钥
 )
 
 var (
-	ErrReadHeadSize = errors.New("io.Readn read head size failed")
-	ErrReadDataSize = errors.New("io.Readn invalid data size")
-	ErrReadData     = errors.New("io.Readn read data failed")
+	ErrReadHeadSize  = errors.New("io.Readn read head size failed") // 读取消息头长度时发生错误
+	ErrReadDataSize  = errors.New("io.Readn invalid data size")     // 读取消息体长度时发生错误
+	ErrReadData      = errors.New("io.Readn read data failed")      // 读取消息体时发生错误
+	ErrWriteDataSize = errors.New("io.Writen invalid data size")    // 写入消息头长度时发生错误
+	ErrWriteData     = errors.New("io.Writen write data failed")    // 写入消息时发生错误
 
-	ErrWriteDataSize = errors.New("io.Writen invalid data size")
-	ErrWriteData     = errors.New("io.Writen write data failed")
-
-	_HeadKey = uint32(0)
+	_HeadKey = uint32(0) // 消息密钥
 )
 
+// init 用户初始化密钥
 func init() {
 	tmp := make([]byte, 4)
 	binary.BigEndian.PutUint32(tmp, _V_HEAD_KEY)
 	_HeadKey = binary.BigEndian.Uint32(tmp)
 }
 
+// Readn 读取消息
+//  @params:
+//    c: 客户端连接对象
+//  @returns:
+//    成功返回从客户端连接对象读取的数据, 否则返回相应错误
 func Readn(c net.Conn) ([]byte, error) {
 	var (
 		n   int
 		err error
 	)
 
+	// step 1: 读取消息头
 	hbuf := make([]byte, HEAD_SIZE)
 
 	for {
@@ -57,6 +63,7 @@ func Readn(c net.Conn) ([]byte, error) {
 		return nil, ErrReadHeadSize
 	}
 
+	// step 2: 解析消息头, 消息头只有一个值, 即消息体长度
 	tmp := binary.BigEndian.Uint32(hbuf)
 	hlen := int(^tmp ^ _HeadKey)
 
@@ -72,6 +79,7 @@ func Readn(c net.Conn) ([]byte, error) {
 		return nil, ErrReadDataSize
 	}
 
+	// step 3: 读取消息体部分
 	data := make([]byte, hlen)
 
 	for {
@@ -90,9 +98,16 @@ func Readn(c net.Conn) ([]byte, error) {
 		return nil, ErrReadData
 	}
 
+	// step 4: 只将消息体作为返回值
 	return data, nil
 }
 
+// Writen 发送消息
+//  @params:
+//    c:    客户端连接对象(消息的接收端)
+//    data: 需要发送的消息
+//  @returns:
+//    成功发送返回nil, 否则返回相应错误
 func Writen(c net.Conn, data []byte) error {
 	if data == nil {
 		return nil
