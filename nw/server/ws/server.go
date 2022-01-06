@@ -111,8 +111,13 @@ func (this_ *Server) MaxConn() int32 {
 func (this_ *Server) CurrentConn() int32 {
 	return atomic.LoadInt32(&this_.currentConn)
 }
+
 func (this_ *Server) State() server.StateType {
 	return server.StateType(atomic.LoadInt32(&this_.state))
+}
+
+func (this_ *Server) ConnMap() *sync.Map {
+	return &this_.cm
 }
 
 /* --------------------------------- 事件 --------------------------------- */
@@ -232,7 +237,6 @@ func (this_ *Server) handle(ctx *gin.Context) {
 	conn := newConn(this_)
 	grid := utils.GetGoroutineID()
 	conn.Set(wc)
-	this_.cm.Store(grid, conn)
 
 	if this_.connectedHandler != nil {
 		err = this_.connectedHandler(conn, grid)
@@ -247,9 +251,7 @@ func (this_ *Server) handle(ctx *gin.Context) {
 		this_.disconnectedHandler(conn, grid)
 	}
 
-	this_.cm.Delete(grid)
 	conn.Close()
-
 	atomic.AddInt32(&this_.currentConn, -1)
 }
 

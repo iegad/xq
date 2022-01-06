@@ -103,6 +103,10 @@ func (this_ *Server) State() server.StateType {
 	return server.StateType(atomic.LoadInt32(&this_.state))
 }
 
+func (this_ *Server) ConnMap() *sync.Map {
+	return &this_.cm
+}
+
 /* --------------------------------- 事件 --------------------------------- */
 
 func (this_ *Server) SetConnectedEvent(handler server.ConnectedHandler) {
@@ -268,7 +272,6 @@ func (this_ *Server) _run(l *kcp.Listener) {
 
 		// step 2: 设置会话
 		c.Set(conn)
-		this_.cm.Store(grid, c)
 
 		if this_.connectedHandler != nil {
 			err = this_.connectedHandler(c, grid)
@@ -290,7 +293,6 @@ func (this_ *Server) _run(l *kcp.Listener) {
 		}
 
 		// step 4: 当会话结束时, 重置会话
-		this_.cm.Delete(grid)
 		c.Reset()
 	}
 

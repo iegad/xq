@@ -2,6 +2,7 @@ package server
 
 import (
 	"net"
+	"sync"
 )
 
 // StateType 服务状态类型
@@ -74,6 +75,9 @@ type IServer interface {
 
 	// State 当前状态
 	State() StateType
+
+	// ConnMap 获取连接集合
+	ConnMap() *sync.Map
 
 	/* ------------------------ 方法 ------------------------ */
 
