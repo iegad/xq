@@ -58,25 +58,22 @@ func Init(path ...string) {
 		}
 
 		n = len(path[0])
-
-		if n == 0 {
-			panic("path can not be empty")
-		}
-
-		if path[0][n-1:n] == "/" {
-			logPath = path[0][:n-1]
-		} else {
-			logPath = path[0]
-		}
-
-		_, err := os.Stat(logPath)
-		if err != nil {
-			if os.IsNotExist(err) {
-				err = os.MkdirAll(logPath, 0755)
+		if n > 0 {
+			if path[0][n-1:n] == "/" {
+				logPath = path[0][:n-1]
+			} else {
+				logPath = path[0]
 			}
 
+			_, err := os.Stat(logPath)
 			if err != nil {
-				panic(err)
+				if os.IsNotExist(err) {
+					err = os.MkdirAll(logPath, 0755)
+				}
+
+				if err != nil {
+					panic(err)
+				}
 			}
 		}
 	}

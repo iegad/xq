@@ -172,6 +172,7 @@ func (this_ *Server) Run() error {
 		}
 	}
 
+	this_.wg.Add(1)
 	go func() {
 		err = router.RunListener(this_.listener)
 		if err != nil {
@@ -182,6 +183,7 @@ func (this_ *Server) Run() error {
 				this_.Stop()
 			}
 		}
+		this_.wg.Done()
 	}()
 
 	this_.wg.Wait()
