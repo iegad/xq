@@ -102,15 +102,6 @@ func (this_ *conn) Write(data []byte, sync ...bool) (err error) {
 		}
 	}()
 
-	// step 1: 触发编码
-	if this_.server.encodeHandler != nil {
-		data, err = this_.server.encodeHandler(this_, data)
-		if err != nil {
-			return
-		}
-	}
-
-	// step 2: 是否同步发送
 	if len(sync) > 0 && sync[0] {
 		err = io.Writen(this_.conn, data)
 		if err != nil {
@@ -121,7 +112,6 @@ func (this_ *conn) Write(data []byte, sync ...bool) (err error) {
 		return
 	}
 
-	// step 3: 异步发送
 	this_.wch <- data
 	return
 }
@@ -180,13 +170,6 @@ func (this_ *conn) read(timeout ...time.Duration) ([]byte, error) {
 	data, err := io.Readn(this_.conn)
 	if err != nil {
 		return nil, err
-	}
-
-	if this_.server.decodeHandler != nil {
-		data, err = this_.server.decodeHandler(this_, data)
-		if err != nil {
-			return nil, err
-		}
 	}
 
 	this_.recvSeq++

@@ -52,12 +52,6 @@ type PostStopHandler func(s IServer)
 //  当服务端或会话端产生错误触发
 type ErrorHandler func(et ErrorType, obj interface{}, err error)
 
-// EncodeHandler 编码句柄, 用于加密
-type EncodeHandler func(c IConn, data []byte) ([]byte, error)
-
-// DecodeHandler 解码句柄, 用于解密
-type DecodeHandler func(c IConn, data []byte) ([]byte, error)
-
 // IServer 服务接口
 type IServer interface {
 
@@ -90,9 +84,6 @@ type IServer interface {
 	SetPrevStopEvent(handler PrevStopHandler)
 	SetPostStopEvent(handler PostStopHandler)
 	SetErrorEvent(handler ErrorHandler)
-
-	SetEncodeEvent(handler EncodeHandler)
-	SetDecodeEvent(handler DecodeHandler)
 }
 
 // IConn 会话接口

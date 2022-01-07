@@ -33,8 +33,6 @@ type Server struct {
 	prevStopHandler     server.PrevStopHandler
 	postStopHandler     server.PostStopHandler
 	errorHandler        server.ErrorHandler
-	encodeHandler       server.EncodeHandler
-	decodeHandler       server.DecodeHandler
 
 	wg sync.WaitGroup
 }
@@ -139,14 +137,6 @@ func (this_ *Server) SetPostStopEvent(handler server.PostStopHandler) {
 
 func (this_ *Server) SetErrorEvent(handler server.ErrorHandler) {
 	this_.errorHandler = handler
-}
-
-func (this_ *Server) SetEncodeEvent(handler server.EncodeHandler) {
-	this_.encodeHandler = handler
-}
-
-func (this_ *Server) SetDecodeEvent(handler server.DecodeHandler) {
-	this_.decodeHandler = handler
 }
 
 /* --------------------------------- 方法 --------------------------------- */

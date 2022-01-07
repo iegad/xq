@@ -101,13 +101,6 @@ func (this_ *conn) Write(data []byte, sync ...bool) (err error) {
 		}
 	}()
 
-	if this_.server.encodeHandler != nil {
-		data, err = this_.server.encodeHandler(this_, data)
-		if err != nil {
-			return
-		}
-	}
-
 	if len(sync) > 0 && sync[0] {
 		err = this_.conn.WriteMessage(websocket.BinaryMessage, data)
 		if err != nil {
@@ -160,13 +153,6 @@ func (this_ *conn) read(timeout ...time.Duration) ([]byte, error) {
 
 	if mtype != websocket.BinaryMessage {
 		return nil, server.ErrMsgType
-	}
-
-	if this_.server.decodeHandler != nil {
-		data, err = this_.server.decodeHandler(this_, data)
-		if err != nil {
-			return nil, err
-		}
 	}
 
 	this_.recvSeq++
