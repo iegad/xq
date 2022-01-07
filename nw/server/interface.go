@@ -2,7 +2,6 @@ package server
 
 import (
 	"net"
-	"sync"
 )
 
 // StateType 服务状态类型
@@ -70,14 +69,8 @@ type IServer interface {
 	// MaxConn 最大连接数
 	MaxConn() int32
 
-	// CurrentConn 当前连接数
-	CurrentConn() int32
-
 	// State 当前状态
 	State() StateType
-
-	// ConnMap 获取连接集合
-	ConnMap() *sync.Map
 
 	/* ------------------------ 方法 ------------------------ */
 

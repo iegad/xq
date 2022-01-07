@@ -10,6 +10,7 @@ import (
 	"github.com/iegad/xq/ex"
 	"github.com/iegad/xq/log"
 	"github.com/iegad/xq/nw/server"
+	"github.com/iegad/xq/utils"
 )
 
 type Processor struct {
@@ -25,6 +26,7 @@ func (this_ *Processor) OnDisconnect(c server.IConn, grid uint64) {
 }
 
 func (this_ *Processor) OnProcess(c server.IConn, data []byte) error {
+	log.Debug(utils.Bytes2String(data))
 	return c.Write(data)
 }
 

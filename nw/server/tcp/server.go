@@ -15,12 +15,11 @@ import (
 
 // Server tcp 服务端
 type Server struct {
-	state       int32             // 当前状态
-	maxConn     int32             // 最大连接数
-	currentConn int32             // 当前连接数
-	timeout     time.Duration     // 超时, 会话读超时
-	listener    *net.TCPListener  // 监听对象
-	processor   server.IProcessor // 处理机
+	state     int32             // 当前状态
+	maxConn   int32             // 最大连接数
+	timeout   time.Duration     // 超时, 会话读超时
+	listener  *net.TCPListener  // 监听对象
+	processor server.IProcessor // 处理机
 
 	connectedHandler    server.ConnectedHandler
 	disconnectedHandler server.DisconnectedHandler
@@ -33,7 +32,6 @@ type Server struct {
 	decodeHandler       server.DecodeHandler
 
 	wg sync.WaitGroup // 协程控制
-	cm sync.Map
 }
 
 // NewServer tcp.Server构造函数
@@ -99,16 +97,8 @@ func (this_ *Server) MaxConn() int32 {
 	return this_.maxConn
 }
 
-func (this_ *Server) CurrentConn() int32 {
-	return atomic.LoadInt32(&this_.currentConn)
-}
-
 func (this_ *Server) State() server.StateType {
 	return server.StateType(atomic.LoadInt32(&this_.state))
-}
-
-func (this_ *Server) ConnMap() *sync.Map {
-	return &this_.cm
 }
 
 /* --------------------------------- 事件 --------------------------------- */
@@ -196,11 +186,6 @@ func (this_ *Server) Stop() {
 		this_.listener.Close()
 	}
 
-	this_.cm.Range(func(k, v interface{}) bool {
-		v.(*conn).Close()
-		return true
-	})
-
 	// step 3: 触发后置停止事件
 	if this_.postStopHandler != nil {
 		this_.postStopHandler(this_)
@@ -285,9 +270,7 @@ func (this_ *Server) _run(l *net.TCPListener) {
 		}
 
 		// step 3: 处理会话
-		atomic.AddInt32(&this_.currentConn, 1)
 		this_.handleConn(c)
-		atomic.AddInt32(&this_.currentConn, -1)
 
 		if this_.disconnectedHandler != nil {
 			this_.disconnectedHandler(c, grid)

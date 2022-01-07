@@ -36,7 +36,6 @@ type Server struct {
 	encodeHandler       server.EncodeHandler
 	decodeHandler       server.DecodeHandler
 
-	cm sync.Map
 	wg sync.WaitGroup
 }
 
@@ -108,16 +107,8 @@ func (this_ *Server) MaxConn() int32 {
 	return this_.maxConn
 }
 
-func (this_ *Server) CurrentConn() int32 {
-	return atomic.LoadInt32(&this_.currentConn)
-}
-
 func (this_ *Server) State() server.StateType {
 	return server.StateType(atomic.LoadInt32(&this_.state))
-}
-
-func (this_ *Server) ConnMap() *sync.Map {
-	return &this_.cm
 }
 
 /* --------------------------------- 事件 --------------------------------- */
@@ -206,11 +197,6 @@ func (this_ *Server) Stop() {
 		atomic.StoreInt32(&this_.state, server.ST_CLOSE)
 		this_.listener.Close()
 	}
-
-	this_.cm.Range(func(k, v interface{}) bool {
-		v.(*conn).Close()
-		return true
-	})
 
 	if this_.postStopHandler != nil {
 		this_.postStopHandler(this_)
