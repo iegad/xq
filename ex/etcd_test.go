@@ -5,7 +5,7 @@ import (
 )
 
 func TestEtcdBasic(t *testing.T) {
-	ec, err := NewEtcd([]string{"127.0.0.1:2379"})
+	ec, err := NewEtcdEx([]string{"127.0.0.1:2379"})
 	if err != nil {
 		t.Error(err)
 		return

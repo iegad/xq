@@ -3,6 +3,7 @@ package ex
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"sync/atomic"
@@ -22,6 +23,16 @@ const (
 	EvPUT    = int32(mvccpb.PUT)    // ETCD监听事件, 新增KEY
 	EvDEL    = int32(mvccpb.DELETE) // ETCD监听事件, 删除KEY
 )
+
+var (
+	errEtcdNil = errors.New("etcd config is nil")
+)
+
+type Etcd struct {
+	Hosts []string `json:"hosts" yaml:"hosts"`
+	User  string   `json:"user"  yaml:"user"`
+	Pass  string   `json:"pass"  yaml:"pass"`
+}
 
 // NodePath 节点路径
 type NodePath string
@@ -88,18 +99,27 @@ func ParseToNode(jstr []byte) (*Node, error) {
 	return node, nil
 }
 
-// Etcd 操作封装
-type Etcd struct {
+// EtcdEx 操作封装
+type EtcdEx struct {
 	cli   *v3.Client // etcdv3连接对象
 	flag  int32      // 当前已注册服务数据, 当成功注册服务时, flag加1, 当注册服务失败时, flag将会减1
 	count int32      // 注册服务总数量, 当调用了N次Regist(注册服务)时, count便会加1
-	hosts []string   // etcd服务地址集
+
+	user  string
+	pass  string
+	hosts []string // etcd服务地址集
 }
 
 // NewEtcd ETCD工厂函数
-func NewEtcd(hosts []string) (*Etcd, error) {
-	this_ := &Etcd{
-		hosts: hosts,
+func NewEtcdEx(c *Etcd) (*EtcdEx, error) {
+	if c == nil {
+		return nil, errEtcdNil
+	}
+
+	this_ := &EtcdEx{
+		hosts: c.Hosts,
+		user:  c.User,
+		pass:  c.Pass,
 	}
 
 	err := this_.init()
@@ -110,10 +130,12 @@ func NewEtcd(hosts []string) (*Etcd, error) {
 	return this_, nil
 }
 
-func (this_ *Etcd) init() error {
+func (this_ *EtcdEx) init() error {
 	cli, err := v3.New(v3.Config{
 		Endpoints:   this_.hosts,
 		DialTimeout: _TIMEOUT,
+		Username:    this_.user,
+		Password:    this_.pass,
 	})
 
 	if err != nil {
@@ -124,14 +146,14 @@ func (this_ *Etcd) init() error {
 	return nil
 }
 
-func (this_ *Etcd) Close() {
+func (this_ *EtcdEx) Close() {
 	if this_.cli != nil {
 		this_.cli.Close()
 	}
 }
 
 // Put 写入KV到ETCD中
-func (this_ *Etcd) Put(key, val string) error {
+func (this_ *EtcdEx) Put(key, val string) error {
 	ctx, cancel := context.WithTimeout(context.TODO(), _TIMEOUT)
 	defer cancel()
 
@@ -140,7 +162,7 @@ func (this_ *Etcd) Put(key, val string) error {
 }
 
 // Get 获取KEY的键值对
-func (this_ *Etcd) Get(key string) (map[string]string, error) {
+func (this_ *EtcdEx) Get(key string) (map[string]string, error) {
 	ctx, cancel := context.WithTimeout(context.TODO(), _TIMEOUT)
 	defer cancel()
 
@@ -159,7 +181,7 @@ func (this_ *Etcd) Get(key string) (map[string]string, error) {
 }
 
 // GetKeys 获取key下所有的子KEY
-func (this_ *Etcd) GetKeys(key string) ([]string, error) {
+func (this_ *EtcdEx) GetKeys(key string) ([]string, error) {
 	ctx, cancel := context.WithTimeout(context.TODO(), _TIMEOUT)
 	resp, err := this_.cli.Get(ctx, key, v3.WithPrefix())
 	cancel()
@@ -188,7 +210,7 @@ func (this_ *Etcd) GetKeys(key string) ([]string, error) {
 	return result, nil
 }
 
-func (this_ *Etcd) GetNode(key string) (map[string]*Node, error) {
+func (this_ *EtcdEx) GetNode(key string) (map[string]*Node, error) {
 	ctx, cancel := context.WithTimeout(context.TODO(), _TIMEOUT)
 	resp, err := this_.cli.Get(ctx, key, v3.WithPrefix())
 	cancel()
@@ -211,7 +233,7 @@ func (this_ *Etcd) GetNode(key string) (map[string]*Node, error) {
 }
 
 // Delete 删除KEY
-func (this_ *Etcd) Delete(key string) error {
+func (this_ *EtcdEx) Delete(key string) error {
 	ctx, cancel := context.WithTimeout(context.TODO(), _TIMEOUT)
 	_, err := this_.cli.Delete(ctx, key, v3.WithPrefix())
 	cancel()
@@ -224,7 +246,7 @@ func (this_ *Etcd) Delete(key string) error {
 }
 
 // Exists 判断nodeID是否存在
-func (this_ *Etcd) Exists(nodeID string) (bool, error) {
+func (this_ *EtcdEx) Exists(nodeID string) (bool, error) {
 	keys, err := this_.GetKeys(nodeID)
 	if err != nil {
 		return false, err
@@ -234,7 +256,7 @@ func (this_ *Etcd) Exists(nodeID string) (bool, error) {
 }
 
 // EixstsOne 判断nodeID是否只有一个
-func (this_ *Etcd) ExistsOne(nodeID string) (bool, error) {
+func (this_ *EtcdEx) ExistsOne(nodeID string) (bool, error) {
 	keys, err := this_.GetKeys(nodeID)
 	if err != nil {
 		return false, err
@@ -245,7 +267,7 @@ func (this_ *Etcd) ExistsOne(nodeID string) (bool, error) {
 
 // Regist 注册服务
 //  @有自动重连和重新注册功能
-func (this_ *Etcd) Regist(serv, id, addr string, metaArgs ...interface{}) (string, error) {
+func (this_ *EtcdEx) Regist(serv, id, addr string, metaArgs ...interface{}) (string, error) {
 	var (
 		meta   interface{}
 		e      error
@@ -323,7 +345,7 @@ func (this_ *Etcd) Regist(serv, id, addr string, metaArgs ...interface{}) (strin
 //  @serv: 监听的路径
 //  @cb:   回调
 // PS: 当节点是删除事件时, 回调的第三个参数 node为nil
-func (this_ *Etcd) Watch(serv string, cb func(ev int32, nodePath *NodePath, node *Node)) {
+func (this_ *EtcdEx) Watch(serv string, cb func(ev int32, nodePath *NodePath, node *Node)) {
 	ch := this_.cli.Watch(context.TODO(), serv, v3.WithPrefix())
 	go func() {
 		var (

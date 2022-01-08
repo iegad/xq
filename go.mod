@@ -6,6 +6,8 @@ require (
 	github.com/emirpasic/gods v1.12.0
 	github.com/gin-contrib/cors v1.3.1
 	github.com/gin-gonic/gin v1.7.7
+	github.com/go-redis/redis/v8 v8.11.4
+	github.com/go-sql-driver/mysql v1.6.0
 	github.com/google/uuid v1.3.0
 	github.com/gorilla/websocket v1.4.2
 	github.com/xtaci/kcp-go/v5 v5.6.1
@@ -15,8 +17,10 @@ require (
 )
 
 require (
+	github.com/cespare/xxhash/v2 v2.1.2 // indirect
 	github.com/coreos/go-semver v0.3.0 // indirect
 	github.com/coreos/go-systemd/v22 v22.3.2 // indirect
+	github.com/dgryski/go-rendezvous v0.0.0-20200823014737-9f7001d12a5f // indirect
 	github.com/gin-contrib/sse v0.1.0 // indirect
 	github.com/go-playground/locales v0.14.0 // indirect
 	github.com/go-playground/universal-translator v0.18.0 // indirect
@@ -30,6 +34,8 @@ require (
 	github.com/mattn/go-isatty v0.0.14 // indirect
 	github.com/modern-go/concurrent v0.0.0-20180306012644-bacd9c7ef1dd // indirect
 	github.com/modern-go/reflect2 v1.0.2 // indirect
+	github.com/onsi/ginkgo v1.16.5 // indirect
+	github.com/onsi/gomega v1.17.0 // indirect
 	github.com/pkg/errors v0.9.1 // indirect
 	github.com/templexxx/cpu v0.0.9 // indirect
 	github.com/templexxx/xorsimd v0.4.1 // indirect
