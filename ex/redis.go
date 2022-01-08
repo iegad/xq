@@ -17,6 +17,7 @@ type Redis struct {
 	Host string `json:"host" yaml:"host"`
 	User string `json:"user" yaml:"user"`
 	Pass string `json:"pass" yaml:"pass"`
+	DB   int    `json:"db"   yaml:"db"`
 }
 
 func NewRedis(c *Redis) (*redis.Client, error) {
@@ -28,6 +29,7 @@ func NewRedis(c *Redis) (*redis.Client, error) {
 		Addr:     c.Host,
 		Username: c.User,
 		Password: c.Pass,
+		DB:       c.DB,
 		PoolSize: runtime.NumCPU(),
 	})
 

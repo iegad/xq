@@ -53,10 +53,6 @@ func Init(path ...string) {
 	n := len(path)
 
 	if n > 0 {
-		if n > 1 {
-			panic("path is invalid")
-		}
-
 		n = len(path[0])
 		if n > 0 {
 			if path[0][n-1:n] == "/" {
