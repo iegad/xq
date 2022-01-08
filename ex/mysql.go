@@ -3,6 +3,7 @@ package ex
 import (
 	"database/sql"
 	"errors"
+	"runtime"
 
 	"github.com/go-sql-driver/mysql"
 )
@@ -31,5 +32,12 @@ func NewMysql(c *Mysql) (*sql.DB, error) {
 	config.DBName = c.DB
 	config.Params = map[string]string{"charset": "utf8mb4"}
 
-	return sql.Open("mysql", config.FormatDSN())
+	mc, err := sql.Open("mysql", config.FormatDSN())
+	if err != nil {
+		return nil, err
+	}
+
+	mc.SetMaxOpenConns(runtime.NumCPU())
+
+	return mc, nil
 }
