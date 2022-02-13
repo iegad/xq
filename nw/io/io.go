@@ -6,6 +6,8 @@ import (
 	"io"
 	"math"
 	"net"
+
+	"github.com/iegad/xq/utils"
 )
 
 const (
@@ -23,15 +25,8 @@ var (
 	ErrWriteDataSize = errors.New("io.Writen invalid data size")    // 写入消息头长度时发生错误
 	ErrWriteData     = errors.New("io.Writen write data failed")    // 写入消息时发生错误
 
-	_HeadKey = uint32(0) // 消息密钥
+	_HeadKey = utils.Uint32ToB(_V_HEAD_KEY) // 消息密钥
 )
-
-// init 用户初始化密钥
-func init() {
-	tmp := make([]byte, 4)
-	binary.BigEndian.PutUint32(tmp, _V_HEAD_KEY)
-	_HeadKey = binary.BigEndian.Uint32(tmp)
-}
 
 // Readn 读取消息
 //  @params:
