@@ -60,7 +60,7 @@ func Readn(c net.Conn) ([]byte, error) {
 
 	// step 2: 解析消息头, 消息头只有一个值, 即消息体长度
 	tmp := binary.BigEndian.Uint32(hbuf)
-	hlen := int(^tmp ^ _HeadKey)
+	hlen := int(^(tmp ^ _HeadKey))
 
 	if hlen < 0 {
 		return nil, ErrReadDataSize
@@ -117,7 +117,7 @@ func Writen(c net.Conn, data []byte) error {
 	buflen := HEAD_SIZE + hlen
 	buf := make([]byte, buflen)
 
-	tmp := ^uint32(hlen) ^ _HeadKey
+	tmp := ^(uint32(hlen) ^ _HeadKey)
 	binary.BigEndian.PutUint32(buf[:HEAD_SIZE], tmp)
 
 	copy(buf[HEAD_SIZE:], data)
