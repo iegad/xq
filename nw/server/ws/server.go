@@ -17,6 +17,12 @@ import (
 	"github.com/iegad/xq/utils"
 )
 
+var WebSocketPath = "/"
+
+func SetWebSocketPath(path string) {
+	WebSocketPath = path
+}
+
 type Server struct {
 	state       int32               // 当前状态
 	maxConn     int32               // 最大连接数
@@ -147,7 +153,7 @@ func (this_ *Server) Run() error {
 
 	router := gin.Default()
 	router.Use(cors.Default())
-	router.GET("/", this_.handle)
+	router.GET(WebSocketPath, this_.handle)
 
 	atomic.StoreInt32(&this_.state, server.ST_RUNNING)
 
