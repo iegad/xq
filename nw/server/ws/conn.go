@@ -12,14 +12,13 @@ import (
 )
 
 type conn struct {
-	recvSeq  uint32          // 接收序列
-	sendSeq  uint32          // 发送序列
-	server   *Server         // 所属服务
-	conn     *websocket.Conn // 连接对象
-	cMtx     *sync.Mutex     // 连接对象操作锁
-	userData interface{}     // 用户数据
-	wch      chan []byte     // 异步发送管道
-	done     chan bool       // 停止管道
+	recvSeq uint32          // 接收序列
+	sendSeq uint32          // 发送序列
+	server  *Server         // 所属服务
+	conn    *websocket.Conn // 连接对象
+	cMtx    *sync.Mutex     // 连接对象操作锁
+	wch     chan []byte     // 异步发送管道
+	done    chan bool       // 停止管道
 }
 
 // newConn conn构造函数
@@ -63,16 +62,6 @@ func (this_ *conn) RecvSeq() uint32 {
 // SendSeq 发送序列
 func (this_ *conn) SendSeq() uint32 {
 	return this_.sendSeq
-}
-
-// SetUserData 设置用户数据
-func (this_ *conn) SetUserData(userData interface{}) {
-	this_.userData = userData
-}
-
-// GetUserData 获取用户数据
-func (this_ *conn) GetUserData() interface{} {
-	return this_.userData
 }
 
 /* --------------------------------- 方法 --------------------------------- */

@@ -228,10 +228,6 @@ func (this_ *Server) _run(l *net.TCPListener) {
 		// step 1: 接收连接对象
 		conn, err = l.AcceptTCP()
 		if err != nil {
-			if nerr, ok := err.(net.Error); ok && nerr.Temporary() {
-				continue
-			}
-
 			if atomic.LoadInt32(&this_.state) != int32(server.ST_CLOSE) {
 				if this_.errorHandler != nil {
 					this_.errorHandler(server.ET_SERVER, this_, err)
