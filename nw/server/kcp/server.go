@@ -10,7 +10,6 @@ import (
 
 	"github.com/iegad/xq/nw"
 	"github.com/iegad/xq/nw/server"
-	"github.com/iegad/xq/utils"
 	"github.com/xtaci/kcp-go/v5"
 )
 
@@ -216,7 +215,6 @@ func (this_ *Server) handleConn(c *conn) {
 // _run 工作协程
 func (this_ *Server) _run(l *kcp.Listener) {
 	var (
-		grid = utils.GetGoroutineID()
 		c    = newConn(this_)
 		conn *kcp.UDPSession
 		err  error
@@ -226,10 +224,6 @@ func (this_ *Server) _run(l *kcp.Listener) {
 		// step 1: 接收连接对象
 		conn, err = l.AcceptKCP()
 		if err != nil {
-			if nerr, ok := err.(net.Error); ok && nerr.Temporary() {
-				continue
-			}
-
 			if atomic.LoadInt32(&this_.state) != int32(server.ST_CLOSE) {
 				if this_.errorHandler != nil {
 					this_.errorHandler(server.ET_SERVER, this_, err)
@@ -249,7 +243,7 @@ func (this_ *Server) _run(l *kcp.Listener) {
 		c.Set(conn)
 
 		if this_.connectedHandler != nil {
-			err = this_.connectedHandler(c, grid)
+			err = this_.connectedHandler(c)
 			if err != nil {
 				c.Reset()
 				continue
@@ -260,7 +254,7 @@ func (this_ *Server) _run(l *kcp.Listener) {
 		this_.handleConn(c)
 
 		if this_.disconnectedHandler != nil {
-			this_.disconnectedHandler(c, grid)
+			this_.disconnectedHandler(c)
 		}
 
 		// step 4: 当会话结束时, 重置会话

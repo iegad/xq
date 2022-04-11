@@ -16,13 +16,13 @@ import (
 type Processor struct {
 }
 
-func (this_ *Processor) OnConnected(c server.IConn, grid uint64) error {
-	log.Debug("connected event: %s has connected working on %d", c.RemoteAddr().String(), grid)
+func (this_ *Processor) OnConnected(c server.IConn) error {
+	log.Debug("connected event: %s has connected working on %d", c.RemoteAddr().String())
 	return nil
 }
 
-func (this_ *Processor) OnDisconnect(c server.IConn, grid uint64) {
-	log.Debug("disconnected event: %s has disconnected worked on %d", c.RemoteAddr().String(), grid)
+func (this_ *Processor) OnDisconnect(c server.IConn) {
+	log.Debug("disconnected event: %s has disconnected worked on %d", c.RemoteAddr().String())
 }
 
 func (this_ *Processor) OnProcess(c server.IConn, data []byte) error {

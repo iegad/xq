@@ -14,7 +14,6 @@ import (
 	"github.com/gorilla/websocket"
 	"github.com/iegad/xq/nw"
 	"github.com/iegad/xq/nw/server"
-	"github.com/iegad/xq/utils"
 )
 
 var WebSocketPath = "/"
@@ -217,11 +216,10 @@ func (this_ *Server) handle(ctx *gin.Context) {
 	}
 
 	conn := newConn(this_)
-	grid := utils.GetGoroutineID()
 	conn.Set(wc)
 
 	if this_.connectedHandler != nil {
-		err = this_.connectedHandler(conn, grid)
+		err = this_.connectedHandler(conn)
 		if err != nil {
 			return
 		}
@@ -230,7 +228,7 @@ func (this_ *Server) handle(ctx *gin.Context) {
 	this_.handleConn(conn)
 
 	if this_.disconnectedHandler != nil {
-		this_.disconnectedHandler(conn, grid)
+		this_.disconnectedHandler(conn)
 	}
 
 	conn.Close()

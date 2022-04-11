@@ -10,7 +10,6 @@ import (
 
 	"github.com/iegad/xq/nw"
 	"github.com/iegad/xq/nw/server"
-	"github.com/iegad/xq/utils"
 )
 
 // Server tcp 服务端
@@ -220,7 +219,6 @@ func (this_ *Server) handleConn(c *conn) {
 // _run 工作协程
 func (this_ *Server) _run(l *net.TCPListener) {
 	var (
-		grid = utils.GetGoroutineID()
 		c    = newConn(this_)
 		conn *net.TCPConn
 		err  error
@@ -252,7 +250,7 @@ func (this_ *Server) _run(l *net.TCPListener) {
 		// step 2: 设置会话
 		c.Set(conn)
 		if this_.connectedHandler != nil {
-			err = this_.connectedHandler(c, grid)
+			err = this_.connectedHandler(c)
 			if err != nil {
 				c.Reset()
 				continue
@@ -263,7 +261,7 @@ func (this_ *Server) _run(l *net.TCPListener) {
 		this_.handleConn(c)
 
 		if this_.disconnectedHandler != nil {
-			this_.disconnectedHandler(c, grid)
+			this_.disconnectedHandler(c)
 		}
 
 		// step 4: 当会话结束时, 重置会话
