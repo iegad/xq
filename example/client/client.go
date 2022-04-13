@@ -74,7 +74,6 @@ func main() {
 	flag.StringVar(&content, "c", "Hello world", "content")
 
 	flag.Parse()
-	log.Init()
 
 	data := []byte(content)
 
@@ -86,5 +85,4 @@ func main() {
 
 	wg.Wait()
 	log.Debug("传输 %d字节， %d 个客户端, 每个传输 %d次， 总共传输%d, 总共耗时: %v", len(data), nconn, ntimes, nrecv, time.Since(beg))
-	log.Release()
 }

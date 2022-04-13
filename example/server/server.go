@@ -69,8 +69,6 @@ var (
 )
 
 func main() {
-	log.Init()
-
 	flag.StringVar(&host, "h", "127.0.0.1:9090", "host")
 	flag.StringVar(&protocol, "p", "tcp", "protocol")
 	flag.IntVar(&maxConn, "m", 100, "max connection")
@@ -108,5 +106,4 @@ func main() {
 
 	server.Run()
 	wg.Wait()
-	log.Release()
 }

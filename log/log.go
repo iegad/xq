@@ -4,15 +4,8 @@ import (
 	"fmt"
 	"os"
 	"runtime"
-	"sync"
 	"time"
 )
-
-type logType struct {
-	Level   int
-	Content string
-	F       *os.File
-}
 
 const (
 	levelDebug = iota
@@ -24,8 +17,6 @@ const (
 )
 
 var (
-	inited = false
-
 	logPath = ""
 	lvMap   = map[int]string{
 		levelDebug: "DEBUG",
@@ -38,18 +29,9 @@ var (
 
 	lvfnmap = map[int]string{}
 	lvfmap  = map[int]*os.File{}
-
-	wg  = &sync.WaitGroup{}
-	lch = make(chan *logType, 100)
-
-	ltPool = sync.Pool{
-		New: func() interface{} {
-			return &logType{}
-		},
-	}
 )
 
-func Init(path ...string) {
+func SetPath(path ...string) {
 	n := len(path)
 
 	if n > 0 {
@@ -73,15 +55,6 @@ func Init(path ...string) {
 			}
 		}
 	}
-
-	go _handleLog()
-	wg.Add(1)
-	inited = true
-}
-
-func Release() {
-	close(lch)
-	wg.Wait()
 }
 
 func Debug(args ...interface{}) {
@@ -109,10 +82,6 @@ func Exit(args ...interface{}) {
 }
 
 func base(level int, args ...interface{}) {
-	if !inited {
-		panic("log compotent has not inited")
-	}
-
 	var (
 		_, file, line, _ = runtime.Caller(2)
 		n                = len(args)
@@ -130,18 +99,13 @@ func base(level int, args ...interface{}) {
 	}
 
 	tn := time.Now()
-	lt := ltPool.Get().(*logType)
-	lt.Content = fmt.Sprintf("[%s %s %s:%d]%v\n",
-		lvMap[level], tn.Format("2006-01-02 15:04:05.000000"), file, line, content)
-	lt.Level = level
-	lt.F = getFile(level, tn)
-
-	lch <- lt
+	content = fmt.Sprintf("[%s %s %s:%d]%v", lvMap[level], tn.Format("2006-01-02 15:04:05.000000"), file, line, content)
+	fmt.Fprintln(getFile(level, tn), content)
 }
 
 func getFile(lv int, tn time.Time) *os.File {
 	if len(logPath) == 0 {
-		return nil
+		return os.Stdout
 	}
 
 	fname := fmt.Sprintf("%s/%s.%s", logPath, time.Now().Format("2006-01-02"), lvMap[lv])
@@ -162,31 +126,4 @@ func getFile(lv int, tn time.Time) *os.File {
 	}
 
 	return lvfmap[lv]
-}
-
-func _handleLog() {
-	var lt *logType
-
-	for lt = range lch {
-		if lt.F != nil {
-			fmt.Fprintf(lt.F, lt.Content)
-			if lt.Level > levelDebug {
-				fmt.Printf(lt.Content)
-			}
-		} else {
-			fmt.Printf(lt.Content)
-		}
-
-		if lt.Level == levelFatal {
-			os.Exit(1)
-		}
-
-		if lt.Level == levelExit {
-			os.Exit(0)
-		}
-
-		ltPool.Put(lt)
-	}
-
-	wg.Done()
 }

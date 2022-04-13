@@ -3,8 +3,6 @@ package log
 import "testing"
 
 func TestLog(t *testing.T) {
-	Init()
-
 	Debug("Hello world")
 	Debug("Hello: %s", "iegad")
 
@@ -17,5 +15,5 @@ func TestLog(t *testing.T) {
 	Error("Hello world")
 	Error("Hello: %s", "iegad")
 
-	Release()
+	Fatal("Done....Fatal")
 }
