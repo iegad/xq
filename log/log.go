@@ -75,10 +75,12 @@ func Error(args ...interface{}) {
 
 func Fatal(args ...interface{}) {
 	base(levelFatal, args...)
+	os.Exit(1)
 }
 
 func Exit(args ...interface{}) {
 	base(levelExit, args...)
+	os.Exit(0)
 }
 
 func base(level int, args ...interface{}) {
