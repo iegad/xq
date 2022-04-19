@@ -150,7 +150,7 @@ func (this_ *Server) SetErrorEvent(handler server.ErrorHandler) {
 func (this_ *Server) Run() error {
 	var err error
 
-	router := gin.Default()
+	router := gin.New()
 	router.Use(cors.Default())
 	router.GET(WebSocketPath, this_.handle)
 
