@@ -103,6 +103,8 @@ type IConn interface {
 	// SendSeq 获取发送序列
 	SendSeq() uint32
 
+	SetUserData(any)
+	GetUserData() any
 	/* ------------------------ 方法 ------------------------ */
 
 	// Set 设置会话
