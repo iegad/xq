@@ -102,3 +102,13 @@ func GetLocalAcitveDeviceIPv4() ([]net.IP, error) {
 
 	return res, nil
 }
+
+func CheckTCPService(ip string, port uint16) bool {
+	tmp := fmt.Sprintf("%s:%d", ip, port)
+	c, err := net.Dial("tcp", tmp)
+	if err != nil {
+		return false
+	}
+	c.Close()
+	return true
+}
