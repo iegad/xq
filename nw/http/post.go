@@ -1,12 +1,38 @@
 package http
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io/ioutil"
 	"net/http"
 	"strings"
 )
+
+func PostJSON(u string, params any) ([]byte, int, error) {
+	req, err := json.Marshal(params)
+	if err != nil {
+		return nil, -1, err
+	}
+
+	rsp, err := http.Post(u, "application/json", bytes.NewBuffer(req))
+	if err != nil {
+		return nil, -1, err
+	}
+
+	defer rsp.Body.Close()
+
+	if rsp.StatusCode != http.StatusOK {
+		return nil, rsp.StatusCode, nil
+	}
+
+	body, err := ioutil.ReadAll(rsp.Body)
+	if err != nil {
+		return nil, -1, err
+	}
+
+	return body, rsp.StatusCode, nil
+}
 
 func PostForm(u string, params map[string]interface{}) (map[string]interface{}, int, error) {
 	sb := strings.Builder{}
