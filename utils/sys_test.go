@@ -1,6 +1,8 @@
 package utils
 
-import "testing"
+import (
+	"testing"
+)
 
 func TestSys(t *testing.T) {
 	t.Log(IsLittleEndian)
