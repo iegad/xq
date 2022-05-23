@@ -3,6 +3,7 @@ package ex
 import (
 	"context"
 	"encoding/json"
+	"reflect"
 
 	"github.com/iegad/xq/log"
 	"github.com/iegad/xq/utils"
@@ -27,6 +28,17 @@ func Pb2Bytes(m proto.Message) []byte {
 	}
 
 	return data
+}
+
+func Bytes2Pb[T proto.Message](buf []byte) T {
+	var tmp T
+	res := reflect.New(reflect.TypeOf(tmp).Elem()).Interface().(T)
+	err := proto.Unmarshal(buf, res)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	return res
 }
 
 func GetRealAddr(ctx context.Context) string {
