@@ -4,13 +4,13 @@ import (
 	"sync"
 )
 
-type ObjectPool[T any] struct {
-	pool *sync.Pool
+type opool[T any] struct {
+	pool sync.Pool
 }
 
-func NewObjectPool[T any]() *ObjectPool[T] {
-	return &ObjectPool[T]{
-		pool: &sync.Pool{
+func NewObjectPool[T any]() *opool[T] {
+	return &opool[T]{
+		pool: sync.Pool{
 			New: func() any {
 				return new(T)
 			},
@@ -18,10 +18,10 @@ func NewObjectPool[T any]() *ObjectPool[T] {
 	}
 }
 
-func (this_ *ObjectPool[T]) New() *T {
+func (this_ *opool[T]) Get() *T {
 	return this_.pool.Get().(*T)
 }
 
-func (this_ *ObjectPool[T]) Delete(obj *T) {
+func (this_ *opool[T]) Put(obj *T) {
 	this_.pool.Put(obj)
 }
