@@ -3,13 +3,11 @@ package main
 import (
 	"flag"
 	"sync"
-	"sync/atomic"
 	"time"
 
 	"github.com/iegad/xq/ex"
 	"github.com/iegad/xq/log"
 	"github.com/iegad/xq/nw/client"
-	"github.com/iegad/xq/utils"
 )
 
 var (
@@ -35,33 +33,34 @@ func _worker(data []byte) {
 		log.Fatal(err)
 	}
 
-	for i := 0; i < ntimes; i++ {
-		if i != int(client.RecvSeq()) || i != int(client.SendSeq()) {
-			log.Error("序号错误")
-		}
+	time.Sleep(time.Second * 10)
+	// for i := 0; i < ntimes; i++ {
+	// 	if i != int(client.RecvSeq()) || i != int(client.SendSeq()) {
+	// 		log.Error("序号错误")
+	// 	}
 
-		err = client.Write(data)
-		if err != nil {
-			log.Error(err)
-			break
-		}
+	// 	err = client.Write(data)
+	// 	if err != nil {
+	// 		log.Error(err)
+	// 		break
+	// 	}
 
-		rbuf, err := client.Read()
-		if err != nil {
-			log.Error(err)
-			break
-		}
+	// 	rbuf, err := client.Read()
+	// 	if err != nil {
+	// 		log.Error(err)
+	// 		break
+	// 	}
 
-		if utils.Bytes2String(rbuf) != content {
-			log.Error("数据传输异常")
-			break
-		}
+	// 	if utils.Bytes2String(rbuf) != content {
+	// 		log.Error("数据传输异常")
+	// 		break
+	// 	}
 
-		atomic.AddUint32(&nrecv, 1)
-	}
+	// 	atomic.AddUint32(&nrecv, 1)
+	// }
 
-	for client.SendSeq() < uint32(ntimes) {
-	}
+	// for client.SendSeq() < uint32(ntimes) {
+	// }
 
 	client.Close()
 }
