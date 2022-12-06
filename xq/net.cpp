@@ -132,7 +132,7 @@ xq::net::KcpConn::_reset() {
 // TODO: review
 int 
 xq::net::KcpConn::_recv(SOCKET ufd, const sockaddr* addr, int addrlen, const char* raw, int raw_len, char* data, int data_len) {
-    {
+    {// kcp locker
         std::lock_guard<std::mutex> lk(mtx_);
 
         if (!kcp_)
@@ -141,39 +141,40 @@ xq::net::KcpConn::_recv(SOCKET ufd, const sockaddr* addr, int addrlen, const cha
         if (::ikcp_input(kcp_, raw, raw_len))
             return -1;
     }
-        active_time_ = ::time(nullptr);
-        _set_remote(ufd, addr, addrlen);
 
-        int n;
-        do {
-            {
-                std::lock_guard<std::mutex> lk(mtx_);
-                if (!kcp_)
-                    return ERR_KCP_INVALID;
+    active_time_ = ::time(nullptr);
+    _set_remote(ufd, addr, addrlen);
 
-                n = ::ikcp_recv(kcp_, &data[0], MAX_DATA_SIZE);
+    int n;
+    do {
+        {// kcp locker
+            std::lock_guard<std::mutex> lk(mtx_);
+            if (!kcp_)
+                return ERR_KCP_INVALID;
+
+            n = ::ikcp_recv(kcp_, &data[0], MAX_DATA_SIZE);
+        }
+
+
+        if (n > 0) {
+            if (event_->on_message(this, data, n)) {
+                break;
             }
-            
+        }
 
-            if (n > 0) {
-                if (event_->on_message(this, data, n)) {
-                    break;
-                }
+        {// kcp locker
+            std::lock_guard<std::mutex> lk(mtx_);
+
+            if (!kcp_) {
+                return ERR_KCP_INVALID;
             }
 
-            {
-                std::lock_guard<std::mutex> lk(mtx_);
+            if (!kcp_->nrcv_que)
+                break;
+        }
+    } while (1);
 
-                if (!kcp_) {
-                    return ERR_KCP_INVALID;
-                }
-                    
-                if (!kcp_->nrcv_que)
-                    break;
-            }
-        } while (1);    
-
-        return 0;
+    return 0;
 }
 
 void
