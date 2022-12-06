@@ -83,7 +83,7 @@ xq::net::KcpConn::udp_output(const char* data, int datalen, IKCPCB*, void* conn)
 
 int 
 xq::net::KcpConn::_set(uint32_t conv, const sockaddr* addr, int addrlen, int send_wnd, int recv_wnd, bool fast_mode) {
-    bool is_rebuild = false;
+    bool rebuild = false;
     {
         std::lock_guard<std::mutex> lk(mtx_);
 
@@ -108,11 +108,11 @@ xq::net::KcpConn::_set(uint32_t conv, const sockaddr* addr, int addrlen, int sen
             active_time_ = time_ / 1000;
             ::memcpy(&addr_, addr, addrlen);
 
-            is_rebuild = true;
+            rebuild = true;
         }
     }
 
-    return is_rebuild ? event_->on_connected(this) : 0;
+    return rebuild ? (event_->on_connected(this) == 0 ? 1 : -1) : 0;
 }
 
 int 
@@ -219,11 +219,11 @@ xq::net::KcpListener::work_thread(const char* ip, const char* port) {
 
         conv = *rbuf;
         conn = sess_map_[conv];
-        if (conn->_set(conv, &addr, addrlen)) {
+        if (conn->_set(conv, &addr, addrlen) < 0) {
             conn->_reset();
         }
 
-        if (conn->_recv(ufd, &addr, addrlen, rbuf, n, data, MAX_DATA_SIZE)) {
+        if (conn->_recv(ufd, &addr, addrlen, rbuf, n, data, MAX_DATA_SIZE) < 0) {
             conn->_reset();
         }
     }
@@ -240,10 +240,8 @@ xq::net::KcpListener::update_thread() {
         uint64_t now_ms = tools::get_time_ms();
 
         for (auto itr = sess_map_.begin(); itr != sess_map_.end(); ++itr) {
-            if (itr->second->update(now_ms, 30) == -1) {
-                printf("%d has timeout\n", itr->first);
+            if (itr->second->update(now_ms, timeout_))
                 itr->second->_reset();
-            }
         }
     }
 }

@@ -288,14 +288,14 @@ public: // >>>>>>>>> 公共方法 >>>>>>>>>
     /// <param name="timeout">超时值</param>
     /// <returns>
     ///     0: 成功;
-    ///     -100: KcpConn 已失效;
-    ///     -1: KcpConn 超时;
+    ///     -101: KcpConn 超时;
     /// </returns>
     int update(uint64_t now_ms, int timeout = DEFAULT_TIMEOUT) {
         std::lock_guard<std::mutex> lk(mtx_);
 
+        // 如果当前KcpConn未激活, 不作检查.
         if (!kcp_)
-            return ERR_KCP_INVALID;
+            return 0;
 
         if (now_ms / 1000 - active_time_ > timeout)
             return ERR_KCP_TIMEOUT;
@@ -363,7 +363,11 @@ private: // >>>>>>>>> 私有方法 >>>>>>>>>
     /// <param name="send_wnd">发送窗口大小, 默认为256</param>
     /// <param name="recv_wnd">接收窗口大小, 默认为256</param>
     /// <param name="fast_mode">是否为极速模式</param>
-    /// <returns>成功返回0, 否则返回错误</returns>
+    /// <returns>
+    ///     0: 成功
+    ///     1: 新增客户端
+    ///     小于 0: 错误
+    /// </returns>
     int _set(uint32_t conv, const sockaddr* addr, int addrlen, int send_wnd = DEFAULT_SEND_WND, int recv_wnd = DEFAULT_RECV_WND, bool fast_mode = true);
 
     /// <summary>
@@ -473,8 +477,9 @@ public: // >>>>>>>>> 公共函数 >>>>>>>>>
     /// <summary>
     /// 创建KcpListener
     /// </summary>
+    /// <param name="timeout">读超时(秒), 默认60秒</param>
     /// <returns>KcpListener 实例</returns>
-    static ptr create() { return ptr(new KcpListener()); }
+    static ptr create(int timeout = DEFAULT_TIMEOUT) { return ptr(new KcpListener(timeout)); }
 
 private: // >>>>>>>>> 私有函数 >>>>>>>>>
 
@@ -501,10 +506,12 @@ public: // >>>>>>>>> 公共方法 >>>>>>>>>
     void stop() { state_ = State::Stopping; }
 
 private: // >>>>>>>>> 私有方法 >>>>>>>>>
-    KcpListener() :
+    KcpListener(int timeout) :
+        timeout_(timeout),
         state_(State::Stopped),
-        ncur_(0)
-    {}
+        ncur_(0) {
+        assert(timeout_ > 0);
+    }
 
     /// <summary>
     /// 工作线程
@@ -521,6 +528,7 @@ private: // >>>>>>>>> 私有方法 >>>>>>>>>
     KcpListener(const KcpListener&) = delete;
     KcpListener& operator=(const KcpListener&) = delete;
 private: // >>>>>>>>> 成员字段 >>>>>>>>>
+    int timeout_;
     State state_;
 
     std::atomic<uint32_t> ncur_;
