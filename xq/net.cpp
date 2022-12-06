@@ -112,24 +112,6 @@ xq::net::KcpConn::_set(uint32_t conv, const sockaddr* addr, int addrlen, int sen
     return 0;
 }
 
-void 
-xq::net::KcpConn::_reset() {
-    std::unique_lock<std::mutex> lk(mtx_);
-
-    if (ufd_ != INVALID_SOCKET) {
-        ufd_ = INVALID_SOCKET;
-    }
-
-    if (kcp_) {
-        event_->on_disconnected(this);
-        ::ikcp_release(kcp_);
-        kcp_ = nullptr;
-    }
-
-    time_ = active_time_ = 0;
-}
-
-// TODO: review
 int 
 xq::net::KcpConn::_recv(SOCKET ufd, const sockaddr* addr, int addrlen, const char* raw, int raw_len, char* data, int data_len) {
     {// kcp locker
@@ -177,48 +159,33 @@ xq::net::KcpConn::_recv(SOCKET ufd, const sockaddr* addr, int addrlen, const cha
     return 0;
 }
 
-void
-xq::net::KcpConn::_set_remote(SOCKET ufd, const sockaddr* addr, int addrlen) {
-    if (ufd_ != ufd || ufd_ == INVALID_SOCKET) {
-        ufd_ = ufd;
-    }
-
-    if (!::memcmp(&addr_, addr, addrlen)) {
-        ::memcpy(&addr_, addr, addrlen);
-        addrlen_ = addrlen;
-    }
-}
-
 // -------------------------------------------------------------------------------------- KCP Listener --------------------------------------------------------------------------------------
 
-xq::net::KcpListener::ptr 
-xq::net::KcpListener::create(IEvent::Ptr event, const char* ip, const char* port, uint32_t nthread) {
-    if (nthread == 0)
-        nthread = (int)std::thread::hardware_concurrency();
-
-    return ptr(new KcpListener(event, ip, port, nthread, nthread * 1000));
-}
-
 void 
-xq::net::KcpListener::run() {
-    for (auto itr = thread_pool_.begin(); itr != thread_pool_.end(); ++itr) {
-        itr->join();
-    }
-}
+xq::net::KcpListener::run(IEvent::Ptr event, const char* ip, const char* port, uint32_t nthread, uint32_t max_conn) {
+    assert(max_conn > 0);
 
-xq::net::KcpListener::KcpListener(IEvent::Ptr event, const char* ip, const char* port, int nthread, int max_conn) :
-    state_(State::Stopped) {
+    if (!nthread)
+        nthread = std::thread::hardware_concurrency();
+
     state_ = State::Running;
 
-    std::thread(std::bind(&KcpListener::update_thread, this)).detach();
+    update_thr_ = std::move(std::thread(std::bind(&KcpListener::update_thread, this)));
 
-    for (int i = 1; i <= max_conn; i++) {
+    for (uint32_t i = 1; i <= max_conn; i++)
         sess_map_.emplace(std::make_pair(i, KcpConn::create(event)));
-    }
 
-    for (int i = 0; i < nthread; i++) {
+    for (uint32_t i = 0; i < nthread; i++)
         thread_pool_.emplace_back(std::thread(std::bind(&KcpListener::work_thread, this, ip, port)));
-    }
+
+    for (auto itr = thread_pool_.begin(); itr != thread_pool_.end(); ++itr)
+        itr->join();
+    update_thr_.join();
+
+    for (uint32_t i = 1; i <= max_conn; i++)
+        sess_map_[i]->_reset();
+
+    state_ = State::Stopped;
 }
 
 void
@@ -264,7 +231,7 @@ xq::net::KcpListener::work_thread(const char* ip, const char* port) {
 
 void 
 xq::net::KcpListener::update_thread() {
-    while (1) {
+    while (state_ == State::Running) {
         std::this_thread::sleep_for(std::chrono::milliseconds(1));
 
         uint64_t now_ms = tools::get_time_ms();

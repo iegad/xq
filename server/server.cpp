@@ -17,8 +17,8 @@ public:
 int
 main(int argc, char** argv) {
 	assert(!xq::net::init());
-	auto listener = xq::net::KcpListener::create(xq::net::IEvent::Ptr(new EchoEvent), IP, PORT, 2);
-	listener->run();
+	auto listener = xq::net::KcpListener::create();
+	listener->run(xq::net::IEvent::Ptr(new EchoEvent), IP, PORT, 2, 100);
 	xq::net::release();
 	printf("DONE...%lld\n", xq::tools::get_time_ms());
 }

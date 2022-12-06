@@ -252,19 +252,25 @@ public: // >>>>>>>>> 公共属性 >>>>>>>>>
     /// 判断当前KcpConn是否激活
     /// </summary>
     /// <returns>激活返回true, 否则返回false</returns>
-    bool active() { std::lock_guard<std::mutex> lk(mtx_); return kcp_ != nullptr; }
+    bool active() { 
+        std::lock_guard<std::mutex> lk(mtx_); 
+        return kcp_ != nullptr; 
+    }
 
     /// <summary>
     /// 获取KcpConn conv值.
     /// </summary>
     /// <returns>激活时返顺conv, 否则返回0</returns>
-    uint32_t conv() { std::lock_guard<std::mutex> lk(mtx_); return kcp_ ? kcp_->conv : 0; }
+    uint32_t conv() {
+        std::lock_guard<std::mutex> lk(mtx_);
+        return kcp_ ? kcp_->conv : 0; 
+    }
 
     /// <summary>
     /// 获取底层UDP 描述符
     /// </summary>
     /// <returns>激活时返回UDP描述符, 否则返回 SOCKET_INVALID</returns>
-    SOCKET sockfd() { return ufd_; }
+    SOCKET sockfd() const { return ufd_; }
 
 public: // >>>>>>>>> 公共方法 >>>>>>>>>
 
@@ -316,24 +322,69 @@ public: // >>>>>>>>> 公共方法 >>>>>>>>>
 private: // >>>>>>>>> 私有方法 >>>>>>>>>
 
     /// <summary>
-    /// 接收原始码流并将其转换为消息数据. 请确保data有足够的空间来存储消息
+    /// 将原始码流解析为消息数据
     /// </summary>
-    /// <param name="ufd"></param>
-    /// <param name="addr"></param>
-    /// <param name="addrlen"></param>
-    /// <param name="raw"></param>
-    /// <param name="rawlen"></param>
-    /// <param name="data"></param>
-    /// <param name="datalen"></param>
-    /// <returns></returns>
+    /// <param name="ufd">产生数据的UDP套接字</param>
+    /// <param name="addr">产生数据的对端地址</param>
+    /// <param name="addrlen">地址长度</param>
+    /// <param name="raw">原始码流</param>
+    /// <param name="raw_len">原始码流长度</param>
+    /// <param name="data">消息数据缓冲区</param>
+    /// <param name="data_len">缓冲区大小</param>
+    /// <returns>成功返回0, 否则返加错误.</returns>
     int _recv(SOCKET ufd, const sockaddr* addr, int addrlen, const char* raw, int raw_len, char *data, int data_len);
 
-    void _reset();
+    /// <summary>
+    /// 重置KcpConn为未激活状态, 由服务端调用
+    /// </summary>
+    void _reset() {
+        std::unique_lock<std::mutex> lk(mtx_);
+
+        if (ufd_ != INVALID_SOCKET) {
+            ufd_ = INVALID_SOCKET;
+        }
+
+        if (kcp_) {
+            event_->on_disconnected(this);
+            ::ikcp_release(kcp_);
+            kcp_ = nullptr;
+        }
+
+        time_ = active_time_ = 0;
+    }
+
+    /// <summary>
+    /// 设置KcpConn为激活状态, 由服务端调用.
+    /// 该方法可以对已激活的KcpConn 再次调用.
+    /// </summary>
+    /// <param name="conv">kcp conv</param>
+    /// <param name="addr">KcpConn 对端地址</param>
+    /// <param name="addrlen">对端地址长度</param>
+    /// <param name="send_wnd">发送窗口大小, 默认为256</param>
+    /// <param name="recv_wnd">接收窗口大小, 默认为256</param>
+    /// <param name="fast_mode">是否为极速模式</param>
+    /// <returns>成功返回0, 否则返回错误</returns>
     int _set(uint32_t conv, const sockaddr* addr, int addrlen, int send_wnd = DEFAULT_SEND_WND, int recv_wnd = DEFAULT_RECV_WND, bool fast_mode = true);
-    void _set_remote(SOCKET ufd, const sockaddr* addr, int addrlen);
+
+    /// <summary>
+    /// 设置对端地址.
+    /// 当服务端需要发送消息给客户端时, 需要确定用来发送的 udp sockfd 和对端的地址.
+    /// </summary>
+    /// <param name="ufd">udp sockfd</param>
+    /// <param name="addr">需要发送的地址</param>
+    /// <param name="addrlen">发送地址上长</param>
+    void _set_remote(SOCKET ufd, const sockaddr* addr, int addrlen) {
+        if (ufd_ != ufd || ufd_ == INVALID_SOCKET) {
+            ufd_ = ufd;
+        }
+
+        if (!::memcmp(&addr_, addr, addrlen)) {
+            ::memcpy(&addr_, addr, addrlen);
+            addrlen_ = addrlen;
+        }
+    }
 
 
-    
     /// <summary>
     /// 构造函数: 创建默认KcpConn.由服务端调用
     /// </summary>
@@ -407,33 +458,75 @@ private: // >>>>>>>>> 友元类 >>>>>>>>>
 class KcpListener final {
 public: // >>>>>>>>> 类型/符号 >>>>>>>>>
     typedef std::unique_ptr<KcpListener> ptr;
+
+    /// <summary>
+    /// KcpListener 状态
+    /// </summary>
     enum class State {
-        Stopped = 0,
-        Running,
+        Stopped = 0, // 停止状态
+        Stopping,    // 正在停止状态
+        Running,     // 运行状态
     };
 
 public: // >>>>>>>>> 公共函数 >>>>>>>>>
-    static ptr create(IEvent::Ptr event, const char* ip, const char* port, uint32_t nthread = 0);
+
+    /// <summary>
+    /// 创建KcpListener
+    /// </summary>
+    /// <returns>KcpListener 实例</returns>
+    static ptr create() { return ptr(new KcpListener()); }
 
 private: // >>>>>>>>> 私有函数 >>>>>>>>>
+
 public: // >>>>>>>>> 公共属性 >>>>>>>>>
+
 public: // >>>>>>>>> 公共方法 >>>>>>>>>
+
     ~KcpListener() { stop(); }
-    void run();
-    void stop() { state_ = State::Stopped; }
+
+    /// <summary>
+    /// 启动服务
+    /// 当 nthread 参数为 0时, 线程池大小会根据当前设置的CPU核心数自动设置.
+    /// </summary>
+    /// <param name="event">IEvent 实现</param>
+    /// <param name="ip">服务端IP/域名</param>
+    /// <param name="port">服务端端口/服务名</param>
+    /// <param name="nthread">线程池大小, 默认为0.</param>
+    /// <param name="max_conn">最大连接数</param>
+    void run(IEvent::Ptr event, const char* ip, const char* port, uint32_t nthread, uint32_t max_conn);
+
+    /// <summary>
+    /// 停止服务
+    /// </summary>
+    void stop() { state_ = State::Stopping; }
 
 private: // >>>>>>>>> 私有方法 >>>>>>>>>
-    KcpListener(IEvent::Ptr event, const char* ip, const char* port, int nthread, int max_conn);
+    KcpListener() :
+        state_(State::Stopped),
+        ncur_(0)
+    {}
+
+    /// <summary>
+    /// 工作线程
+    /// </summary>
+    /// <param name="ip">服务端IP</param>
+    /// <param name="port">服务端PORT</param>
     void work_thread(const char* ip, const char* port);
+
+    /// <summary>
+    /// Kcp协议工作线程
+    /// </summary>
     void update_thread();
 
     KcpListener(const KcpListener&) = delete;
     KcpListener& operator=(const KcpListener&) = delete;
 private: // >>>>>>>>> 成员字段 >>>>>>>>>
     State state_;
+
+    std::atomic<uint32_t> ncur_;
+    std::thread update_thr_;
     std::vector<std::thread> thread_pool_;
     std::unordered_map<uint32_t, KcpConn::Ptr> sess_map_;
-
 private: // >>>>>>>>> 友元类 >>>>>>>>>
 }; // class KcpListener;
 
