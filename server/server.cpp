@@ -12,6 +12,15 @@ public:
 		printf("%s\n", std::string(data, data_len).c_str());
 		return conn->send(data, data_len);
 	}
+
+	virtual int on_connected(xq::net::KcpConn* conn) {
+		printf("%d has connected\n", conn->conv());
+		return 0;
+	}
+
+	virtual void on_disconnected(xq::net::KcpConn* conn) {
+		printf("%d has disconnected\n", conn->conv());
+	}
 };
 
 int

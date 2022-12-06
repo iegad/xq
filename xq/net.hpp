@@ -338,14 +338,14 @@ private: // >>>>>>>>> 私有方法 >>>>>>>>>
     /// 重置KcpConn为未激活状态, 由服务端调用
     /// </summary>
     void _reset() {
-        std::unique_lock<std::mutex> lk(mtx_);
+        event_->on_disconnected(this);
 
+        std::unique_lock<std::mutex> lk(mtx_);
         if (ufd_ != INVALID_SOCKET) {
             ufd_ = INVALID_SOCKET;
         }
 
         if (kcp_) {
-            event_->on_disconnected(this);
             ::ikcp_release(kcp_);
             kcp_ = nullptr;
         }

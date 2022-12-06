@@ -83,33 +83,36 @@ xq::net::KcpConn::udp_output(const char* data, int datalen, IKCPCB*, void* conn)
 
 int 
 xq::net::KcpConn::_set(uint32_t conv, const sockaddr* addr, int addrlen, int send_wnd, int recv_wnd, bool fast_mode) {
-    std::lock_guard<std::mutex> lk(mtx_);
+    bool is_rebuild = false;
+    {
+        std::lock_guard<std::mutex> lk(mtx_);
 
-    if (!kcp_ || ::memcmp(addr, &addr_, addrlen)) {
-        if (kcp_) {
-            ::ikcp_release(kcp_);
+        if (!kcp_ || ::memcmp(addr, &addr_, addrlen)) {
+            if (kcp_) {
+                ::ikcp_release(kcp_);
+            }
+
+            kcp_ = ::ikcp_create(conv, this);
+
+            if (fast_mode)
+                ::ikcp_nodelay(kcp_, 1, 20, 1, 1);
+            else
+                ::ikcp_nodelay(kcp_, 0, 20, 0, 0);
+
+            assert(!::ikcp_wndsize(kcp_, send_wnd, recv_wnd) && "ikcp_wndsize called failed");
+            assert(!::ikcp_setmtu(kcp_, KCP_MTU) && "ikcp_setmtu called failed");
+
+            kcp_->output = udp_output;
+
+            time_ = tools::get_time_ms();
+            active_time_ = time_ / 1000;
+            ::memcpy(&addr_, addr, addrlen);
+
+            is_rebuild = true;
         }
-
-        kcp_ = ::ikcp_create(conv, this);
-
-        if (fast_mode)
-            ::ikcp_nodelay(kcp_, 1, 20, 1, 1);
-        else
-            ::ikcp_nodelay(kcp_, 0, 20, 0, 0);
-
-        assert(!::ikcp_wndsize(kcp_, send_wnd, recv_wnd) && "ikcp_wndsize called failed");
-        assert(!::ikcp_setmtu(kcp_, KCP_MTU) && "ikcp_setmtu called failed");
-
-        kcp_->output = udp_output;
-        
-        time_ = tools::get_time_ms();
-        active_time_ = time_ / 1000;
-        ::memcpy(&addr_, addr, addrlen);
-        
-        return event_->on_connected(this);
     }
 
-    return 0;
+    return is_rebuild ? event_->on_connected(this) : 0;
 }
 
 int 
