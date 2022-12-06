@@ -1,6 +1,15 @@
 #ifndef __NET_HPP__
 #define __NET_HPP__
 
+//! --------------------------------------------------------------------------------------------------------------------
+//! xq 网络框架, 目前只支持KCP版本.
+//! 
+//! @author:      iegad
+//! @create at:   2022-12-06
+//! @update:
+//! --------------------------------------------------------------------------------------------------------------------
+//! |- time                |- coder                  |- content 
+
 // -------------------------------------------------------------------------------------- system --------------------------------------------------------------------------------------
 #ifdef _WIN32
 #pragma comment(lib, "ws2_32.lib")
@@ -77,20 +86,20 @@ inline int init() {
     return 0;
 }
 
-// ====================
-// 释放网络资源, 用于WinSock.
-// ====================
+/// <summary>
+/// 释放网络资源, 用于WinSock.
+/// </summary>
 inline void release() {
 #ifdef _WIN32
     WSACleanup();
 #endif
 }
 
-// ===========================
-// 关闭套接字
-// @sockfd: 需要关闭的套接字
-// @returns: 成功返回0, 否则返回-1
-// ====================
+/// <summary>
+/// 关闭套接字
+/// </summary>
+/// <param name="sockfd">需要关闭的套接字</param>
+/// <returns>成功返回0, 否则返回-1</returns>
 inline int close(SOCKET sockfd) {
 #ifndef _WIN32
     return ::close(sockfd);
@@ -123,12 +132,27 @@ SOCKET udp_socket(const char *ip, const char *svc, bool is_server = true);
 // -------------------------------------------------------------------------------------- IEvent --------------------------------------------------------------------------------------
 class KcpConn;
 
+/// <summary>
+/// 网络事件. 每个应用实例都必需实现该事件接口. 
+/// 必需实现的接口为 on_message.
+/// </summary>
 class IEvent : std::enable_shared_from_this<IEvent> {
-public:
+public: // >>>>>>>>> 类型/符号 >>>>>>>>>
     typedef std::shared_ptr<IEvent> Ptr;
 
-public:
+public: // >>>>>>>>> 公共方法 >>>>>>>>>
+    /// <summary>
+    /// 客户端连接事件, 客户端成功连接后触发.
+    /// 该接口可以返回非0, 如果返回非0值, 服务端将丢弃该连接.
+    /// </summary>
+    /// <param name="conn">已连接KcpConn</param>
+    /// <returns>成功返回0, 否则返回-1</returns>
     virtual int on_connected(KcpConn *conn) { return 0; }
+
+    /// <summary>
+    /// 
+    /// </summary>
+    /// <param name="conn"></param>
     virtual void on_disconnected(KcpConn *conn) {}
     virtual void on_error(KcpConn *conn, int err_code) {}
     virtual void on_recv(KcpConn *conn, const char* raw, int raw_len) {}
