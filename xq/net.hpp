@@ -34,6 +34,7 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <shared_mutex>
 #include <thread>
 #include <unordered_map>
 #include <vector>
@@ -65,17 +66,17 @@ namespace net {
 #endif // !INVALID_SOCKET
 
 // ---------------------------------------------------------------------------------- 常量 ----------------------------------------------------------------------------------
-const int DEFAULT_SEND_WND = 256;   // 发送窗口大小
-const int DEFAULT_RECV_WND = 256;   // 接收窗口大小
-const int DEFAULT_TIMEOUT  = 60;    // 默认超时(秒)
+constexpr  int DEFAULT_SEND_WND = 256;   // 发送窗口大小
+constexpr  int DEFAULT_RECV_WND = 256;   // 接收窗口大小
+constexpr  int DEFAULT_TIMEOUT  = 60;    // 默认超时(秒)
 
-const int KCP_MTU       = 1472;                             // KCP MTU
-const int KCP_HEAD_SIZE = 24;                               // KCP消息头长度
-const int MAX_DATA_SIZE = 128 * (KCP_MTU - KCP_HEAD_SIZE);  // 消息包最大长度: 181(kB)
+constexpr  int KCP_MTU       = 1472;                             // KCP MTU
+constexpr  int KCP_HEAD_SIZE = 24;                               // KCP消息头长度
+constexpr  int MAX_DATA_SIZE = 128 * (KCP_MTU - KCP_HEAD_SIZE);  // 消息包最大长度: 181(kB)
 
 // ---------------------------------------------------------------------------------- 错误码 ----------------------------------------------------------------------------------
-const int ERR_KCP_INVALID = -100; // 无效的KCP
-const int ERR_KCP_TIMEOUT = -101; // 超时
+constexpr  int ERR_KCP_INVALID = -100; // 无效的KCP
+constexpr  int ERR_KCP_TIMEOUT = -101; // 超时
 
 // ---------------------------------------------------------------------------------- 公共函数 ----------------------------------------------------------------------------------
 
@@ -128,11 +129,10 @@ inline int error() {
 /// <summary>
 /// 创建UDP套接字, 如果is_server 参数为真, 将会以服务端方式绑定 Endpoint(ip:svc), 否则将会以客户端连接 Endpoint(ip:svc)
 /// </summary>
-/// <param name="ip">需要 连接/绑定 IP地址</param>
-/// <param name="svc">需要 连接/绑定 服务或端口</param>
-/// <param name="is_server">是否为服务端, 默认为</param>
+/// <param name="local">本地Endpoint</param>
+/// <param name="remote">远端Endpoint</param>
 /// <returns>成功返回 套接字描述符, 否则返回 INVALID_SOCKET</returns>
-SOCKET udp_socket(const char *ip, const char *svc, bool is_server = true);
+SOCKET udp_socket(const char *local, const char *remote);
 
 // ---------------------------------------------------------------------------------- IEvent ----------------------------------------------------------------------------------
 class KcpConn;
@@ -145,7 +145,14 @@ class IEvent {
 public: // >>>>>>>>> 类型/符号 >>>>>>>>>
     typedef std::shared_ptr<IEvent> Ptr;
 
+protected:
+    ~IEvent() {}
+
 public: // >>>>>>>>> 公共方法 >>>>>>>>>
+    IEvent() {}
+    IEvent(const IEvent&) = delete;
+    IEvent& operator=(const IEvent&) = delete;
+
     /// <summary>
     /// 客户端连接事件, 客户端成功连接后触发.
     /// 该接口可以返回非0, 如果返回非0值, 底层将其丢弃该连接.
@@ -214,16 +221,16 @@ public: // >>>>>>>>> 公共函数 >>>>>>>>>
     /// 连接KCP服务器
     /// </summary>
     /// <param name="event">IEvent 实现</param>
-    /// <param name="ip">服务端IP/域名</param>
-    /// <param name="svc">服务端服务名/端口</param>
+    /// <param name="local">本端地址</param>
+    /// <param name="remote">服务端地址</param>
     /// <param name="conv">客户conv, conv必需为非0值. 底层不会去自动生成conv, 该值必需由开发者自行生成. 该值用于同Kcp服务端进行交互, 必需确保该值在服务端的唯一性</param>
     /// <param name="send_wnd">发送窗口, 默认为256</param>
     /// <param name="recv_wnd">接收窗口, 默认为256</param>
     /// <param name="fast_mode">是否为极速模式, 极速模式会增加网络压力</param>
     /// <returns></returns>
-    static Ptr connect(IEvent::Ptr event, const char* ip, const char* svc, uint32_t conv, int send_wnd = DEFAULT_SEND_WND, int recv_wnd = DEFAULT_RECV_WND, bool fast_mode = true) {
+    static Ptr connect(IEvent::Ptr event, const char* local, const char* remote, uint32_t conv, int send_wnd = DEFAULT_SEND_WND, int recv_wnd = DEFAULT_RECV_WND, bool fast_mode = true, int timeout = DEFAULT_TIMEOUT) {
         assert(conv);
-        return Ptr(new KcpConn(event, ip, svc, conv, send_wnd, recv_wnd, fast_mode));
+        return Ptr(new KcpConn(event, local, remote, conv, send_wnd, recv_wnd, fast_mode, timeout));
     }
 
 private: // >>>>>>>>> 私有函数 >>>>>>>>>
@@ -233,8 +240,8 @@ private: // >>>>>>>>> 私有函数 >>>>>>>>>
     /// </summary>
     /// <param name="event">IEvent 实现</param>
     /// <returns>成功返回默认的KcpConn实例, 否则返回nullptr</returns>
-    static Ptr create(IEvent::Ptr event) {
-        return Ptr(new KcpConn(event));
+    static Ptr create(IEvent::Ptr event, int timeout) {
+        return Ptr(new KcpConn(event, timeout));
     }
 
     /// <summary>
@@ -290,14 +297,14 @@ public: // >>>>>>>>> 公共方法 >>>>>>>>>
     ///     0: 成功;
     ///     -101: KcpConn 超时;
     /// </returns>
-    int update(uint64_t now_ms, int timeout = DEFAULT_TIMEOUT) {
+    int update(uint64_t now_ms) {
         std::lock_guard<std::mutex> lk(mtx_);
 
         // 如果当前KcpConn未激活, 不作检查.
         if (!kcp_)
             return 0;
 
-        if (now_ms / 1000 - active_time_ > timeout)
+        if (timeout_ > 0 && now_ms / 1000 - active_time_ > timeout_)
             return ERR_KCP_TIMEOUT;
 
         ::ikcp_update(kcp_, (uint32_t)(now_ms - time_));
@@ -317,6 +324,31 @@ public: // >>>>>>>>> 公共方法 >>>>>>>>>
     int send(const char* data, int data_len) {
         std::unique_lock<std::mutex> lk(mtx_);
         return kcp_ ? ::ikcp_send(kcp_, data, data_len) : ERR_KCP_INVALID;
+    }
+
+    int run() {
+        int n = 0;
+        char rbuf[KCP_MTU];
+        char* data = new char[MAX_DATA_SIZE];
+        sockaddr addr;
+        int addrlen = sizeof(addr);
+        ::memset(&addr, 0, sizeof(addr));
+
+        while (1) {
+            n = ::recvfrom(ufd_, rbuf, KCP_MTU, 0, &addr, &addrlen);
+            if (n <= 0) {
+                printf("recvfrom failed: %d\n", error());
+                return -1;
+            }
+               
+            if (n < 24) {
+                printf("kcp recv failed\n");
+                return -2;
+            }
+
+            if (_recv(ufd_, &addr, addrlen, rbuf, n, data, MAX_DATA_SIZE) < 0)
+                return -3;
+        }
     }
     
 private: // >>>>>>>>> 私有方法 >>>>>>>>>
@@ -388,18 +420,19 @@ private: // >>>>>>>>> 私有方法 >>>>>>>>>
         }
     }
 
-
     /// <summary>
     /// 构造函数: 创建默认KcpConn.由服务端调用
     /// </summary>
     /// <param name="event">IEvent 实现</param>
-    KcpConn(IEvent::Ptr event) :
+    KcpConn(IEvent::Ptr event, int timeout) :
         ufd_(INVALID_SOCKET),
         addrlen_(0),
         kcp_(nullptr),
-        active_time_(0),
+        timeout_(timeout),
         time_(0),
+        active_time_(0),
         event_(event) {
+        assert(timeout_ >= 0);
         ::memset(&addr_, 0, sizeof(addr_));
     }
 
@@ -407,21 +440,22 @@ private: // >>>>>>>>> 私有方法 >>>>>>>>>
     /// 构造函数: 创建已激活的KcpConn, 由客户端调用.
     /// </summary>
     /// <param name="event">IEvent 实现</param>
-    /// <param name="ip">服务端IP/域名</param>
-    /// <param name="svc">服务端端口/服务名</param>
+    /// <param name="local">本地监听</param>
+    /// <param name="remote">远端地址</param>
     /// <param name="conv">kcp conv</param>
     /// <param name="send_wnd">发送窗口大小</param>
     /// <param name="recv_wnd">接收窗口大小</param>
     /// <param name="fast_mode">是否为极速模式</param>
-    KcpConn(IEvent::Ptr event, const char* ip, const char* svc, uint32_t conv, int send_wnd, int recv_wnd, bool fast_mode) :
-        ufd_(udp_socket(ip, svc, false)),
+    KcpConn(IEvent::Ptr event, const char* local, const char* remote, uint32_t conv, int send_wnd, int recv_wnd, bool fast_mode, int timeout) :
+        ufd_(udp_socket(local, remote)),
         addrlen_(0),
         kcp_(nullptr),
-        active_time_(time_ / 1000),
+        timeout_(timeout),
         time_(xq::tools::get_time_ms()),
+        active_time_(time_ / 1000),
         event_(event) {
 
-        assert(ufd_ != INVALID_SOCKET && conv > 0);
+        assert(ufd_ != INVALID_SOCKET && conv > 0 && timeout_ >= 0);
 
         ::memset(&addr_, 0, sizeof(addr_));
 
@@ -447,8 +481,9 @@ private: // >>>>>>>>> 成员字段 >>>>>>>>>
     sockaddr addr_;         // KcpConn对端地址
     int addrlen_;           // KcpConn对端地址长度
     IKCPCB* kcp_;           // KCP
-    uint64_t active_time_;  // 最后激活时间, 单位秒
+    int timeout_;           // 超时
     uint64_t time_;         // 创建时间, 单位毫秒
+    uint64_t active_time_;  // 最后激活时间, 单位秒
 
     std::mutex mtx_;
     IEvent::Ptr event_;
@@ -489,16 +524,16 @@ public: // >>>>>>>>> 公共方法 >>>>>>>>>
 
     ~KcpListener() { stop(); }
 
+
     /// <summary>
     /// 启动服务
     /// 当 nthread 参数为 0时, 线程池大小会根据当前设置的CPU核心数自动设置.
     /// </summary>
     /// <param name="event">IEvent 实现</param>
-    /// <param name="ip">服务端IP/域名</param>
-    /// <param name="port">服务端端口/服务名</param>
+    /// <param name="host">监听地址</param>
     /// <param name="nthread">线程池大小, 默认为0.</param>
     /// <param name="max_conn">最大连接数</param>
-    void run(IEvent::Ptr event, const char* ip, const char* port, uint32_t nthread, uint32_t max_conn);
+    void run(IEvent::Ptr event, const char* host, uint32_t nthread, uint32_t max_conn);
 
     /// <summary>
     /// 停止服务
@@ -506,7 +541,7 @@ public: // >>>>>>>>> 公共方法 >>>>>>>>>
     void stop() { state_ = State::Stopping; }
 
 private: // >>>>>>>>> 私有方法 >>>>>>>>>
-    KcpListener(int timeout) :
+    KcpListener(int timeout)  :
         timeout_(timeout),
         state_(State::Stopped),
         ncur_(0) {
@@ -516,17 +551,18 @@ private: // >>>>>>>>> 私有方法 >>>>>>>>>
     /// <summary>
     /// 工作线程
     /// </summary>
-    /// <param name="ip">服务端IP</param>
-    /// <param name="port">服务端PORT</param>
-    void work_thread(const char* ip, const char* port);
+    /// <param name="host">监听地址</param>
+    void work_thread(const char* host);
 
     /// <summary>
     /// Kcp协议工作线程
     /// </summary>
     void update_thread();
 
+    KcpListener() = delete;
     KcpListener(const KcpListener&) = delete;
     KcpListener& operator=(const KcpListener&) = delete;
+
 private: // >>>>>>>>> 成员字段 >>>>>>>>>
     int timeout_;
     State state_;
@@ -534,7 +570,7 @@ private: // >>>>>>>>> 成员字段 >>>>>>>>>
     std::atomic<uint32_t> ncur_;
     std::thread update_thr_;
     std::vector<std::thread> thread_pool_;
-    std::unordered_map<uint32_t, KcpConn::Ptr> sess_map_;
+    std::vector<KcpConn::Ptr> conn_map_;
 private: // >>>>>>>>> 友元类 >>>>>>>>>
 }; // class KcpListener;
 

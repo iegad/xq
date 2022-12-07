@@ -3,21 +3,33 @@
 // -------------------------------------------------------------------------------------- 公共函数 --------------------------------------------------------------------------------------
 
 xq::net::SOCKET
-xq::net::udp_socket(const char *ip, const char *svc, bool is_server) {
-    static const int ON = 1;
+xq::net::udp_socket(const char* local, const char* remote) {
+    static constexpr int ON = 1;
 
-    xq::net::SOCKET fd = 0;
+    xq::net::SOCKET fd = INVALID_SOCKET;
 
-    if (ip && svc) {
+    // 本端地址用于udp 套接字绑定
+    if (local) {
+        std::string tmp = std::move(std::string(local));
+        const int pos = (int)tmp.rfind(':');
+        if (pos == -1)
+            return INVALID_SOCKET;
+
+        std::string ip = std::move(tmp.substr(0, pos));
+        if (ip.empty())
+            ip = "0.0.0.0";
+
+        std::string port = std::move(tmp.substr(pos + 1));
+
         addrinfo hints;
-        addrinfo* result = nullptr, * rp = nullptr;    
+        addrinfo* result = nullptr, * rp = nullptr;
 
         ::memset(&hints, 0, sizeof(addrinfo));
         hints.ai_family = AF_UNSPEC;
         hints.ai_socktype = SOCK_DGRAM;
         hints.ai_flags = AI_PASSIVE;
 
-        if (::getaddrinfo(ip, svc, &hints, &result)) {
+        if (::getaddrinfo(ip.c_str(), port.c_str(), &hints, &result)) {
             return -1;
         }
 
@@ -27,24 +39,18 @@ xq::net::udp_socket(const char *ip, const char *svc, bool is_server) {
                 continue;
             }
 
-            if (::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (char*)&ON, sizeof(int))) {
-                return -1;
+            if (::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char*)&ON, sizeof(int))) {
+                return INVALID_SOCKET;
             }
 
 #ifndef _WIN32 
-            if (::setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, (char*)&ON, sizeof(int))) {
-                return -3;
+            if (::setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &ON, sizeof(int))) {
+                return INVALID_SOCKET;
             }
 #endif
-            if (is_server) {
-                if (!::bind(fd, rp->ai_addr, (int)rp->ai_addrlen)) {
-                    break;
-                }
-            }
-            else {
-                if (!::connect(fd, rp->ai_addr, (int)rp->ai_addrlen)) {
-                    break;
-                }
+
+            if (!::bind(fd, rp->ai_addr, (int)rp->ai_addrlen)) {
+                break;
             }
 
             xq::net::close(fd);
@@ -55,12 +61,69 @@ xq::net::udp_socket(const char *ip, const char *svc, bool is_server) {
         ::freeaddrinfo(result);
 
         if (fd <= 0) {
-            return -1;
+            return INVALID_SOCKET;
         }
     }
-    else {
-        fd = ::socket(AF_INET, SOCK_DGRAM, 0);
+
+    // 对端地址用于连接
+    if (remote) {
+        std::string tmp = std::move(std::string(remote));
+        const int pos = (int)tmp.rfind(':');
+        if (pos == -1)
+            return INVALID_SOCKET;
+
+        std::string ip = std::move(tmp.substr(0, pos));
+        if (ip.empty())
+            return INVALID_SOCKET;
+
+        std::string port = std::move(tmp.substr(pos + 1));
+
+        addrinfo hints;
+        addrinfo* result = nullptr, * rp = nullptr;
+
+        ::memset(&hints, 0, sizeof(addrinfo));
+        hints.ai_family = AF_UNSPEC;
+        hints.ai_socktype = SOCK_DGRAM;
+        hints.ai_flags = AI_PASSIVE;
+
+        if (::getaddrinfo(ip.c_str(), port.c_str(), &hints, &result)) {
+            return -1;
+        }
+
+        for (rp = result; rp != nullptr; rp = rp->ai_next) {
+            if (fd == INVALID_SOCKET) {
+                fd = ::socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+                if (fd < 0) {
+                    continue;
+                }
+
+                if (::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char*)&ON, sizeof(int))) {
+                    return INVALID_SOCKET;
+                }
+
+#ifndef _WIN32 
+                if (::setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &ON, sizeof(int))) {
+                    return INVALID_SOCKET;
+                }
+#endif
+            }
+
+            if (!::connect(fd, rp->ai_addr, (int)rp->ai_addrlen)) {
+                break;
+            }
+
+            xq::net::close(fd);
+                }
+
+        assert(rp);
+
+        ::freeaddrinfo(result);
+
+        if (fd <= 0) {
+            return INVALID_SOCKET;
+        }
     }
+
 
     return fd;
 }
@@ -73,7 +136,7 @@ xq::net::KcpConn::udp_output(const char* data, int datalen, IKCPCB*, void* conn)
     KcpConn* self = (KcpConn*)conn;
 
     self->event_->on_send(self, data, datalen);
-    int n = ::sendto(self->ufd_, data, datalen, 0, &self->addr_, self->addrlen_);
+    const int n = ::sendto(self->ufd_, data, datalen, 0, &self->addr_, self->addrlen_);
     if (n < 0) {
         // TODO: log...
     }
@@ -117,6 +180,8 @@ xq::net::KcpConn::_set(uint32_t conv, const sockaddr* addr, int addrlen, int sen
 
 int 
 xq::net::KcpConn::_recv(SOCKET ufd, const sockaddr* addr, int addrlen, const char* raw, int raw_len, char* data, int data_len) {
+    assert(raw && data && raw_len > 0 && data_len > 0);
+
     {// kcp locker
         std::lock_guard<std::mutex> lk(mtx_);
 
@@ -165,7 +230,7 @@ xq::net::KcpConn::_recv(SOCKET ufd, const sockaddr* addr, int addrlen, const cha
 // -------------------------------------------------------------------------------------- KCP Listener --------------------------------------------------------------------------------------
 
 void 
-xq::net::KcpListener::run(IEvent::Ptr event, const char* ip, const char* port, uint32_t nthread, uint32_t max_conn) {
+xq::net::KcpListener::run(IEvent::Ptr event, const char* host, uint32_t nthread, uint32_t max_conn) {
     assert(max_conn > 0);
 
     if (!nthread)
@@ -173,29 +238,33 @@ xq::net::KcpListener::run(IEvent::Ptr event, const char* ip, const char* port, u
 
     state_ = State::Running;
 
+    for (uint32_t i = 1; i <= max_conn; i++)
+        conn_map_.emplace_back(KcpConn::create(event, timeout_));
+
     update_thr_ = std::move(std::thread(std::bind(&KcpListener::update_thread, this)));
 
-    for (uint32_t i = 1; i <= max_conn; i++)
-        sess_map_.emplace(std::make_pair(i, KcpConn::create(event)));
-
     for (uint32_t i = 0; i < nthread; i++)
-        thread_pool_.emplace_back(std::thread(std::bind(&KcpListener::work_thread, this, ip, port)));
+        thread_pool_.emplace_back(std::thread(std::bind(&KcpListener::work_thread, this, host)));
 
-    for (auto itr = thread_pool_.begin(); itr != thread_pool_.end(); ++itr)
-        itr->join();
+    for (auto &t: thread_pool_)
+        t.join();
+
     update_thr_.join();
 
-    for (uint32_t i = 1; i <= max_conn; i++)
-        sess_map_[i]->_reset();
+    for (auto &conn: conn_map_)
+        conn->_reset();
 
     state_ = State::Stopped;
 }
 
 void
-xq::net::KcpListener::work_thread(const char* ip, const char* port) {
-    SOCKET ufd = udp_socket(ip, port);
+xq::net::KcpListener::work_thread(const char* host) {
+    const size_t max_conv = conn_map_.size();
 
-    char rbuf[KCP_MTU];
+    SOCKET ufd = udp_socket(host, nullptr);
+    assert(ufd != INVALID_SOCKET);
+
+    char rbuf[KCP_MTU] = {0};
     int n = 0;
 
     char* data = new char[MAX_DATA_SIZE];
@@ -218,13 +287,13 @@ xq::net::KcpListener::work_thread(const char* ip, const char* port) {
         }
 
         conv = *rbuf;
-        conn = sess_map_[conv];
-        if (conn->_set(conv, &addr, addrlen) < 0) {
-            conn->_reset();
-        }
+        if (conv > 0 && conv <= max_conv) {
+            conn = conn_map_[conv - 1];
+            if (conn->_set(conv, &addr, addrlen) < 0)
+                conn->_reset();
 
-        if (conn->_recv(ufd, &addr, addrlen, rbuf, n, data, MAX_DATA_SIZE) < 0) {
-            conn->_reset();
+            if (conn->_recv(ufd, &addr, addrlen, rbuf, n, data, MAX_DATA_SIZE) < 0)
+                conn->_reset();
         }
     }
 
@@ -234,14 +303,16 @@ xq::net::KcpListener::work_thread(const char* ip, const char* port) {
 
 void 
 xq::net::KcpListener::update_thread() {
-    while (state_ == State::Running) {
-        std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    uint64_t now_ms = 0, pre_ms = tools::get_time_ms();
 
-        uint64_t now_ms = tools::get_time_ms();
-
-        for (auto itr = sess_map_.begin(); itr != sess_map_.end(); ++itr) {
-            if (itr->second->update(now_ms, timeout_))
-                itr->second->_reset();
+    while (state_ == State::Running) {    
+        now_ms = tools::get_time_ms();
+        if (now_ms - pre_ms > 0) {
+            for (auto &conn : conn_map_) {
+                if (conn->update(now_ms))
+                    conn->_reset();
+            }
         }
+        pre_ms = now_ms;
     }
 }

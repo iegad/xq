@@ -25,37 +25,35 @@ send_worker(xq::net::KcpConn::Ptr conn) {
 	printf("SEND_WORK HAS DONE... %d\n", i);
 }
 
+class EchoEvent : public virtual xq::net::IEvent {
+public:
+	typedef std::shared_ptr<EchoEvent> Ptr;
+
+	virtual int on_message(xq::net::KcpConn* conn, const char* data, int data_len) override {
+		printf("%s\n", std::string(data, data_len).c_str());
+		return 0;
+	}
+
+	virtual int on_connected(xq::net::KcpConn* conn) {
+		printf("%d has connected\n", conn->conv());
+		return 0;
+	}
+
+	virtual void on_disconnected(xq::net::KcpConn* conn) {
+		printf("%d has disconnected\n", conn->conv());
+	}
+};
+
 int
 main(int argc, char** argv) {
 	assert(!xq::net::init());
 
-	xq::net::KcpConn::Ptr conn = xq::net::KcpConn::connect("127.0.0.1", "6688", 1);
+	xq::net::KcpConn::Ptr conn = xq::net::KcpConn::connect(xq::net::IEvent::Ptr(new EchoEvent), nullptr, "127.0.0.1:6688", 1);
 
 	std::thread(std::bind(update_worker, conn)).detach();
 	std::thread(std::bind(send_worker, conn)).detach();
-	
-	char rbuf[xq::net::DEFAULT_KCP_MTU] = { 0 };
-	char data[1024 * 4] = { 0 };
-	int i = 0;
-	for (;;) {
-		if (i == NTIME) {
-			break;
-		}
 
-		int n = ::recvfrom(conn->sockfd(), rbuf, sizeof(rbuf), 0, nullptr, nullptr);
-		if (n <= 0) {
-			printf("recvfrom failed: %d\n", xq::net::error());
-			break;
-		}
-		printf("--------: %d", i);
-		if (n > 24) {
-			n = conn->recv(rbuf, n, data, sizeof(data));
-			if (n > 0) {
-				printf(" => %s\n", std::string(data, n).c_str());
-				i++;
-			}
-		}
-	}
+	conn->run();
 
 	printf("CLIENT HAS FINISHEDDDDDDDDDDDDDD\n");
 	xq::net::release();
