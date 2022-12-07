@@ -6,10 +6,12 @@ void
 update_worker(xq::net::KcpConn::Ptr conn) {
 	for (;;) {
 		std::this_thread::sleep_for(std::chrono::milliseconds(1));
-		if (conn->update(xq::tools::get_time_ms())) {
+		if (conn->update(xq::tools::get_time_ms()) < 0) {
 			break;
 		}
 	}
+
+	printf("UPDATE WORK HAS DONE...\n");
 }
 
 void
@@ -30,8 +32,10 @@ public:
 	typedef std::shared_ptr<EchoEvent> Ptr;
 
 	virtual int on_message(xq::net::KcpConn* conn, const char* data, int data_len) override {
+		static int ntime = 0;
 		printf("%s\n", std::string(data, data_len).c_str());
-		return 0;
+		ntime++;
+		return ntime == NTIME ? -1 : 0;
 	}
 
 	virtual int on_connected(xq::net::KcpConn* conn) {
@@ -53,7 +57,10 @@ main(int argc, char** argv) {
 	std::thread(std::bind(update_worker, conn)).detach();
 	std::thread(std::bind(send_worker, conn)).detach();
 
-	conn->run();
+	for (;;) {
+		if (conn->recv() < 0)
+			break;
+	}
 
 	printf("CLIENT HAS FINISHEDDDDDDDDDDDDDD\n");
 	xq::net::release();

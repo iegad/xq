@@ -326,30 +326,7 @@ public: // >>>>>>>>> 公共方法 >>>>>>>>>
         return kcp_ ? ::ikcp_send(kcp_, data, data_len) : ERR_KCP_INVALID;
     }
 
-    int run() {
-        int n = 0;
-        char rbuf[KCP_MTU];
-        char* data = new char[MAX_DATA_SIZE];
-        sockaddr addr;
-        int addrlen = sizeof(addr);
-        ::memset(&addr, 0, sizeof(addr));
-
-        while (1) {
-            n = ::recvfrom(ufd_, rbuf, KCP_MTU, 0, &addr, &addrlen);
-            if (n <= 0) {
-                printf("recvfrom failed: %d\n", error());
-                return -1;
-            }
-               
-            if (n < 24) {
-                printf("kcp recv failed\n");
-                return -2;
-            }
-
-            if (_recv(ufd_, &addr, addrlen, rbuf, n, data, MAX_DATA_SIZE) < 0)
-                return -3;
-        }
-    }
+    int recv();
     
 private: // >>>>>>>>> 私有方法 >>>>>>>>>
 
@@ -446,32 +423,7 @@ private: // >>>>>>>>> 私有方法 >>>>>>>>>
     /// <param name="send_wnd">发送窗口大小</param>
     /// <param name="recv_wnd">接收窗口大小</param>
     /// <param name="fast_mode">是否为极速模式</param>
-    KcpConn(IEvent::Ptr event, const char* local, const char* remote, uint32_t conv, int send_wnd, int recv_wnd, bool fast_mode, int timeout) :
-        ufd_(udp_socket(local, remote)),
-        addrlen_(0),
-        kcp_(nullptr),
-        timeout_(timeout),
-        time_(xq::tools::get_time_ms()),
-        active_time_(time_ / 1000),
-        event_(event) {
-
-        assert(ufd_ != INVALID_SOCKET && conv > 0 && timeout_ >= 0);
-
-        ::memset(&addr_, 0, sizeof(addr_));
-
-        kcp_ = ::ikcp_create(conv, this);
-        assert(kcp_);
-
-        if (fast_mode)
-            ::ikcp_nodelay(kcp_, 1, 20, 1, 1);
-        else 
-            ::ikcp_nodelay(kcp_, 0, 20, 0, 0);
-
-        assert(!::ikcp_wndsize(kcp_, send_wnd, recv_wnd) && "ikcp_wndsize called failed");
-        assert(!::ikcp_setmtu(kcp_, KCP_MTU) && "ikcp_setmtu called failed");
-
-        kcp_->output = udp_output;
-    }
+    KcpConn(IEvent::Ptr event, const char* local, const char* remote, uint32_t conv, int send_wnd, int recv_wnd, bool fast_mode, int timeout);
 
     KcpConn(const KcpConn&) = delete;
     KcpConn& operator=(const KcpConn&) = delete;

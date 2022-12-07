@@ -178,7 +178,60 @@ xq::net::KcpConn::_set(uint32_t conv, const sockaddr* addr, int addrlen, int sen
     return rebuild ? (event_->on_connected(this) == 0 ? 1 : -1) : 0;
 }
 
+xq::net::KcpConn::KcpConn(IEvent::Ptr event, const char* local, const char* remote, uint32_t conv, int send_wnd, int recv_wnd, bool fast_mode, int timeout) :
+    ufd_(udp_socket(local, remote)),
+    addrlen_(0),
+    kcp_(nullptr),
+    timeout_(timeout),
+    time_(xq::tools::get_time_ms()),
+    active_time_(time_ / 1000),
+    event_(event) {
+
+    assert(ufd_ != INVALID_SOCKET && conv > 0 && timeout_ >= 0);
+
+    ::memset(&addr_, 0, sizeof(addr_));
+
+    kcp_ = ::ikcp_create(conv, this);
+    assert(kcp_);
+
+    if (fast_mode)
+        ::ikcp_nodelay(kcp_, 1, 20, 1, 1);
+    else
+        ::ikcp_nodelay(kcp_, 0, 20, 0, 0);
+
+    assert(!::ikcp_wndsize(kcp_, send_wnd, recv_wnd) && "ikcp_wndsize called failed");
+    assert(!::ikcp_setmtu(kcp_, KCP_MTU) && "ikcp_setmtu called failed");
+
+    kcp_->output = udp_output;
+}
+
 int 
+xq::net::KcpConn::recv() {
+    int n = 0;
+    char rbuf[KCP_MTU];
+    char* data = new char[MAX_DATA_SIZE];
+    sockaddr addr;
+    int addrlen = sizeof(addr);
+    ::memset(&addr, 0, sizeof(addr));
+
+    n = ::recvfrom(ufd_, rbuf, KCP_MTU, 0, &addr, &addrlen);
+    if (n <= 0) {
+        printf("recvfrom failed: %d\n", error());
+        return -1;
+    }
+
+    if (n < 24) {
+        printf("kcp recv failed\n");
+        return -2;
+    }
+
+    if (_recv(ufd_, &addr, addrlen, rbuf, n, data, MAX_DATA_SIZE) < 0)
+        return -3;
+
+    return 0;
+}
+
+int
 xq::net::KcpConn::_recv(SOCKET ufd, const sockaddr* addr, int addrlen, const char* raw, int raw_len, char* data, int data_len) {
     assert(raw && data && raw_len > 0 && data_len > 0);
 
@@ -206,10 +259,8 @@ xq::net::KcpConn::_recv(SOCKET ufd, const sockaddr* addr, int addrlen, const cha
         }
 
 
-        if (n > 0) {
-            if (event_->on_message(this, data, n)) {
-                break;
-            }
+        if (n > 0 && event_->on_message(this, data, n) < 0) {
+            return -2;
         }
 
         {// kcp locker
