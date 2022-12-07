@@ -206,7 +206,7 @@ int
 xq::net::KcpConn::recv() {
     int n = 0;
     char rbuf[KCP_MTU];
-    char* data = new char[MAX_DATA_SIZE];
+    std::vector<char> data(MAX_DATA_SIZE);
     sockaddr addr;
     socklen_t addrlen = sizeof(addr);
     ::memset(&addr, 0, sizeof(addr));
@@ -222,7 +222,7 @@ xq::net::KcpConn::recv() {
         return -2;
     }
 
-    if (_recv(ufd_, &addr, addrlen, rbuf, n, data, MAX_DATA_SIZE) < 0)
+    if (_recv(ufd_, &addr, addrlen, rbuf, n, &data[0], MAX_DATA_SIZE) < 0)
         return -3;
 
     return 0;
@@ -289,7 +289,7 @@ xq::net::KcpListener::run(IEvent::Ptr event, const char* host, uint32_t nthread,
     for (uint32_t i = 1; i <= max_conn; i++)
         conn_map_.emplace_back(KcpConn::create(event, timeout_));
 
-    update_thr_ = std::move(std::thread(std::bind(&KcpListener::update_thread, this)));
+    update_thr_ = std::thread(std::bind(&KcpListener::update_thread, this));
 
     for (uint32_t i = 0; i < nthread; i++)
         thread_pool_.emplace_back(std::thread(std::bind(&KcpListener::work_thread, this, host)));
@@ -315,7 +315,7 @@ xq::net::KcpListener::work_thread(const char* host) {
     char rbuf[KCP_MTU] = {0};
     int n = 0;
 
-    char* data = new char[MAX_DATA_SIZE];
+    std::vector<char> data(MAX_DATA_SIZE);
     
     sockaddr addr;
     ::memset(&addr, 0, sizeof(addr));
@@ -340,13 +340,12 @@ xq::net::KcpListener::work_thread(const char* host) {
             if (conn->_set(conv, &addr, addrlen) < 0)
                 conn->_reset();
 
-            if (conn->_recv(ufd, &addr, addrlen, rbuf, n, data, MAX_DATA_SIZE) < 0)
+            if (conn->_recv(ufd, &addr, addrlen, rbuf, n, &data[0], MAX_DATA_SIZE) < 0)
                 conn->_reset();
         }
     }
 
     xq::net::close(ufd);
-    delete[] data;
 }
 
 void 
