@@ -208,7 +208,7 @@ xq::net::KcpConn::recv() {
     char rbuf[KCP_MTU];
     char* data = new char[MAX_DATA_SIZE];
     sockaddr addr;
-    int addrlen = sizeof(addr);
+    socklen_t addrlen = sizeof(addr);
     ::memset(&addr, 0, sizeof(addr));
 
     n = ::recvfrom(ufd_, rbuf, KCP_MTU, 0, &addr, &addrlen);
