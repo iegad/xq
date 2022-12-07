@@ -147,32 +147,29 @@ xq::net::KcpConn::udp_output(const char* data, int datalen, IKCPCB*, void* conn)
 int 
 xq::net::KcpConn::_set(uint32_t conv, const sockaddr* addr, int addrlen, int send_wnd, int recv_wnd, bool fast_mode) {
     bool rebuild = false;
-    {
-        std::lock_guard<std::mutex> lk(mtx_);
+    if (!active() || ::memcmp(addr, &addr_, addrlen)) {
+        std::lock_guard<std::shared_mutex> lk(mtx_);
 
-        if (!kcp_ || ::memcmp(addr, &addr_, addrlen)) {
-            if (kcp_) {
-                ::ikcp_release(kcp_);
-            }
+        if (kcp_)
+            ::ikcp_release(kcp_);
 
-            kcp_ = ::ikcp_create(conv, this);
+        kcp_ = ::ikcp_create(conv, this);
 
-            if (fast_mode)
-                ::ikcp_nodelay(kcp_, 1, 20, 1, 1);
-            else
-                ::ikcp_nodelay(kcp_, 0, 20, 0, 0);
+        if (fast_mode)
+            ::ikcp_nodelay(kcp_, 1, 20, 1, 1);
+        else
+            ::ikcp_nodelay(kcp_, 0, 20, 0, 0);
 
-            assert(!::ikcp_wndsize(kcp_, send_wnd, recv_wnd) && "ikcp_wndsize called failed");
-            assert(!::ikcp_setmtu(kcp_, KCP_MTU) && "ikcp_setmtu called failed");
+        assert(!::ikcp_wndsize(kcp_, send_wnd, recv_wnd) && "ikcp_wndsize called failed");
+        assert(!::ikcp_setmtu(kcp_, KCP_MTU) && "ikcp_setmtu called failed");
 
-            kcp_->output = udp_output;
+        kcp_->output = udp_output;
 
-            time_ = tools::get_time_ms();
-            active_time_ = time_ / 1000;
-            ::memcpy(&addr_, addr, addrlen);
+        time_ = tools::get_time_ms();
+        active_time_ = time_ / 1000;
+        ::memcpy(&addr_, addr, addrlen);
 
-            rebuild = true;
-        }
+        rebuild = true;
     }
 
     return rebuild ? (event_->on_connected(this) == 0 ? 1 : -1) : 0;
@@ -236,7 +233,7 @@ xq::net::KcpConn::_recv(SOCKET ufd, const sockaddr* addr, int addrlen, const cha
     assert(raw && data && raw_len > 0 && data_len > 0);
 
     {// kcp locker
-        std::lock_guard<std::mutex> lk(mtx_);
+        std::shared_lock<std::shared_mutex> lk(mtx_);
 
         if (!kcp_)
             return ERR_KCP_INVALID;
@@ -251,7 +248,7 @@ xq::net::KcpConn::_recv(SOCKET ufd, const sockaddr* addr, int addrlen, const cha
     int n;
     do {
         {// kcp locker
-            std::lock_guard<std::mutex> lk(mtx_);
+            std::shared_lock<std::shared_mutex> lk(mtx_);
             if (!kcp_)
                 return ERR_KCP_INVALID;
 
@@ -264,7 +261,7 @@ xq::net::KcpConn::_recv(SOCKET ufd, const sockaddr* addr, int addrlen, const cha
         }
 
         {// kcp locker
-            std::lock_guard<std::mutex> lk(mtx_);
+            std::shared_lock<std::shared_mutex> lk(mtx_);
 
             if (!kcp_) {
                 return ERR_KCP_INVALID;
