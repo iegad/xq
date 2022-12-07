@@ -1,4 +1,5 @@
 #include "net.hpp"
+#include "tools.hpp"
 
 // -------------------------------------------------------------------------------------- 公共函数 --------------------------------------------------------------------------------------
 
@@ -10,16 +11,16 @@ xq::net::udp_socket(const char* local, const char* remote) {
 
     // 本端地址用于udp 套接字绑定
     if (local) {
-        std::string tmp = std::move(std::string(local));
+        std::string tmp = std::string(local);
         const int pos = (int)tmp.rfind(':');
         if (pos == -1)
             return INVALID_SOCKET;
 
-        std::string ip = std::move(tmp.substr(0, pos));
+        std::string ip = tmp.substr(0, pos);
         if (ip.empty())
             ip = "0.0.0.0";
 
-        std::string port = std::move(tmp.substr(pos + 1));
+        std::string port = tmp.substr(pos + 1);
 
         addrinfo hints;
         addrinfo* result = nullptr, * rp = nullptr;
@@ -67,16 +68,16 @@ xq::net::udp_socket(const char* local, const char* remote) {
 
     // 对端地址用于连接
     if (remote) {
-        std::string tmp = std::move(std::string(remote));
+        std::string tmp = std::string(remote);
         const int pos = (int)tmp.rfind(':');
         if (pos == -1)
             return INVALID_SOCKET;
 
-        std::string ip = std::move(tmp.substr(0, pos));
+        std::string ip = tmp.substr(0, pos);
         if (ip.empty())
             return INVALID_SOCKET;
 
-        std::string port = std::move(tmp.substr(pos + 1));
+        std::string port = tmp.substr(pos + 1);
 
         addrinfo hints;
         addrinfo* result = nullptr, * rp = nullptr;
@@ -305,6 +306,7 @@ xq::net::KcpListener::run(IEvent::Ptr event, const char* host, uint32_t nthread,
     state_ = State::Stopped;
 }
 
+#ifdef _WIN32
 void
 xq::net::KcpListener::work_thread(const char* host) {
     const size_t max_conv = conn_map_.size();
@@ -312,7 +314,7 @@ xq::net::KcpListener::work_thread(const char* host) {
     SOCKET ufd = udp_socket(host, nullptr);
     assert(ufd != INVALID_SOCKET);
 
-    char rbuf[KCP_MTU] = {0};
+    char rbuf[KCP_MTU];
     int n = 0;
 
     std::vector<char> data(MAX_DATA_SIZE);
@@ -334,7 +336,7 @@ xq::net::KcpListener::work_thread(const char* host) {
             continue;
         }
 
-        conv = *rbuf;
+        conv = *((uint32_t*)rbuf);
         if (conv > 0 && conv <= max_conv) {
             conn = conn_map_[conv - 1];
             if (conn->_set(conv, &addr, addrlen) < 0)
@@ -347,6 +349,77 @@ xq::net::KcpListener::work_thread(const char* host) {
 
     xq::net::close(ufd);
 }
+
+#else // 类UNIX平台使用recvmmsg 以减少系统调用.
+void
+xq::net::KcpListener::work_thread(const char* host) {
+    static constexpr int MSG_LEN = 10;
+    const size_t max_conv = conn_map_.size();
+
+    SOCKET ufd = udp_socket(host, nullptr);
+    assert(ufd != INVALID_SOCKET);
+
+    int i, n = 0;
+
+    sockaddr addrs[MSG_LEN];
+    ::memset(&addrs, 0, sizeof(addrs));
+
+    char bufs[MSG_LEN][KCP_MTU];
+
+    mmsghdr msgs[MSG_LEN];
+    ::memset(msgs, 0, sizeof(msgs));
+
+    iovec iovecs[MSG_LEN];
+    for (i = 0; i < MSG_LEN; i++) {
+        iovecs[i].iov_base = bufs[i];
+        iovecs[i].iov_len = KCP_MTU;
+        msgs[i].msg_hdr.msg_name = &addrs[i];
+        msgs[i].msg_hdr.msg_namelen = sizeof(addrs[i]);
+        msgs[i].msg_hdr.msg_iov = &iovecs[i];
+        msgs[i].msg_hdr.msg_iovlen = 1;
+    }
+
+    uint32_t conv;
+    KcpConn::Ptr conn;
+    std::vector<char> data(MAX_DATA_SIZE);
+
+    size_t buflen;
+    socklen_t addrlen;
+    sockaddr *addr = nullptr;
+    char *buf = nullptr;
+
+    while (state_ == State::Running) {
+        if (n = ::recvmmsg(ufd, msgs, MSG_LEN, 0, nullptr), n < 0) {
+            printf("recvmmsg error: %d\n", error());
+            continue;
+        }
+
+        printf("recvmmsg: %d\n", n);
+
+        for (i = 0; i < n; i++) {
+            buf = bufs[i];
+            buflen = msgs[i].msg_len;
+            if (buflen < KCP_HEAD_SIZE)
+                continue;
+
+            conv = *((uint32_t*)buf);
+            if (conv > 0 && conv <= max_conv) {
+                addrlen = msgs[i].msg_hdr.msg_namelen;
+                addr = &addrs[i];
+
+                conn = conn_map_[conv - 1];
+                if (conn->_set(conv, addr, addrlen) < 0)
+                    conn->_reset();
+
+                if (conn->_recv(ufd, addr, addrlen, buf, buflen, &data[0], MAX_DATA_SIZE) < 0)
+                    conn->_reset();
+            }
+        }
+    }
+
+    xq::net::close(ufd);
+}
+#endif // !_WIN32
 
 void 
 xq::net::KcpListener::update_thread() {

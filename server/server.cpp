@@ -1,4 +1,5 @@
 #include "xq/net.hpp"
+#include "xq/tools.hpp"
 
 constexpr char HOST[] = "0.0.0.0:6688";
 
@@ -7,7 +8,7 @@ public:
 	typedef std::shared_ptr<EchoEvent> Ptr;
 
 	virtual int on_message(xq::net::KcpConn* conn, const char* data, int data_len) override {
-		printf("%s\n", std::string(data, data_len).c_str());
+		printf("%d -> %s\n", conn->conv(), std::string(data, data_len).c_str());
 		return conn->send(data, data_len);
 	}
 
@@ -25,7 +26,7 @@ int
 main(int argc, char** argv) {
 	assert(!xq::net::init());
 	auto listener = xq::net::KcpListener::create();
-	listener->run(xq::net::IEvent::Ptr(new EchoEvent), HOST, 1, 100);
+	listener->run(xq::net::IEvent::Ptr(new EchoEvent), HOST, 1, 500);
 	xq::net::release();
 	printf("DONE...%lld\n", xq::tools::get_time_ms());
 }

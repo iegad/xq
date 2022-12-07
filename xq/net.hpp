@@ -44,7 +44,6 @@
 #include "ikcp.h"
 
 // ------------------------------------------------------------------------------- xq -------------------------------------------------------------------------------
-#include "tools.hpp"
 
 namespace xq {
 namespace net {
@@ -160,14 +159,14 @@ public: // >>>>>>>>> 公共方法 >>>>>>>>>
     /// </summary>
     /// <param name="conn">已连接KcpConn</param>
     /// <returns>成功返回0, 否则返回-1</returns>
-    virtual int on_connected(KcpConn *conn) { return 0; }
+    virtual int on_connected(KcpConn */*conn*/) { return 0; }
 
     /// <summary>
     /// 客户端连接断开事件, 客户端连接断开后触发.
     /// TODO: 由于是UDP, 所以没有真正意义上的连接, 所谓的断开, 只是客户端读超时.
     /// </summary>
     /// <param name="conn">已断开连接的KcpConn</param>
-    virtual void on_disconnected(KcpConn *conn) {}
+    virtual void on_disconnected(KcpConn */*conn*/) {}
 
     /// <summary>
     /// 客户端错误事件, 当客户端出现错误时触发.
@@ -175,7 +174,7 @@ public: // >>>>>>>>> 公共方法 >>>>>>>>>
     /// </summary>
     /// <param name="conn">出现错误的KcpConn</param>
     /// <param name="err_code">错误码</param>
-    virtual void on_error(KcpConn *conn, int err_code) {}
+    virtual void on_error(KcpConn */*conn*/, int /*err_code*/) {}
 
     /// <summary>
     /// 原始码流接收事件
@@ -185,7 +184,7 @@ public: // >>>>>>>>> 公共方法 >>>>>>>>>
     /// <param name="conn">KcpConn</param>
     /// <param name="raw">原始码流</param>
     /// <param name="raw_len">原始码流长度</param>
-    virtual void on_recv(KcpConn *conn, const char* raw, int raw_len) {}
+    virtual void on_recv(KcpConn */*conn*/, const char* /*raw*/, int /*raw_len*/) {}
 
     /// <summary>
     /// 原始码流发送事件
@@ -195,7 +194,7 @@ public: // >>>>>>>>> 公共方法 >>>>>>>>>
     /// <param name="conn">KcpConn</param>
     /// <param name="raw">原始码流</param>
     /// <param name="raw_len">原始码流长度</param>
-    virtual void on_send(KcpConn *conn, const char* raw, int raw_len) {}
+    virtual void on_send(KcpConn */*conn*/, const char* /*raw*/, int /*raw_len*/) {}
 
     /// <summary>
     /// 消息事件. 当该事件返回非0时, 底层会断开重置KcpConn的连接.
@@ -204,7 +203,7 @@ public: // >>>>>>>>> 公共方法 >>>>>>>>>
     /// <param name="data">消息数据</param>
     /// <param name="data_len">消息长度</param>
     /// <returns>成功返回0, 否则返回-1</returns>
-    virtual int on_message(KcpConn *conn, const char* data, int data_len) = 0;
+    virtual int on_message(KcpConn */*conn*/, const char* /*data*/, int /*data_len*/) = 0;
 }; // class IEvent
 
 // ------------------------------------------------------------------------------- KcpConn -------------------------------------------------------------------------------

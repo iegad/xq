@@ -1,4 +1,5 @@
 #include "xq/net.hpp"
+#include "xq/tools.hpp"
 
 static int NTIME = 100;
 
@@ -52,7 +53,7 @@ int
 main(int argc, char** argv) {
 	assert(!xq::net::init());
 
-	xq::net::KcpConn::Ptr conn = xq::net::KcpConn::connect(xq::net::IEvent::Ptr(new EchoEvent), nullptr, argc > 1 ? argv[1] : "127.0.0.1:6688", 1);
+	xq::net::KcpConn::Ptr conn = xq::net::KcpConn::connect(xq::net::IEvent::Ptr(new EchoEvent), nullptr, argc > 1 ? argv[1] : "127.0.0.1:6688", 288);
 
 	std::thread(std::bind(update_worker, conn)).detach();
 	std::thread(std::bind(send_worker, conn)).detach();
