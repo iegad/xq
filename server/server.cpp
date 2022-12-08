@@ -28,5 +28,5 @@ main(int argc, char** argv) {
 	auto listener = xq::net::KcpListener::create();
 	listener->run(xq::net::IEvent::Ptr(new EchoEvent), HOST, 4, 500);
 	xq::net::release();
-	printf("DONE...%lld\n", xq::tools::get_time_ms());
+	printf("DONE...%lu\n", xq::tools::get_time_ms());
 }

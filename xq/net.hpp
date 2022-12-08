@@ -414,7 +414,7 @@ private: // >>>>>>>>> 私有方法 >>>>>>>>>
 private: // >>>>>>>>> 成员字段 >>>>>>>>>
     SOCKET ufd_;            // UDP套接字
     sockaddr addr_;         // KcpConn对端地址
-    int addrlen_;           // KcpConn对端地址长度
+    socklen_t addrlen_;           // KcpConn对端地址长度
     IKCPCB* kcp_;           // KCP
     int timeout_;           // 超时
     uint64_t time_;         // 创建时间, 单位毫秒

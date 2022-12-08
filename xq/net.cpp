@@ -109,7 +109,7 @@ xq::net::udp_socket(const char* local, const char* remote, sockaddr *addr, sockl
 #endif
             }
 
-            if (!::connect(fd, rp->ai_addr, (int)rp->ai_addrlen)) {
+            if (!::connect(fd, rp->ai_addr, rp->ai_addrlen)) {
                 assert(addr && addrlen);
                 *addrlen = rp->ai_addrlen;
                 ::memcpy(addr, rp->ai_addr, rp->ai_addrlen);
@@ -309,7 +309,7 @@ xq::net::KcpListener::work_thread(const char* host) {
     int n = 0;
 
     std::vector<char> data(MAX_DATA_SIZE);
-    
+
     sockaddr addr;
     ::memset(&addr, 0, sizeof(addr));
     socklen_t addrlen = sizeof(addr);
@@ -339,6 +339,7 @@ xq::net::KcpListener::work_thread(const char* host) {
 }
 
 #else // 类UNIX平台使用recvmmsg 以减少系统调用.
+
 void
 xq::net::KcpListener::work_thread(const char* host) {
     static constexpr int MSG_LEN = 16;
@@ -373,16 +374,16 @@ xq::net::KcpListener::work_thread(const char* host) {
 
     size_t buflen;
     socklen_t addrlen;
-    sockaddr *addr = nullptr;
-    char *buf = nullptr;
+    sockaddr* addr = nullptr;
+    char* buf = nullptr;
+
+    timespec expire{ .tv_sec = 0, .tv_nsec = 2000000 };
 
     while (state_ == State::Running) {
-        if (n = ::recvmmsg(ufd, msgs, MSG_LEN, 0, nullptr), n < 0) {
+        if (n = ::recvmmsg(ufd, msgs, MSG_LEN, 0, &expire), n < 0) {
             printf("recvmmsg error: %d\n", error());
             continue;
         }
-
-        printf("recvmmsg: %d\n", n);
 
         for (i = 0; i < n; i++) {
             buf = bufs[i];
