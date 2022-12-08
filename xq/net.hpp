@@ -10,7 +10,7 @@
 //! --------------------------------------------------------------------------------------------------------------------
 //! |- time                |- coder                  |- content 
 
-// ------------------------------------------------------------------------------- system -------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------- system ----------------------------------------------------------------------------
 #ifdef _WIN32
 #pragma comment(lib, "ws2_32.lib")
 #include <WinSock2.h>
@@ -23,32 +23,32 @@
 #include <sys/types.h>
 #endif
 
-// ------------------------------------------------------------------------------- C -------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------- C ----------------------------------------------------------------------------
 #include <assert.h>
 #include <errno.h>
 #include <memory.h>
 
-// ------------------------------------------------------------------------------- C++ -------------------------------------------------------------------------------
+// ---------------------------------------------------------------------------- C++ ----------------------------------------------------------------------------
 #include <atomic>
 #include <chrono>
 #include <deque>
 #include <functional>
 #include <memory>
 #include <mutex>
-#include <shared_mutex>
 #include <thread>
 #include <unordered_map>
 #include <vector>
 
-// ------------------------------------------------------------------------------- 3rd party -------------------------------------------------------------------------------
+// ----------------------------------------------------------------------------- 3rd party -----------------------------------------------------------------------------
 #include "ikcp.h"
 
-// ------------------------------------------------------------------------------- xq -------------------------------------------------------------------------------
+// ----------------------------------------------------------------------------- xq -----------------------------------------------------------------------------
+#include "tools.hpp"
 
 namespace xq {
 namespace net {
 
-// ------------------------------------------------------------------------------- 类型/符号 -------------------------------------------------------------------------------
+// ----------------------------------------------------------------------------- 类型/符号 -----------------------------------------------------------------------------
 // ====================
 // SOCKET 类型
 // ====================
@@ -65,7 +65,7 @@ namespace net {
 #define INVALID_SOCKET (SOCKET)(~0)
 #endif // !INVALID_SOCKET
 
-// ------------------------------------------------------------------------------- 常量 -------------------------------------------------------------------------------
+// ----------------------------------------------------------------------------- 常量 -----------------------------------------------------------------------------
 constexpr int DEFAULT_SEND_WND = 512;   // 发送窗口大小
 constexpr int DEFAULT_RECV_WND = 512;   // 接收窗口大小
 constexpr int DEFAULT_TIMEOUT  = 60;    // 默认超时(秒)
@@ -74,11 +74,11 @@ constexpr int KCP_MTU       = 1472;                             // KCP MTU
 constexpr int KCP_HEAD_SIZE = 24;                               // KCP消息头长度
 constexpr int MAX_DATA_SIZE = 128 * (KCP_MTU - KCP_HEAD_SIZE);  // 消息包最大长度: 181(kB)
 
-// ------------------------------------------------------------------------------- 错误码 -------------------------------------------------------------------------------
+// ----------------------------------------------------------------------------- 错误码 -----------------------------------------------------------------------------
 constexpr int ERR_KCP_INVALID = -100; // 无效的KCP
 constexpr int ERR_KCP_TIMEOUT = -101; // 超时
 
-// ------------------------------------------------------------------------------- 公共函数 -------------------------------------------------------------------------------
+// ----------------------------------------------------------------------------- 公共函数 -----------------------------------------------------------------------------
 
 /// <summary>
 /// 初始化网络资源, 用于WinSock.
@@ -134,7 +134,7 @@ inline int error() {
 /// <returns>成功返回 套接字描述符, 否则返回 INVALID_SOCKET</returns>
 SOCKET udp_socket(const char* local, const char* remote, sockaddr *addr = nullptr, socklen_t *addrlen = nullptr);
 
-// ------------------------------------------------------------------------------- IEvent -------------------------------------------------------------------------------
+// ----------------------------------------------------------------------------- IEvent -----------------------------------------------------------------------------
 class KcpConn;
 
 /// <summary>
@@ -142,13 +142,10 @@ class KcpConn;
 /// 必需实现的接口为 on_message.
 /// </summary>
 class IEvent {
-public: // >>>>>>>>> 类型/符号 >>>>>>>>>
+public: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 类型/符号 >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
     typedef std::shared_ptr<IEvent> Ptr;
 
-protected:
-    ~IEvent() {}
-
-public: // >>>>>>>>> 公共方法 >>>>>>>>>
+public: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 公共方法 >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
     IEvent() {}
     IEvent(const IEvent&) = delete;
     IEvent& operator=(const IEvent&) = delete;
@@ -206,13 +203,14 @@ public: // >>>>>>>>> 公共方法 >>>>>>>>>
     virtual int on_message(KcpConn */*conn*/, const char* /*data*/, int /*data_len*/) = 0;
 }; // class IEvent
 
-// ------------------------------------------------------------------------------- KcpConn -------------------------------------------------------------------------------
+// ----------------------------------------------------------------------------- KcpConn -----------------------------------------------------------------------------
 
 /// <summary>
 /// Kcp客户端
 /// </summary>
 class KcpConn final : std::enable_shared_from_this<KcpConn> {
-public: // >>>>>>>>> 类型/符号 >>>>>>>>>
+
+public: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 类型/符号 >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
     typedef std::shared_ptr<KcpConn> Ptr;
 
 public: // >>>>>>>>> 公共函数 >>>>>>>>>
@@ -228,12 +226,12 @@ public: // >>>>>>>>> 公共函数 >>>>>>>>>
     /// <param name="recv_wnd">接收窗口, 默认为256</param>
     /// <param name="fast_mode">是否为极速模式, 极速模式会增加网络压力</param>
     /// <returns></returns>
-    static Ptr connect(IEvent::Ptr event, const char* local, const char* remote, uint32_t conv, int send_wnd = DEFAULT_SEND_WND, int recv_wnd = DEFAULT_RECV_WND, bool fast_mode = true, int timeout = DEFAULT_TIMEOUT) {
+    static Ptr connect(IEvent::Ptr event, const char* local, const char* remote, uint32_t conv) {
         assert(conv);
-        return Ptr(new KcpConn(event, local, remote, conv, send_wnd, recv_wnd, fast_mode, timeout));
+        return Ptr(new KcpConn(event, local, remote, conv));
     }
 
-private: // >>>>>>>>> 私有函数 >>>>>>>>>
+private: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 私有函数 >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
     /// <summary>
     /// 创建默认KcpConn, 该函数由KcpListener调用.
@@ -254,13 +252,14 @@ private: // >>>>>>>>> 私有函数 >>>>>>>>>
     /// <returns>成功返回0, 否则返回-1</returns>
     static int udp_output(const char* data, int data_len, IKCPCB* kcp, void* conn);
 
-public: // >>>>>>>>> 公共属性 >>>>>>>>>
+public: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 公共属性 >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
     /// <summary>
     /// 判断当前KcpConn是否激活
     /// </summary>
     /// <returns>激活返回true, 否则返回false</returns>
     bool active() { 
-        std::shared_lock<std::shared_mutex> lk(mtx_); 
+        std::lock_guard<xq::tools::SpinMutex> lk(mtx_);
         return kcp_ != nullptr; 
     }
 
@@ -269,7 +268,7 @@ public: // >>>>>>>>> 公共属性 >>>>>>>>>
     /// </summary>
     /// <returns>激活时返顺conv, 否则返回0</returns>
     uint32_t conv() {
-        std::shared_lock<std::shared_mutex> lk(mtx_);
+        std::lock_guard<xq::tools::SpinMutex> lk(mtx_);
         return kcp_ ? kcp_->conv : 0; 
     }
 
@@ -279,7 +278,7 @@ public: // >>>>>>>>> 公共属性 >>>>>>>>>
     /// <returns>激活时返回UDP描述符, 否则返回 SOCKET_INVALID</returns>
     SOCKET sockfd() const { return ufd_; }
 
-public: // >>>>>>>>> 公共方法 >>>>>>>>>
+public: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 公共方法 >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
     ~KcpConn() { 
         if (kcp_) 
@@ -287,6 +286,39 @@ public: // >>>>>>>>> 公共方法 >>>>>>>>>
         // TODO: 当为客户端时, 关闭sockfd
     }
 
+    int recv();
+
+    /// <summary>
+    /// 发送消息
+    /// </summary>
+    /// <param name="data">消息数据</param>
+    /// <param name="data_len">数据长度</param>
+    /// <returns>
+    ///     0: 成功; 
+    ///     -100: KcpConn 已失效; 
+    ///     others: 错误;
+    /// </returns>
+    int send(const char* data, int data_len) {
+        std::lock_guard<xq::tools::SpinMutex> lk(mtx_);
+        return kcp_ ? ::ikcp_send(kcp_, data, data_len) : ERR_KCP_INVALID;
+    }
+
+    void set(int send_wnd = DEFAULT_SEND_WND, int recv_wnd = DEFAULT_RECV_WND, bool fast_mode = true, int timeout = DEFAULT_TIMEOUT) {
+        assert(kcp_ && "ikcp is not init yet");
+        assert(timeout >= 0);
+
+        if (fast_mode)
+            ::ikcp_nodelay(kcp_, 1, 20, 1, 1);
+        else
+            ::ikcp_nodelay(kcp_, 0, 20, 0, 0);
+
+        assert(!::ikcp_wndsize(kcp_, send_wnd, recv_wnd) && "ikcp_wndsize called failed");
+        assert(!::ikcp_setmtu(kcp_, KCP_MTU) && "ikcp_setmtu called failed");
+        
+        if (timeout)
+            timeout_ = timeout;
+    }
+    
     /// <summary>
     /// KCP UPDATE, 用于处理KCP协议消息.
     /// 当该方法返回非0时, 表示当前KcpConn已处于无效状态.
@@ -298,7 +330,7 @@ public: // >>>>>>>>> 公共方法 >>>>>>>>>
     ///     -101: KcpConn 超时;
     /// </returns>
     int update(uint64_t now_ms) {
-        std::lock_guard<std::shared_mutex> lk(mtx_);
+        std::lock_guard<xq::tools::SpinMutex> lk(mtx_);
 
         // 如果当前KcpConn未激活, 不作检查.
         if (!kcp_)
@@ -310,25 +342,8 @@ public: // >>>>>>>>> 公共方法 >>>>>>>>>
         ::ikcp_update(kcp_, (uint32_t)(now_ms - time_));
         return 0;
     }
-
-    /// <summary>
-    /// 发送消息
-    /// </summary>
-    /// <param name="data">消息数据</param>
-    /// <param name="datalen">数据长度</param>
-    /// <returns>
-    ///     0: 成功; 
-    ///     -100: KcpConn 已失效; 
-    ///     others: 错误;
-    /// </returns>
-    int send(const char* data, int data_len) {
-        std::lock_guard<std::shared_mutex> lk(mtx_);
-        return kcp_ ? ::ikcp_send(kcp_, data, data_len) : ERR_KCP_INVALID;
-    }
-
-    int recv();
     
-private: // >>>>>>>>> 私有方法 >>>>>>>>>
+private: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 私有方法 >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
     /// <summary>
     /// 将原始码流解析为消息数据
@@ -348,7 +363,7 @@ private: // >>>>>>>>> 私有方法 >>>>>>>>>
     /// </summary>
     void _reset() {
         event_->on_disconnected(this);
-        std::lock_guard<std::shared_mutex> lk(mtx_);
+        std::lock_guard<xq::tools::SpinMutex> lk(mtx_);
 
         if (ufd_ != INVALID_SOCKET) {
             ufd_ = INVALID_SOCKET;
@@ -406,12 +421,12 @@ private: // >>>>>>>>> 私有方法 >>>>>>>>>
     /// <param name="send_wnd">发送窗口大小</param>
     /// <param name="recv_wnd">接收窗口大小</param>
     /// <param name="fast_mode">是否为极速模式</param>
-    KcpConn(IEvent::Ptr event, const char* local, const char* remote, uint32_t conv, int send_wnd, int recv_wnd, bool fast_mode, int timeout);
+    KcpConn(IEvent::Ptr event, const char* local, const char* remote, uint32_t conv);
 
     KcpConn(const KcpConn&) = delete;
     KcpConn& operator=(const KcpConn&) = delete;
 
-private: // >>>>>>>>> 成员字段 >>>>>>>>>
+private: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 成员字段 >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
     SOCKET ufd_;            // UDP套接字
     sockaddr addr_;         // KcpConn对端地址
     socklen_t addrlen_;           // KcpConn对端地址长度
@@ -420,17 +435,21 @@ private: // >>>>>>>>> 成员字段 >>>>>>>>>
     uint64_t time_;         // 创建时间, 单位毫秒
     uint64_t active_time_;  // 最后激活时间, 单位秒
 
-    std::shared_mutex mtx_;
+    xq::tools::SpinMutex mtx_;
     IEvent::Ptr event_;
 
-private: // >>>>>>>>> 友元类 >>>>>>>>>
+private: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 友元类 >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
     friend class KcpListener;
 }; // class KcpConn;
 
-// ------------------------------------------------------------------------------- KCP Listener -------------------------------------------------------------------------------
+// ----------------------------------------------------------------------------- KCP Listener -----------------------------------------------------------------------------
 
+/// <summary>
+/// 
+/// </summary>
 class KcpListener final {
-public: // >>>>>>>>> 类型/符号 >>>>>>>>>
+
+public: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 类型/符号 >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
     typedef std::unique_ptr<KcpListener> ptr;
 
     /// <summary>
@@ -442,7 +461,7 @@ public: // >>>>>>>>> 类型/符号 >>>>>>>>>
         Running,     // 运行状态
     };
 
-public: // >>>>>>>>> 公共函数 >>>>>>>>>
+public: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 公共函数 >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
     /// <summary>
     /// 创建KcpListener
@@ -451,14 +470,13 @@ public: // >>>>>>>>> 公共函数 >>>>>>>>>
     /// <returns>KcpListener 实例</returns>
     static ptr create(int timeout = DEFAULT_TIMEOUT) { return ptr(new KcpListener(timeout)); }
 
-private: // >>>>>>>>> 私有函数 >>>>>>>>>
+private: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 私有函数 >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
-public: // >>>>>>>>> 公共属性 >>>>>>>>>
+public: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 公共属性 >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
-public: // >>>>>>>>> 公共方法 >>>>>>>>>
+public: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 公共方法 >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
     ~KcpListener() { stop(); }
-
 
     /// <summary>
     /// 启动服务
@@ -475,7 +493,7 @@ public: // >>>>>>>>> 公共方法 >>>>>>>>>
     /// </summary>
     void stop() { state_ = State::Stopping; }
 
-private: // >>>>>>>>> 私有方法 >>>>>>>>>
+private: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 私有方法 >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
     KcpListener(int timeout)  :
         timeout_(timeout),
         state_(State::Stopped),
@@ -498,7 +516,7 @@ private: // >>>>>>>>> 私有方法 >>>>>>>>>
     KcpListener(const KcpListener&) = delete;
     KcpListener& operator=(const KcpListener&) = delete;
 
-private: // >>>>>>>>> 成员字段 >>>>>>>>>
+private: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 成员字段 >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
     int timeout_;
     State state_;
 
@@ -506,7 +524,7 @@ private: // >>>>>>>>> 成员字段 >>>>>>>>>
     std::thread update_thr_;
     std::vector<std::thread> thread_pool_;
     std::vector<KcpConn::Ptr> conn_map_;
-private: // >>>>>>>>> 友元类 >>>>>>>>>
+private: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 友元类 >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 }; // class KcpListener;
 
 } // namespace net

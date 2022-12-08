@@ -18,26 +18,28 @@ LDFLAGS := -lpthread
 DEFINES :=
 INCLUDE := -I.
 CFLAGS  := -g -Wall -O3 $(DEFINES) $(INCLUDE)
-CXXFLAGS:= $(CFLAGS) --std=c++17 -DHAVE_CONFIG_H
+CXXFLAGS:= $(CFLAGS) --std=gnu++2a -DHAVE_CONFIG_H
   
   
 #i think you should do anything here
 #下面的基本上不需要做任何改动了
 .PHONY : everything objs clean cleanall rebuild
+
+everything: $(TARGET)
   
-everything : $(TARGET)
+all: $(TARGET)
   
-all : $(TARGET)
+objs: $(OBJS)
   
-objs : $(OBJS)
-  
-rebuild: cleanall everything
-                
-clean :
+rebuild: clean everything
+
+tidy:
 	rm -fr *.so
 	rm -fr *.o
-    
-cleanall : clean
+                
+clean:
+	rm -fr *.so
+	rm -fr *.o
 	rm -fr $(TARGET)
   
 $(TARGET) : $(OBJS)

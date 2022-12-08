@@ -25,3 +25,19 @@ xq::tools::bin2hex(const uint8_t* data, size_t data_len) {
     }
     return res;
 }
+
+void 
+xq::tools::SpinMutex::lock() {
+    for (;;) {
+        if (!mtx_.exchange(true, std::memory_order_acquire))
+            break;
+
+        while (mtx_.load(std::memory_order_relaxed)) {
+#ifdef _WIN32
+            _mm_pause();
+#else
+            __builtin_ia32_pause();
+#endif // _WIN32
+        }
+    }
+}

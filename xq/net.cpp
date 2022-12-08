@@ -148,31 +148,23 @@ xq::net::KcpConn::udp_output(const char* data, int datalen, IKCPCB*, void* conn)
     return n;
 }
 
-xq::net::KcpConn::KcpConn(IEvent::Ptr event, const char* local, const char* remote, uint32_t conv, int send_wnd, int recv_wnd, bool fast_mode, int timeout) :
+xq::net::KcpConn::KcpConn(IEvent::Ptr event, const char* local, const char* remote, uint32_t conv) :
     ufd_(INVALID_SOCKET),
     addrlen_(sizeof(sockaddr)),
     kcp_(nullptr),
-    timeout_(timeout),
+    timeout_(DEFAULT_TIMEOUT),
     time_(xq::tools::get_time_ms()),
     active_time_(time_ / 1000),
     event_(event) {
     ::memset(&addr_, 0, sizeof(addr_));
 
     ufd_ = udp_socket(local, remote, &addr_, &addrlen_);
-    assert(ufd_ != INVALID_SOCKET && conv > 0 && timeout_ >= 0);
+    assert(ufd_ != INVALID_SOCKET && conv > 0);
 
     kcp_ = ::ikcp_create(conv, this);
     assert(kcp_);
-
-    if (fast_mode)
-        ::ikcp_nodelay(kcp_, 1, 20, 1, 1);
-    else
-        ::ikcp_nodelay(kcp_, 0, 20, 0, 0);
-
-    assert(!::ikcp_wndsize(kcp_, send_wnd, recv_wnd) && "ikcp_wndsize called failed");
-    assert(!::ikcp_setmtu(kcp_, KCP_MTU) && "ikcp_setmtu called failed");
-
     kcp_->output = udp_output;
+    set();
 }
 
 int 
@@ -207,7 +199,7 @@ xq::net::KcpConn::_recv(SOCKET ufd, uint32_t conv, const sockaddr* addr, int add
     
     if (!active() || ::memcmp(addr, &addr_, addrlen)) {
         {
-            std::lock_guard<std::shared_mutex> lk(mtx_);
+            std::lock_guard<xq::tools::SpinMutex> lk(mtx_);
 
             if (kcp_)
                 ::ikcp_release(kcp_);
@@ -229,7 +221,7 @@ xq::net::KcpConn::_recv(SOCKET ufd, uint32_t conv, const sockaddr* addr, int add
     }
 
     {// kcp locker
-        std::lock_guard<std::shared_mutex> lk(mtx_);
+        std::lock_guard<xq::tools::SpinMutex> lk(mtx_);
 
         if (!kcp_)
             return ERR_KCP_INVALID;
@@ -244,7 +236,7 @@ xq::net::KcpConn::_recv(SOCKET ufd, uint32_t conv, const sockaddr* addr, int add
     int n;
     do {
         {// kcp locker
-            std::lock_guard<std::shared_mutex> lk(mtx_);
+            std::lock_guard<xq::tools::SpinMutex> lk(mtx_);
             if (!kcp_)
                 return ERR_KCP_INVALID;
 
