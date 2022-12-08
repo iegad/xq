@@ -23,7 +23,7 @@ CXXFLAGS:= $(CFLAGS) --std=gnu++2a -DHAVE_CONFIG_H
   
 #i think you should do anything here
 #下面的基本上不需要做任何改动了
-.PHONY : everything objs clean cleanall rebuild
+.PHONY : everything objs tidy clean rebuild
 
 everything: $(TARGET)
   
