@@ -229,7 +229,7 @@ xq::net::KcpConn::_recv(SOCKET ufd, uint32_t conv, const sockaddr* addr, int add
     }
 
     {// kcp locker
-        std::shared_lock<std::shared_mutex> lk(mtx_);
+        std::lock_guard<std::shared_mutex> lk(mtx_);
 
         if (!kcp_)
             return ERR_KCP_INVALID;
@@ -244,7 +244,7 @@ xq::net::KcpConn::_recv(SOCKET ufd, uint32_t conv, const sockaddr* addr, int add
     int n;
     do {
         {// kcp locker
-            std::shared_lock<std::shared_mutex> lk(mtx_);
+            std::lock_guard<std::shared_mutex> lk(mtx_);
             if (!kcp_)
                 return ERR_KCP_INVALID;
 
@@ -256,16 +256,12 @@ xq::net::KcpConn::_recv(SOCKET ufd, uint32_t conv, const sockaddr* addr, int add
             return -2;
         }
 
-        {// kcp locker
-            std::shared_lock<std::shared_mutex> lk(mtx_);
-
-            if (!kcp_) {
-                return ERR_KCP_INVALID;
-            }
-
-            if (!kcp_->nrcv_que)
-                break;
+        if (!active()) {
+            return ERR_KCP_INVALID;
         }
+
+        if (!kcp_->nrcv_que)
+            break;
     } while (1);
 
     return 0;

@@ -1,7 +1,7 @@
 #include "xq/net.hpp"
 #include "xq/tools.hpp"
 
-static int NTIME = 1000;
+static int NTIME = 100000;
 
 void
 update_worker(xq::net::KcpConn::Ptr conn) {
@@ -20,7 +20,7 @@ send_worker(xq::net::KcpConn::Ptr conn) {
 	char data[1024 * 8];
 	int i;
 	for (i = 0; i < NTIME; i++) {
-		::sprintf(data, "%06d", i);
+		::sprintf(data, "Hello world: %d!!!", i);
 		if (conn->send(data, ::strlen(data))) {
 			break;
 		}

@@ -298,7 +298,7 @@ public: // >>>>>>>>> 公共方法 >>>>>>>>>
     ///     -101: KcpConn 超时;
     /// </returns>
     int update(uint64_t now_ms) {
-        std::shared_lock<std::shared_mutex> lk(mtx_);
+        std::lock_guard<std::shared_mutex> lk(mtx_);
 
         // 如果当前KcpConn未激活, 不作检查.
         if (!kcp_)
@@ -322,7 +322,7 @@ public: // >>>>>>>>> 公共方法 >>>>>>>>>
     ///     others: 错误;
     /// </returns>
     int send(const char* data, int data_len) {
-        std::shared_lock<std::shared_mutex> lk(mtx_);
+        std::lock_guard<std::shared_mutex> lk(mtx_);
         return kcp_ ? ::ikcp_send(kcp_, data, data_len) : ERR_KCP_INVALID;
     }
 
