@@ -4,7 +4,7 @@
 // -------------------------------------------------------------------------------------- 公共函数 --------------------------------------------------------------------------------------
 
 xq::net::SOCKET
-xq::net::udp_socket(const char* local, const char* remote) {
+xq::net::udp_socket(const char* local, const char* remote, sockaddr *addr, socklen_t *addrlen) {
     static constexpr int ON = 1;
 
     xq::net::SOCKET fd = INVALID_SOCKET;
@@ -110,11 +110,14 @@ xq::net::udp_socket(const char* local, const char* remote) {
             }
 
             if (!::connect(fd, rp->ai_addr, (int)rp->ai_addrlen)) {
+                assert(addr && addrlen);
+                *addrlen = rp->ai_addrlen;
+                ::memcpy(addr, rp->ai_addr, rp->ai_addrlen);
                 break;
             }
 
             xq::net::close(fd);
-                }
+        }
 
         assert(rp);
 
@@ -124,7 +127,6 @@ xq::net::udp_socket(const char* local, const char* remote) {
             return INVALID_SOCKET;
         }
     }
-
 
     return fd;
 }
@@ -140,54 +142,24 @@ xq::net::KcpConn::udp_output(const char* data, int datalen, IKCPCB*, void* conn)
     const int n = ::sendto(self->ufd_, data, datalen, 0, &self->addr_, self->addrlen_);
     if (n < 0) {
         // TODO: log...
+        printf("send failed: %d\n", error());
     }
 
     return n;
 }
 
-int 
-xq::net::KcpConn::_set(uint32_t conv, const sockaddr* addr, int addrlen, int send_wnd, int recv_wnd, bool fast_mode) {
-    bool rebuild = false;
-    if (!active() || ::memcmp(addr, &addr_, addrlen)) {
-        std::lock_guard<std::shared_mutex> lk(mtx_);
-
-        if (kcp_)
-            ::ikcp_release(kcp_);
-
-        kcp_ = ::ikcp_create(conv, this);
-
-        if (fast_mode)
-            ::ikcp_nodelay(kcp_, 1, 20, 1, 1);
-        else
-            ::ikcp_nodelay(kcp_, 0, 20, 0, 0);
-
-        assert(!::ikcp_wndsize(kcp_, send_wnd, recv_wnd) && "ikcp_wndsize called failed");
-        assert(!::ikcp_setmtu(kcp_, KCP_MTU) && "ikcp_setmtu called failed");
-
-        kcp_->output = udp_output;
-
-        time_ = tools::get_time_ms();
-        active_time_ = time_ / 1000;
-        ::memcpy(&addr_, addr, addrlen);
-
-        rebuild = true;
-    }
-
-    return rebuild ? (event_->on_connected(this) == 0 ? 1 : -1) : 0;
-}
-
 xq::net::KcpConn::KcpConn(IEvent::Ptr event, const char* local, const char* remote, uint32_t conv, int send_wnd, int recv_wnd, bool fast_mode, int timeout) :
-    ufd_(udp_socket(local, remote)),
-    addrlen_(0),
+    ufd_(INVALID_SOCKET),
+    addrlen_(sizeof(sockaddr)),
     kcp_(nullptr),
     timeout_(timeout),
     time_(xq::tools::get_time_ms()),
     active_time_(time_ / 1000),
     event_(event) {
-
-    assert(ufd_ != INVALID_SOCKET && conv > 0 && timeout_ >= 0);
-
     ::memset(&addr_, 0, sizeof(addr_));
+
+    ufd_ = udp_socket(local, remote, &addr_, &addrlen_);
+    assert(ufd_ != INVALID_SOCKET && conv > 0 && timeout_ >= 0);
 
     kcp_ = ::ikcp_create(conv, this);
     assert(kcp_);
@@ -223,15 +195,38 @@ xq::net::KcpConn::recv() {
         return -2;
     }
 
-    if (_recv(ufd_, &addr, addrlen, rbuf, n, &data[0], MAX_DATA_SIZE) < 0)
+    if (_recv(ufd_,kcp_->conv, &addr, addrlen, rbuf, n, &data[0], MAX_DATA_SIZE) < 0)
         return -3;
 
     return 0;
 }
 
 int
-xq::net::KcpConn::_recv(SOCKET ufd, const sockaddr* addr, int addrlen, const char* raw, int raw_len, char* data, int data_len) {
+xq::net::KcpConn::_recv(SOCKET ufd, uint32_t conv, const sockaddr* addr, int addrlen, const char* raw, int raw_len, char* data, int data_len) {
     assert(raw && data && raw_len > 0 && data_len > 0);
+    
+    if (!active() || ::memcmp(addr, &addr_, addrlen)) {
+        {
+            std::lock_guard<std::shared_mutex> lk(mtx_);
+
+            if (kcp_)
+                ::ikcp_release(kcp_);
+
+            kcp_ = ::ikcp_create(conv, this);
+            assert(kcp_);
+            assert(!::ikcp_nodelay(kcp_, 1, 20, 1, 1));
+            assert(!::ikcp_wndsize(kcp_, DEFAULT_SEND_WND, DEFAULT_SEND_WND) && "ikcp_wndsize called failed");
+            assert(!::ikcp_setmtu(kcp_, KCP_MTU) && "ikcp_setmtu called failed");
+            kcp_->output = udp_output;
+
+            time_ = tools::get_time_ms();
+            active_time_ = time_ / 1000;
+            ::memcpy(&addr_, addr, addrlen);
+        }
+
+        if (event_->on_connected(this))
+            return -1;
+    }
 
     {// kcp locker
         std::shared_lock<std::shared_mutex> lk(mtx_);
@@ -339,10 +334,7 @@ xq::net::KcpListener::work_thread(const char* host) {
         conv = *((uint32_t*)rbuf);
         if (conv > 0 && conv <= max_conv) {
             conn = conn_map_[conv - 1];
-            if (conn->_set(conv, &addr, addrlen) < 0)
-                conn->_reset();
-
-            if (conn->_recv(ufd, &addr, addrlen, rbuf, n, &data[0], MAX_DATA_SIZE) < 0)
+            if (conn->_recv(ufd, conv, &addr, addrlen, rbuf, n, &data[0], MAX_DATA_SIZE) < 0)
                 conn->_reset();
         }
     }
@@ -353,7 +345,7 @@ xq::net::KcpListener::work_thread(const char* host) {
 #else // 类UNIX平台使用recvmmsg 以减少系统调用.
 void
 xq::net::KcpListener::work_thread(const char* host) {
-    static constexpr int MSG_LEN = 10;
+    static constexpr int MSG_LEN = 16;
     const size_t max_conv = conn_map_.size();
 
     SOCKET ufd = udp_socket(host, nullptr);
@@ -408,10 +400,7 @@ xq::net::KcpListener::work_thread(const char* host) {
                 addr = &addrs[i];
 
                 conn = conn_map_[conv - 1];
-                if (conn->_set(conv, addr, addrlen) < 0)
-                    conn->_reset();
-
-                if (conn->_recv(ufd, addr, addrlen, buf, buflen, &data[0], MAX_DATA_SIZE) < 0)
+                if (conn->_recv(ufd, conv, addr, addrlen, buf, buflen, &data[0], MAX_DATA_SIZE) < 0)
                     conn->_reset();
             }
         }

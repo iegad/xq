@@ -66,17 +66,17 @@ namespace net {
 #endif // !INVALID_SOCKET
 
 // ------------------------------------------------------------------------------- 常量 -------------------------------------------------------------------------------
-constexpr  int DEFAULT_SEND_WND = 256;   // 发送窗口大小
-constexpr  int DEFAULT_RECV_WND = 256;   // 接收窗口大小
-constexpr  int DEFAULT_TIMEOUT  = 60;    // 默认超时(秒)
+constexpr int DEFAULT_SEND_WND = 512;   // 发送窗口大小
+constexpr int DEFAULT_RECV_WND = 512;   // 接收窗口大小
+constexpr int DEFAULT_TIMEOUT  = 60;    // 默认超时(秒)
 
-constexpr  int KCP_MTU       = 1472;                             // KCP MTU
-constexpr  int KCP_HEAD_SIZE = 24;                               // KCP消息头长度
-constexpr  int MAX_DATA_SIZE = 128 * (KCP_MTU - KCP_HEAD_SIZE);  // 消息包最大长度: 181(kB)
+constexpr int KCP_MTU       = 1472;                             // KCP MTU
+constexpr int KCP_HEAD_SIZE = 24;                               // KCP消息头长度
+constexpr int MAX_DATA_SIZE = 128 * (KCP_MTU - KCP_HEAD_SIZE);  // 消息包最大长度: 181(kB)
 
 // ------------------------------------------------------------------------------- 错误码 -------------------------------------------------------------------------------
-constexpr  int ERR_KCP_INVALID = -100; // 无效的KCP
-constexpr  int ERR_KCP_TIMEOUT = -101; // 超时
+constexpr int ERR_KCP_INVALID = -100; // 无效的KCP
+constexpr int ERR_KCP_TIMEOUT = -101; // 超时
 
 // ------------------------------------------------------------------------------- 公共函数 -------------------------------------------------------------------------------
 
@@ -132,7 +132,7 @@ inline int error() {
 /// <param name="local">本地Endpoint</param>
 /// <param name="remote">远端Endpoint</param>
 /// <returns>成功返回 套接字描述符, 否则返回 INVALID_SOCKET</returns>
-SOCKET udp_socket(const char *local, const char *remote);
+SOCKET udp_socket(const char* local, const char* remote, sockaddr *addr = nullptr, socklen_t *addrlen = nullptr);
 
 // ------------------------------------------------------------------------------- IEvent -------------------------------------------------------------------------------
 class KcpConn;
@@ -341,7 +341,7 @@ private: // >>>>>>>>> 私有方法 >>>>>>>>>
     /// <param name="data">消息数据缓冲区</param>
     /// <param name="data_len">缓冲区大小</param>
     /// <returns>成功返回0, 否则返加错误.</returns>
-    int _recv(SOCKET ufd, const sockaddr* addr, int addrlen, const char* raw, int raw_len, char *data, int data_len);
+    int _recv(SOCKET ufd, uint32_t conv, const sockaddr* addr, int addrlen, const char* raw, int raw_len, char* data, int data_len);
 
     /// <summary>
     /// 重置KcpConn为未激活状态, 由服务端调用
@@ -361,23 +361,6 @@ private: // >>>>>>>>> 私有方法 >>>>>>>>>
 
         time_ = active_time_ = 0;
     }
-
-    /// <summary>
-    /// 设置KcpConn为激活状态, 由服务端调用.
-    /// 该方法可以对已激活的KcpConn 再次调用.
-    /// </summary>
-    /// <param name="conv">kcp conv</param>
-    /// <param name="addr">KcpConn 对端地址</param>
-    /// <param name="addrlen">对端地址长度</param>
-    /// <param name="send_wnd">发送窗口大小, 默认为256</param>
-    /// <param name="recv_wnd">接收窗口大小, 默认为256</param>
-    /// <param name="fast_mode">是否为极速模式</param>
-    /// <returns>
-    ///     0: 成功
-    ///     1: 新增客户端
-    ///     小于 0: 错误
-    /// </returns>
-    int _set(uint32_t conv, const sockaddr* addr, int addrlen, int send_wnd = DEFAULT_SEND_WND, int recv_wnd = DEFAULT_RECV_WND, bool fast_mode = true);
 
     /// <summary>
     /// 设置对端地址.
