@@ -305,7 +305,7 @@ xq::net::KcpListener::work_thread(const char* host) {
     SOCKET ufd = udp_socket(host, nullptr);
     assert(ufd != INVALID_SOCKET);
 
-    char rbuf[KCP_MTU];
+    char buf[KCP_MTU];
     int n = 0;
 
     std::vector<char> data(MAX_DATA_SIZE);
@@ -318,7 +318,7 @@ xq::net::KcpListener::work_thread(const char* host) {
     KcpConn::Ptr conn;
 
     while (state_ == State::Running) {
-        n = ::recvfrom(ufd, rbuf, KCP_MTU, 0, &addr, &addrlen);
+        n = ::recvfrom(ufd, buf, KCP_MTU, 0, &addr, &addrlen);
         if (n <= 0) {
             continue;
         }
@@ -327,10 +327,10 @@ xq::net::KcpListener::work_thread(const char* host) {
             continue;
         }
 
-        conv = *((uint32_t*)rbuf);
+        conv = tools::to_le(*((uint32_t*)buf));
         if (conv > 0 && conv <= max_conv) {
             conn = conn_map_[conv - 1];
-            if (conn->_recv(ufd, conv, &addr, addrlen, rbuf, n, &data[0], MAX_DATA_SIZE) < 0)
+            if (conn->_recv(ufd, conv, &addr, addrlen, buf, n, &data[0], MAX_DATA_SIZE) < 0)
                 conn->_reset();
         }
     }
@@ -391,7 +391,7 @@ xq::net::KcpListener::work_thread(const char* host) {
             if (buflen < KCP_HEAD_SIZE)
                 continue;
 
-            conv = *((uint32_t*)buf);
+            conv = tools::to_le(*((uint32_t*)buf));
             if (conv > 0 && conv <= max_conv) {
                 addrlen = msgs[i].msg_hdr.msg_namelen;
                 addr = &addrs[i];

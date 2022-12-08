@@ -21,6 +21,7 @@
   <ItemGroup>
     <ClCompile Include="ikcp.c" />
     <ClCompile Include="net.cpp" />
+    <ClCompile Include="tools.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="ikcp.h" />
