@@ -401,16 +401,14 @@ xq::net::KcpListener::work_thread(const char* host) {
 
 void 
 xq::net::KcpListener::update_thread() {
-    uint64_t now_ms = 0, pre_ms = tools::get_time_ms();
+    uint64_t now_ms;
 
     while (state_ == State::Running) {    
+        std::this_thread::sleep_for(std::chrono::microseconds(999));
         now_ms = tools::get_time_ms();
-        if (now_ms - pre_ms > 0) {
-            for (auto &conn : conn_map_) {
-                if (conn->update(now_ms))
-                    conn->_reset();
-            }
+        for (auto& conn : conn_map_) {
+            if (conn->update(now_ms))
+                conn->_reset();
         }
-        pre_ms = now_ms;
     }
 }

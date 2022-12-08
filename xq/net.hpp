@@ -70,7 +70,7 @@ constexpr int DEFAULT_SEND_WND = 512;   // 发送窗口大小
 constexpr int DEFAULT_RECV_WND = 512;   // 接收窗口大小
 constexpr int DEFAULT_TIMEOUT  = 60;    // 默认超时(秒)
 
-constexpr int KCP_MTU       = 1472;                             // KCP MTU
+constexpr int KCP_MTU       = 1458;                             // KCP MTU
 constexpr int KCP_HEAD_SIZE = 24;                               // KCP消息头长度
 constexpr int MAX_DATA_SIZE = 128 * (KCP_MTU - KCP_HEAD_SIZE);  // 消息包最大长度: 181(kB)
 
