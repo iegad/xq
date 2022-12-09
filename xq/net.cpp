@@ -337,7 +337,7 @@ xq::net::KcpListener::work_thread(const char* host) {
 
 void
 xq::net::KcpListener::work_thread(const char* host) {
-    static constexpr int MSG_LEN = 16;
+    static constexpr int MSG_LEN = 64;
     const size_t max_conv = conn_map_.size();
 
     SOCKET ufd = udp_socket(host, nullptr);
@@ -372,10 +372,8 @@ xq::net::KcpListener::work_thread(const char* host) {
     sockaddr* addr = nullptr;
     char* buf = nullptr;
 
-    timespec expire{ .tv_sec = 0, .tv_nsec = 2000000 };
-
     while (state_ == State::Running) {
-        if (n = ::recvmmsg(ufd, msgs, MSG_LEN, 0, &expire), n < 0) {
+        if (n = ::recvmmsg(ufd, msgs, MSG_LEN, MSG_WAITFORONE, nullptr), n < 0) {
             printf("recvmmsg error: %d\n", error());
             continue;
         }
