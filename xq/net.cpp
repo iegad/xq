@@ -30,52 +30,55 @@ xq::net::udp_socket(const char* local, const char* remote, sockaddr *addr, sockl
         hints.ai_socktype = SOCK_DGRAM;
         hints.ai_flags = AI_PASSIVE;
 
-        if (::getaddrinfo(ip.c_str(), port.c_str(), &hints, &result)) {
-            return -1;
-        }
+        if (::getaddrinfo(ip.c_str(), port.c_str(), &hints, &result))
+            return INVALID_SOCKET;
 
         for (rp = result; rp != nullptr; rp = rp->ai_next) {
             fd = ::socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-            if (fd < 0) {
+            if (fd == INVALID_SOCKET)
                 continue;
-            }
 
             if (::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char*)&ON, sizeof(int))) {
+                close(fd);
                 return INVALID_SOCKET;
             }
 
 #ifndef _WIN32 
             if (::setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &ON, sizeof(int))) {
+                close(fd);
                 return INVALID_SOCKET;
             }
 #endif
 
-            if (!::bind(fd, rp->ai_addr, (int)rp->ai_addrlen)) {
+            if (!::bind(fd, rp->ai_addr, (int)rp->ai_addrlen))
                 break;
-            }
 
-            xq::net::close(fd);
+            close(fd);
+            fd = INVALID_SOCKET;
         }
 
         assert(rp);
 
         ::freeaddrinfo(result);
 
-        if (fd <= 0) {
+        if (fd == INVALID_SOCKET)
             return INVALID_SOCKET;
-        }
     }
 
     // 对端地址用于连接
     if (remote) {
         std::string tmp = std::string(remote);
         const int pos = (int)tmp.rfind(':');
-        if (pos == -1)
+        if (pos == -1) {
+            close(fd);
             return INVALID_SOCKET;
+        }
 
         std::string ip = tmp.substr(0, pos);
-        if (ip.empty())
+        if (ip.empty()) {
+            close(fd);
             return INVALID_SOCKET;
+        }
 
         std::string port = tmp.substr(pos + 1);
 
@@ -88,22 +91,24 @@ xq::net::udp_socket(const char* local, const char* remote, sockaddr *addr, sockl
         hints.ai_flags = AI_PASSIVE;
 
         if (::getaddrinfo(ip.c_str(), port.c_str(), &hints, &result)) {
-            return -1;
+            close(fd);
+            return INVALID_SOCKET;
         }
 
         for (rp = result; rp != nullptr; rp = rp->ai_next) {
             if (fd == INVALID_SOCKET) {
                 fd = ::socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-                if (fd < 0) {
+                if (fd == INVALID_SOCKET)
                     continue;
-                }
 
                 if (::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char*)&ON, sizeof(int))) {
+                    close(fd);
                     return INVALID_SOCKET;
                 }
 
 #ifndef _WIN32 
                 if (::setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &ON, sizeof(int))) {
+                    close(fd);
                     return INVALID_SOCKET;
                 }
 #endif
@@ -116,16 +121,16 @@ xq::net::udp_socket(const char* local, const char* remote, sockaddr *addr, sockl
                 break;
             }
 
-            xq::net::close(fd);
+            close(fd);
+            fd = INVALID_SOCKET;
         }
 
         assert(rp);
 
         ::freeaddrinfo(result);
 
-        if (fd <= 0) {
+        if (fd == INVALID_SOCKET)
             return INVALID_SOCKET;
-        }
     }
 
     return fd;

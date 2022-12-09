@@ -88,6 +88,9 @@ constexpr int ERR_KCP_TIMEOUT = -101; // 超时
 /// <param name="sockfd">需要关闭的套接字</param>
 /// <returns>成功返回0, 否则返回-1</returns>
 inline int close(SOCKET sockfd) {
+    if (sockfd == INVALID_SOCKET)
+        return 0;
+
 #ifndef _WIN32
     return ::close(sockfd);
 #else
