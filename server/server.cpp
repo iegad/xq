@@ -12,21 +12,29 @@ public:
 		return conn->send(data, data_len);
 	}
 
-	virtual int on_connected(xq::net::KcpConn* conn) {
+	virtual int on_connected(xq::net::KcpConn* conn) override {
 		printf("%d has connected\n", conn->conv());
 		return 0;
 	}
 
-	virtual void on_disconnected(xq::net::KcpConn* conn) {
+	virtual void on_disconnected(xq::net::KcpConn* conn) override {
 		printf("%d has disconnected\n", conn->conv());
 	}
 };
 
 int
 main(int argc, char** argv) {
-	assert(!xq::net::init());
+#ifdef _WIN32
+	WSADATA wdata;
+	if (WSAStartup(0x0202, &wdata) || wdata.wHighVersion != 0x0202)
+		exit(EXIT_FAILURE);
+#endif // _WIN32
+
 	auto listener = xq::net::KcpListener::create();
 	listener->run(xq::net::IEvent::Ptr(new EchoEvent), HOST, 0, 500);
-	xq::net::release();
-	printf("DONE...%lu\n", xq::tools::get_time_ms());
+	printf("DONE...%llu\n", xq::tools::get_time_ms());
+
+#ifdef _WIN32
+	WSACleanup();
+#endif // _WIN32
 }

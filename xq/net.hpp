@@ -21,6 +21,7 @@
 #include <unistd.h>
 #include <sys/socket.h>
 #include <sys/types.h>
+#include <jemalloc/jemalloc.h>
 #endif
 
 // ---------------------------------------------------------------------------- C ----------------------------------------------------------------------------
@@ -80,27 +81,6 @@ constexpr int ERR_KCP_INVALID = -100; // 无效的KCP
 constexpr int ERR_KCP_TIMEOUT = -101; // 超时
 
 // ----------------------------------------------------------------------------- 公共函数 -----------------------------------------------------------------------------
-
-/// <summary>
-/// 初始化网络资源, 用于WinSock.
-/// </summary>
-/// <returns>成功返回0, 否则返回-1</returns>
-inline int init() {
-#ifdef _WIN32
-    WSADATA wdata;
-    if (WSAStartup(0x0202, &wdata) || wdata.wHighVersion != 0x0202) { return -1; }
-#endif
-    return 0;
-}
-
-/// <summary>
-/// 释放网络资源, 用于WinSock.
-/// </summary>
-inline void release() {
-#ifdef _WIN32
-    WSACleanup();
-#endif
-}
 
 /// <summary>
 /// 关闭套接字
