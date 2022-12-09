@@ -7,7 +7,7 @@ class EchoEvent : public virtual xq::net::IEvent {
 public:
 	typedef std::shared_ptr<EchoEvent> Ptr;
 
-	virtual int on_message(xq::net::KcpConn* conn, const char* data, int data_len) override {
+	virtual int on_message(xq::net::KcpConn* conn, const char* data, size_t data_len) override {
 		printf("%d -> %s\n", conn->conv(), std::string(data, data_len).c_str());
 		return conn->send(data, data_len);
 	}

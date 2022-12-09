@@ -240,9 +240,9 @@ xq::net::KcpConn::_recv(SOCKET ufd, uint32_t conv, const sockaddr* addr, int add
             if (!kcp_)
                 return ERR_KCP_INVALID;
 
-            n = ::ikcp_recv(kcp_, &data[0], MAX_DATA_SIZE);
+            if (n = ::ikcp_recv(kcp_, &data[0], MAX_DATA_SIZE), n < 0)
+                break;
         }
-
 
         if (n > 0 && event_->on_message(this, data, n) < 0) {
             return -2;
@@ -252,8 +252,11 @@ xq::net::KcpConn::_recv(SOCKET ufd, uint32_t conv, const sockaddr* addr, int add
             return ERR_KCP_INVALID;
         }
 
-        if (!kcp_->nrcv_que)
-            break;
+        {
+            std::lock_guard<xq::tools::SpinMutex> lk(mtx_);
+            if (!kcp_->nrcv_que)
+                break;
+        }
     } while (1);
 
     return 0;

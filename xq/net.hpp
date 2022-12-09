@@ -70,7 +70,8 @@ constexpr int DEFAULT_SEND_WND = 512;   // 发送窗口大小
 constexpr int DEFAULT_RECV_WND = 512;   // 接收窗口大小
 constexpr int DEFAULT_TIMEOUT  = 60;    // 默认超时(秒)
 
-constexpr int KCP_MTU       = 1458;                             // KCP MTU
+// 以太网默认MTU - 以太网头 - IPV4头(20~60)/IPV6(40+) - UDP头
+constexpr int KCP_MTU = 1500 - 14 - 60 - 8;                     // KCP MTU
 constexpr int KCP_HEAD_SIZE = 24;                               // KCP消息头长度
 constexpr int MAX_DATA_SIZE = 128 * (KCP_MTU - KCP_HEAD_SIZE);  // 消息包最大长度: 181(kB)
 
@@ -181,7 +182,7 @@ public: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 公共方法 
     /// <param name="conn">KcpConn</param>
     /// <param name="raw">原始码流</param>
     /// <param name="raw_len">原始码流长度</param>
-    virtual void on_recv(KcpConn */*conn*/, const char* /*raw*/, int /*raw_len*/) {}
+    virtual void on_recv(KcpConn */*conn*/, const char* /*raw*/, size_t /*raw_len*/) {}
 
     /// <summary>
     /// 原始码流发送事件
@@ -191,7 +192,7 @@ public: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 公共方法 
     /// <param name="conn">KcpConn</param>
     /// <param name="raw">原始码流</param>
     /// <param name="raw_len">原始码流长度</param>
-    virtual void on_send(KcpConn */*conn*/, const char* /*raw*/, int /*raw_len*/) {}
+    virtual void on_send(KcpConn */*conn*/, const char* /*raw*/, size_t /*raw_len*/) {}
 
     /// <summary>
     /// 消息事件. 当该事件返回非0时, 底层会断开重置KcpConn的连接.
@@ -200,7 +201,7 @@ public: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 公共方法 
     /// <param name="data">消息数据</param>
     /// <param name="data_len">消息长度</param>
     /// <returns>成功返回0, 否则返回-1</returns>
-    virtual int on_message(KcpConn */*conn*/, const char* /*data*/, int /*data_len*/) = 0;
+    virtual int on_message(KcpConn */*conn*/, const char* /*data*/, size_t /*data_len*/) = 0;
 }; // class IEvent
 
 // ----------------------------------------------------------------------------- KcpConn -----------------------------------------------------------------------------
@@ -517,6 +518,7 @@ private: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 私有方法
     KcpListener& operator=(const KcpListener&) = delete;
 
 private: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 成员字段 >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+
     int timeout_;
     State state_;
 
@@ -524,6 +526,7 @@ private: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 成员字段
     std::thread update_thr_;
     std::vector<std::thread> thread_pool_;
     std::vector<KcpConn::Ptr> conn_map_;
+
 private: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 友元类 >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 }; // class KcpListener;
 
