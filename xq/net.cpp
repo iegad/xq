@@ -275,24 +275,17 @@ xq::net::KcpConn::_recv(SOCKET ufd, uint32_t conv, const sockaddr* addr, int add
 // -------------------------------------------------------------------------------------- KCP Listener --------------------------------------------------------------------------------------
 
 void 
-xq::net::KcpListener::run(IEvent::Ptr event, const char* host, uint32_t nthread, uint32_t max_conn) {
-    if (!nthread)
-        nthread = std::thread::hardware_concurrency();
-
-    if (max_conn == 0)
-        max_conn = nthread * 10; // TODO: 这里需要修改为单线程处理500
-
+xq::net::KcpListener::run(IEvent::Ptr event, const char* host) {
+    size_t max_conn = nthread_ * CPC;
     state_ = State::Running;
 
     // 初始化KcpConn 连接池
     for (uint32_t i = 1; i <= max_conn; i++)
         conn_map_.emplace_back(KcpConn::create(event, i, timeout_));
 
-    for (uint32_t i = 0; i < nthread; i++) {
-        UpdateQueuePtr que(new UpdateQueue);
-        update_thr_pool_.emplace_back(std::thread(std::bind(&KcpListener::update_thread, this, que)));
+    for (uint32_t i = 0; i < nthread_; i++) {
+        update_thr_pool_.emplace_back(std::thread(std::bind(&KcpListener::update_thread, this, i)));
         recv_thr_pool_.emplace_back(std::thread(std::bind(&KcpListener::work_thread, this, host)));
-        ques_.emplace_back(que);
     }
 
     // 等待接收线程结束
@@ -306,12 +299,6 @@ xq::net::KcpListener::run(IEvent::Ptr event, const char* host, uint32_t nthread,
     // 重置所有KcpConn
     for (auto &conn: conn_map_)
         conn->_reset();
-
-    // 清空所有队列
-    KcpConn::Ptr tmp;
-    for (auto& que : ques_) {
-        while (que->try_dequeue(tmp));
-    }
 
     state_ = State::Stopped;
 }
@@ -350,12 +337,7 @@ xq::net::KcpListener::work_thread(const char* host) {
         if (conv > 0 && conv <= max_conv) {
             conn = conn_map_[conv - 1];
             n = conn->_recv(ufd, conv, &addr, addrlen, buf, n, &data[0], MAX_DATA_SIZE);
-            if (n < 0) {
-                conn->_reset();
-                notify_update(conn);
-            }
-            else if (n == 1)
-                notify_update(conn);
+            if (n < 0) conn->_reset();
         }
     }
 
@@ -420,12 +402,7 @@ xq::net::KcpListener::work_thread(const char* host) {
 
                 conn = conn_map_[conv - 1];
                 n = conn->_recv(ufd, conv, addr, addrlen, buf, buflen, &data[0], MAX_DATA_SIZE);
-                if (n < 0) {
-                    conn->_reset();
-                    notify_update(conn);
-                }
-                else if (n == 1)
-                    notify_update(conn);
+                if (n < 0) conn->_reset();
             }
         }
     }
@@ -435,45 +412,17 @@ xq::net::KcpListener::work_thread(const char* host) {
 #endif // !_WIN32
 
 void 
-xq::net::KcpListener::update_thread(UpdateQueuePtr que) {
+xq::net::KcpListener::update_thread(uint32_t num) {
     uint64_t now_ms;
-    std::unordered_map<uint32_t, KcpConn::Ptr> cs;
-    KcpConn::Ptr conn;
-    uint32_t conv;
+    size_t max_conn = conn_map_.size(), i;
 
     while (state_ == State::Running) {
-        while (que->try_dequeue(conn)) {
-            conv = conn->conv();
-            if (conn->active()) {
-                if (!cs.count(conv))
-                    cs.insert(std::make_pair(conv, conn));
-            }
-            else {
-                if (cs.count(conv))
-                    cs.erase(conv);
-            }
-        }
-
         now_ms = xq::tools::now_milli();
-        for (auto& item : cs) {
-            auto& c = item.second;
-            if (c->update(now_ms) < 0) {
-                c->_reset();
-                notify_update(c);
-            }                
-        }
-#ifdef _WIN32
-        _mm_pause();
-#else
-        __builtin_ia32_pause();
-#endif // _WIN32   
-    }
-}
 
-// TODO: 这种方式会惊群
-// 要改惊群必需要在KcpConn 加上所属线程.(自定义变号)
-void
-xq::net::KcpListener::notify_update(const KcpConn::Ptr& conn) {
-    for (auto& que : ques_)
-        que->enqueue(conn);
+        for (i = num; i < max_conn; i += nthread_) {
+            auto& conn = conn_map_[i];
+            if (conn->update(now_ms))
+                conn->_reset();
+        }
+    }
 }

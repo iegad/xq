@@ -1,20 +1,25 @@
 #ifndef __TOOLS_HPP__
 #define __TOOLS_HPP__
 
+// ---------------------------------------------------------------------------- system ----------------------------------------------------------------------------
 #ifdef _WIN32
 #include <WinSock2.h>
 #else
 #include <arpa/inet.h>
 #endif // !_WIN32
 
+// ---------------------------------------------------------------------------- C ----------------------------------------------------------------------------
 #include <stdint.h>
 
+// ---------------------------------------------------------------------------- C++ ----------------------------------------------------------------------------
 #include <atomic>
 #include <chrono>
 #include <string>
 
 namespace xq {
 namespace tools {
+
+// ---------------------------------------------------------------------------- 时间 ----------------------------------------------------------------------------
 
 /// <summary>
 /// 获取当前时间戳(秒)
@@ -47,6 +52,8 @@ inline int64_t now_micro() {
 inline int64_t now_nano() {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 }
+
+// ---------------------------------------------------------------------------- 字节序 ----------------------------------------------------------------------------
 
 /// <summary>
 /// uint16_t 反转字节序
@@ -149,33 +156,55 @@ inline uint64_t to_be_u64(uint64_t v) {
 /// <summary>
 /// 将二进制码流转为16进制字符串
 /// </summary>
-/// <param name="data"></param>
-/// <param name="data_len"></param>
-/// <returns></returns>
+/// <param name="data">二进制码流</param>
+/// <param name="data_len">码流长度</param>
+/// <returns>16进制字符串</returns>
 std::string bin2hex(const uint8_t* data, size_t data_len);
 
 /// <summary>
 /// 将16进制字符串转为二进制码流
 /// </summary>
-/// <param name="hex"></param>
-/// <param name="data"></param>
-/// <param name="data_len"></param>
-/// <returns></returns>
+/// <param name="hex">有效的16进制字符串</param>
+/// <param name="data">接收缓冲区</param>
+/// <param name="data_len">in: 缓冲区长度, out: 码流长度</param>
+/// <returns>
+///     成功返回码流长度, 否则返回-1
+///     可能错误的原因: 
+///         * hex 为空串 或并不是有效的16进制;
+///         * data 为nullptr;
+///         * data_len 为nullptr 或缓冲区没有足够存放码流的空间;
+/// </returns>
 int hex2bin(const std::string& hex, uint8_t *data, size_t *data_len);
+
+// ---------------------------------------------------------------------------- 自旋锁 ----------------------------------------------------------------------------
 
 /// <summary>
 /// 自旋锁
 /// </summary>
 class SpinMutex final {
 public:
-    SpinMutex() {}
 
+    /// <summary>
+    /// 默认构造函数
+    /// </summary>
+    explicit SpinMutex() = default;
+
+    /// <summary>
+    /// 获取mtx
+    /// </summary>
     void lock();
 
+    /// <summary>
+    /// 获取mtx
+    /// </summary>
+    /// <returns>成功获取返回true, 否则返回false</returns>
     bool try_lock() {
         return !mtx_.load(std::memory_order_relaxed) && !mtx_.exchange(true, std::memory_order_acquire);
     }
 
+    /// <summary>
+    /// 释放锁
+    /// </summary>
     void unlock() {
         mtx_.store(false, std::memory_order_release);
     }

@@ -40,7 +40,6 @@
 #include <vector>
 
 // ----------------------------------------------------------------------------- 3rd party -----------------------------------------------------------------------------
-#include "concurrentqueue.h"
 #include "ikcp.h"
 
 // ----------------------------------------------------------------------------- xq -----------------------------------------------------------------------------
@@ -75,6 +74,8 @@ constexpr int DEFAULT_TIMEOUT  = 60;    // 默认超时(秒)
 constexpr int KCP_MTU = 1500 - 14 - 60 - 8;                     // KCP MTU
 constexpr int KCP_HEAD_SIZE = 24;                               // KCP消息头长度
 constexpr int MAX_DATA_SIZE = 128 * (KCP_MTU - KCP_HEAD_SIZE);  // 消息包最大长度: 181(kB)
+
+constexpr int CPC = 500; // 单个线程的Connections承载 TODO: 暂定100需要测试
 
 // ----------------------------------------------------------------------------- 错误码 -----------------------------------------------------------------------------
 constexpr int ERR_KCP_INVALID = -100; // 无效的KCP
@@ -438,8 +439,6 @@ class KcpListener final {
 
 public: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 类型/符号 >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
     typedef std::unique_ptr<KcpListener> ptr;
-    typedef moodycamel::ConcurrentQueue<KcpConn::Ptr> UpdateQueue;
-    typedef std::shared_ptr<UpdateQueue> UpdateQueuePtr;
 
     /// <summary>
     /// KcpListener 状态
@@ -457,7 +456,7 @@ public: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 公共函数 
     /// </summary>
     /// <param name="timeout">读超时(秒), 默认60秒</param>
     /// <returns>KcpListener 实例</returns>
-    static ptr create(int timeout = DEFAULT_TIMEOUT) { return ptr(new KcpListener(timeout)); }
+    static ptr create(uint32_t nthread = 0, uint32_t timeout = DEFAULT_TIMEOUT) { return ptr(new KcpListener(nthread, timeout)); }
 
 private: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 私有函数 >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
@@ -473,9 +472,7 @@ public: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 公共方法 
     /// </summary>
     /// <param name="event">IEvent 实现</param>
     /// <param name="host">监听地址</param>
-    /// <param name="nthread">线程池大小, 默认为0.</param>
-    /// <param name="max_conn">最大连接数</param>
-    void run(IEvent::Ptr event, const char* host, uint32_t nthread = 0, uint32_t max_conn = 0);
+    void run(IEvent::Ptr event, const char* host);
 
     /// <summary>
     /// 停止服务
@@ -483,9 +480,13 @@ public: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 公共方法 
     void stop() { state_ = State::Stopping; }
 
 private: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 私有方法 >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
-    KcpListener(int timeout)  :
+    KcpListener(uint32_t nthread, uint32_t timeout)  :
+        nthread_(nthread),
         timeout_(timeout),
         state_(State::Stopped){
+        if (nthread == 0)
+            nthread = std::thread::hardware_concurrency();
+
         assert(timeout_ > 0);
     }
 
@@ -496,11 +497,10 @@ private: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 私有方法
     void work_thread(const char* host);
 
     /// <summary>
-    /// Kcp协议工作线程
+    /// 
     /// </summary>
-    void update_thread(UpdateQueuePtr que);
-
-    void notify_update(const KcpConn::Ptr& conn);
+    /// <param name="num"></param>
+    void update_thread(uint32_t num);
 
     KcpListener() = delete;
     KcpListener(const KcpListener&) = delete;
@@ -508,13 +508,13 @@ private: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 私有方法
 
 private: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 成员字段 >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 
-    int timeout_;
-    State state_;
+    uint32_t nthread_; // 线程数
+    uint32_t timeout_; // 超时
+    State state_;      // KcpListener 状态
 
-    std::vector<UpdateQueuePtr> ques_;
-    std::vector<std::thread> update_thr_pool_;
-    std::vector<std::thread> recv_thr_pool_;
     std::vector<KcpConn::Ptr> conn_map_;
+    std::vector<std::thread> recv_thr_pool_;
+    std::vector<std::thread> update_thr_pool_;    
 
 private: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 友元类 >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
 }; // class KcpListener;
