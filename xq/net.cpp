@@ -350,8 +350,10 @@ xq::net::KcpListener::work_thread(const char* host) {
         if (conv > 0 && conv <= max_conv) {
             conn = conn_map_[conv - 1];
             n = conn->_recv(ufd, conv, &addr, addrlen, buf, n, &data[0], MAX_DATA_SIZE);
-            if (n < 0)
+            if (n < 0) {
                 conn->_reset();
+                notify_update(conn);
+            }
             else if (n == 1)
                 notify_update(conn);
         }
@@ -417,8 +419,13 @@ xq::net::KcpListener::work_thread(const char* host) {
                 addr = &addrs[i];
 
                 conn = conn_map_[conv - 1];
-                if (conn->_recv(ufd, conv, addr, addrlen, buf, buflen, &data[0], MAX_DATA_SIZE) < 0)
+                n = conn->_recv(ufd, conv, addr, addrlen, buf, buflen, &data[0], MAX_DATA_SIZE);
+                if (n < 0) {
                     conn->_reset();
+                    notify_update(conn);
+                }
+                else if (n == 1)
+                    notify_update(conn);
             }
         }
     }
@@ -450,8 +457,10 @@ xq::net::KcpListener::update_thread(UpdateQueuePtr que) {
         now_ms = xq::tools::now_milli();
         for (auto& item : cs) {
             auto& c = item.second;
-            if (c->update(now_ms) < 0)
+            if (c->update(now_ms) < 0) {
                 c->_reset();
+                notify_update(c);
+            }                
         }
 #ifdef _WIN32
         _mm_pause();

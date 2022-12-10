@@ -310,18 +310,18 @@ public: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 公共方法 
     ///     0: 成功;
     ///     -101: KcpConn 超时;
     /// </returns>
-    int update(uint64_t now_ms) {
+    int update(int64_t now_ms) {
         std::lock_guard<xq::tools::SpinMutex> lk(mtx_);
 
         // 如果当前KcpConn未激活, 不作检查.
         if (!kcp_)
             return 0;
 
-        if (timeout_ > 0 && now_ms / 1000 - active_time_ > (uint64_t)timeout_)
+        if (timeout_ > 0 && now_ms / 1000 - active_time_ > (int64_t)timeout_)
             return ERR_KCP_TIMEOUT;
         
         uint32_t ms = (uint32_t)(now_ms - time_);
-        if (::ikcp_check(kcp_, ms) - ms <= 0);
+        if (::ikcp_check(kcp_, ms) - ms <= 0)
             ::ikcp_update(kcp_, ms);
 
         return 0;
@@ -419,8 +419,8 @@ private: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 成员字段
     uint32_t conv_;
     IKCPCB* kcp_;           // KCP
     int timeout_;           // 超时
-    uint64_t time_;         // 创建时间, 单位毫秒
-    uint64_t active_time_;  // 最后激活时间, 单位秒
+    int64_t time_;         // 创建时间, 单位毫秒
+    int64_t active_time_;  // 最后激活时间, 单位秒
 
     xq::tools::SpinMutex mtx_;
     IEvent::Ptr event_;

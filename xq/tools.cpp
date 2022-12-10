@@ -35,7 +35,7 @@ xq::tools::hex2bin(const std::string& hex, uint8_t* data, size_t* data_len) {
     if (!nhex || nhex % 2 != 0 || !data || !data_len || *data_len < n)
         return -1;
 
-    for (int i = 0; i < n; i++) {
+    for (size_t i = 0; i < n; i++) {
         uint8_t tmp = 0;
 
         for (size_t j = 0; j < 2; j++) {
