@@ -30,7 +30,7 @@ xq::tools::bin2hex(const uint8_t* data, size_t data_len) {
 int 
 xq::tools::hex2bin(const std::string& hex, uint8_t* data, size_t* data_len) {
     size_t nhex = hex.empty();
-    int n = nhex / 2;
+    size_t n = nhex / 2;
 
     if (!nhex || nhex % 2 != 0 || !data || !data_len || *data_len < n)
         return -1;
@@ -52,7 +52,7 @@ xq::tools::hex2bin(const std::string& hex, uint8_t* data, size_t* data_len) {
     }
 
     *data_len = n;
-    return n;
+    return (int)n;
 }
 
 void 

@@ -156,6 +156,7 @@ xq::net::KcpConn::udp_output(const char* data, int datalen, IKCPCB*, void* conn)
 xq::net::KcpConn::KcpConn(IEvent::Ptr event, const char* local, const char* remote, uint32_t conv) :
     ufd_(INVALID_SOCKET),
     addrlen_(sizeof(sockaddr)),
+    conv_(conv),
     kcp_(nullptr),
     timeout_(DEFAULT_TIMEOUT),
     time_(xq::tools::now_milli()),
@@ -202,6 +203,8 @@ int
 xq::net::KcpConn::_recv(SOCKET ufd, uint32_t conv, const sockaddr* addr, int addrlen, const char* raw, int raw_len, char* data, int data_len) {
     assert(raw && data && raw_len > 0 && data_len > 0);
     
+    int ret = 0;
+
     if (!active() || ::memcmp(addr, &addr_, addrlen)) {
         {
             std::lock_guard<xq::tools::SpinMutex> lk(mtx_);
@@ -223,6 +226,8 @@ xq::net::KcpConn::_recv(SOCKET ufd, uint32_t conv, const sockaddr* addr, int add
 
         if (event_->on_connected(this))
             return -1;
+
+        ret = 1;
     }
 
     {// kcp locker
@@ -264,15 +269,13 @@ xq::net::KcpConn::_recv(SOCKET ufd, uint32_t conv, const sockaddr* addr, int add
         }
     } while (1);
 
-    return 0;
+    return ret;
 }
 
 // -------------------------------------------------------------------------------------- KCP Listener --------------------------------------------------------------------------------------
 
 void 
 xq::net::KcpListener::run(IEvent::Ptr event, const char* host, uint32_t nthread, uint32_t max_conn) {
-    assert(max_conn > 0);
-
     if (!nthread)
         nthread = std::thread::hardware_concurrency();
 
@@ -281,21 +284,34 @@ xq::net::KcpListener::run(IEvent::Ptr event, const char* host, uint32_t nthread,
 
     state_ = State::Running;
 
+    // 初始化KcpConn 连接池
     for (uint32_t i = 1; i <= max_conn; i++)
-        conn_map_.emplace_back(KcpConn::create(event, timeout_));
+        conn_map_.emplace_back(KcpConn::create(event, i, timeout_));
 
-    update_thr_ = std::thread(std::bind(&KcpListener::update_thread, this));
+    for (uint32_t i = 0; i < nthread; i++) {
+        UpdateQueuePtr que(new UpdateQueue);
+        update_thr_pool_.emplace_back(std::thread(std::bind(&KcpListener::update_thread, this, que)));
+        recv_thr_pool_.emplace_back(std::thread(std::bind(&KcpListener::work_thread, this, host)));
+        ques_.emplace_back(que);
+    }
 
-    for (uint32_t i = 0; i < nthread; i++)
-        thread_pool_.emplace_back(std::thread(std::bind(&KcpListener::work_thread, this, host)));
-
-    for (auto &t: thread_pool_)
+    // 等待接收线程结束
+    for (auto &t: recv_thr_pool_)
         t.join();
 
-    update_thr_.join();
+    // 等待接收线程结束
+    for (auto &t: update_thr_pool_)
+        t.join();
 
+    // 重置所有KcpConn
     for (auto &conn: conn_map_)
         conn->_reset();
+
+    // 清空所有队列
+    KcpConn::Ptr tmp;
+    for (auto& que : ques_) {
+        while (que->try_dequeue(tmp));
+    }
 
     state_ = State::Stopped;
 }
@@ -333,8 +349,11 @@ xq::net::KcpListener::work_thread(const char* host) {
         conv = tools::to_le_u32(*((uint32_t*)buf));
         if (conv > 0 && conv <= max_conv) {
             conn = conn_map_[conv - 1];
-            if (conn->_recv(ufd, conv, &addr, addrlen, buf, n, &data[0], MAX_DATA_SIZE) < 0)
+            n = conn->_recv(ufd, conv, &addr, addrlen, buf, n, &data[0], MAX_DATA_SIZE);
+            if (n < 0)
                 conn->_reset();
+            else if (n == 1)
+                notify_update(conn);
         }
     }
 
@@ -409,15 +428,42 @@ xq::net::KcpListener::work_thread(const char* host) {
 #endif // !_WIN32
 
 void 
-xq::net::KcpListener::update_thread() {
+xq::net::KcpListener::update_thread(UpdateQueuePtr que) {
     uint64_t now_ms;
+    std::unordered_map<uint32_t, KcpConn::Ptr> cs;
+    KcpConn::Ptr conn;
+    uint32_t conv;
 
-    while (state_ == State::Running) {    
-        std::this_thread::sleep_for(std::chrono::microseconds(999));
-        now_ms = tools::now_milli();
-        for (auto& conn : conn_map_) {
-            if (conn->update(now_ms))
-                conn->_reset();
+    while (state_ == State::Running) {
+        while (que->try_dequeue(conn)) {
+            conv = conn->conv();
+            if (conn->active()) {
+                if (!cs.count(conv))
+                    cs.insert(std::make_pair(conv, conn));
+            }
+            else {
+                if (cs.count(conv))
+                    cs.erase(conv);
+            }
         }
+
+        now_ms = xq::tools::now_milli();
+        for (auto& item : cs) {
+            auto& c = item.second;
+            if (c->update(now_ms) < 0)
+                c->_reset();
+        }
+#ifdef _WIN32
+        _mm_pause();
+#else
+#endif // _WIN32   
     }
+}
+
+// TODO: 这种方式会惊群
+// 要改惊群必需要在KcpConn 加上所属线程.(自定义变号)
+void
+xq::net::KcpListener::notify_update(const KcpConn::Ptr& conn) {
+    for (auto& que : ques_)
+        que->enqueue(conn);
 }

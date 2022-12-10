@@ -1,13 +1,13 @@
 #include "xq/net.hpp"
 #include "xq/tools.hpp"
 
-static int NTIME = 5000;
+static int NTIME = 10000;
 
 void
 update_worker(xq::net::KcpConn::Ptr conn) {
 	for (;;) {
 		std::this_thread::sleep_for(std::chrono::milliseconds(1));
-		if (conn->update(xq::tools::get_time_ms()) < 0) {
+		if (conn->update(xq::tools::now_milli()) < 0) {
 			break;
 		}
 	}
@@ -29,6 +29,7 @@ send_worker(xq::net::KcpConn::Ptr conn) {
 
 		i++;
 	}
+
 	delete[] data;
 	printf("SEND_WORK HAS DONE... %d\n", i);
 }
@@ -39,7 +40,7 @@ public:
 
 	virtual int on_message(xq::net::KcpConn* conn, const char* data, size_t data_len) override {
 		static int ntime = 0;
-		//printf("%s\n", std::string(data, data_len).c_str());
+		printf("%s\n", std::string(data, data_len).c_str());
 		ntime++;
 		return NTIME > 0 && ntime == NTIME ? -1 : 0;
 	}
@@ -53,28 +54,28 @@ public:
 		printf("%d has disconnected\n", conn->conv());
 	}
 
-	//virtual void on_send(xq::net::KcpConn* conn, const char* raw, size_t raw_len) override {
-	//	const char* p = raw;
-	//	size_t nleft = raw_len;
+	virtual void on_send(xq::net::KcpConn* conn, const char* raw, size_t raw_len) override {
+		//const char* p = raw;
+		//size_t nleft = raw_len;
 
-	//	uint32_t conv, cmd, frg, wnd, ts, sn, una, len;
-	//	while (nleft > 0) {
-	//		conv = *(uint32_t*)p;
-	//		p += 4; nleft -= 4;
+		//uint32_t conv, cmd, frg, wnd, ts, sn, una, len;
+		//while (nleft > 0) {
+		//	conv = *(uint32_t*)p;
+		//	p += 4; nleft -= 4;
 
-	//		cmd = *p; p += 1; nleft -= 1;
-	//		frg = *p; p += 1; nleft -= 1;
-	//		wnd = *(uint16_t*)p; p += 2; nleft -= 2;
-	//		ts = *(uint32_t*)p; p += 4; nleft -= 4;
-	//		sn = *(uint32_t*)p; p += 4; nleft -= 4;
-	//		una = *(uint32_t*)p; p += 4; nleft -= 4;
-	//		len = *(uint32_t*)p; p += 4; nleft -= 4;
+		//	cmd = *p; p += 1; nleft -= 1;
+		//	frg = *p; p += 1; nleft -= 1;
+		//	wnd = *(uint16_t*)p; p += 2; nleft -= 2;
+		//	ts = *(uint32_t*)p; p += 4; nleft -= 4;
+		//	sn = *(uint32_t*)p; p += 4; nleft -= 4;
+		//	una = *(uint32_t*)p; p += 4; nleft -= 4;
+		//	len = *(uint32_t*)p; p += 4; nleft -= 4;
 
-	//		printf("%lld => {conv[%u]; cmd[%u]; frg[%u]; wnd[%u]; ts[%u]; sn[%u]; una[%u]; len[%u]; data: %s}\n", ::time(nullptr), conv, cmd, frg, wnd, ts, sn, una, len, std::string(p, len).c_str());
-	//		p += len;
-	//		nleft -= len;
-	//	}
-	//}
+		//	printf("%lld => {conv[%u]; cmd[%u]; frg[%u]; wnd[%u]; ts[%u]; sn[%u]; una[%u]; len[%u]; data: %s}\n", ::time(nullptr), conv, cmd, frg, wnd, ts, sn, una, len, std::string(p, len).c_str());
+		//	p += len;
+		//	nleft -= len;
+		//}
+	}
 };
 
 int
@@ -91,16 +92,13 @@ main(int argc, char** argv) {
 	std::thread(std::bind(send_worker, conn)).detach();
 
 	char data[1024 * 8];
-	uint64_t beg = xq::tools::get_time_ms();
+	uint64_t beg = xq::tools::now_milli();
 	for (;;) {
-		if (conn->update(xq::tools::get_time_ms()) < 0)
-			break;
-
 		if (conn->recv() < 0)
 			break;
 	}
 
-	printf("CLIENT HAS FINISHEDDDDDDDDDDDDDD => %llu\n", xq::tools::get_time_ms() - beg);
+	printf("CLIENT HAS FINISHEDDDDDDDDDDDDDD => %llu\n", xq::tools::now_milli() - beg);
 
 #ifdef _WIN32
 	WSACleanup();

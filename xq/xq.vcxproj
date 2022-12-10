@@ -24,7 +24,10 @@
     <ClCompile Include="tools.cpp" />
   </ItemGroup>
   <ItemGroup>
+    <ClInclude Include="blockingconcurrentqueue.h" />
+    <ClInclude Include="concurrentqueue.h" />
     <ClInclude Include="ikcp.h" />
+    <ClInclude Include="lightweightsemaphore.h" />
     <ClInclude Include="net.hpp" />
     <ClInclude Include="tools.hpp" />
   </ItemGroup>

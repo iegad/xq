@@ -72,7 +72,7 @@ inline uint32_t __rvs_u32(uint32_t v) {
 /// <param name="v"></param>
 /// <returns></returns>
 inline uint64_t __rvs_u64(uint64_t v) {
-    return (((uint64_t)(htonl(v)) << 32)) | (htonl(v >> 32));
+    return (((uint64_t)(__rvs_u32(v)) << 32)) | (__rvs_u32(v >> 32));
 }
 
 /// <summary>

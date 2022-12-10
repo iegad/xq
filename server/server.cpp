@@ -31,7 +31,7 @@ main(int argc, char** argv) {
 #endif // _WIN32
 
 	auto listener = xq::net::KcpListener::create();
-	listener->run(xq::net::IEvent::Ptr(new EchoEvent), HOST);
+	listener->run(xq::net::IEvent::Ptr(new EchoEvent), HOST, 2);
 	printf("DONE...%llu\n", xq::tools::now_milli());
 
 #ifdef _WIN32

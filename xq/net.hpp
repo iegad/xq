@@ -32,7 +32,6 @@
 // ---------------------------------------------------------------------------- C++ ----------------------------------------------------------------------------
 #include <atomic>
 #include <chrono>
-#include <deque>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -41,6 +40,7 @@
 #include <vector>
 
 // ----------------------------------------------------------------------------- 3rd party -----------------------------------------------------------------------------
+#include "concurrentqueue.h"
 #include "ikcp.h"
 
 // ----------------------------------------------------------------------------- xq -----------------------------------------------------------------------------
@@ -222,8 +222,8 @@ private: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 私有函数
     /// </summary>
     /// <param name="event">IEvent 实现</param>
     /// <returns>成功返回默认的KcpConn实例, 否则返回nullptr</returns>
-    static Ptr create(IEvent::Ptr event, int timeout) {
-        return Ptr(new KcpConn(event, timeout));
+    static Ptr create(IEvent::Ptr event, uint32_t conv, int timeout) {
+        return Ptr(new KcpConn(event, conv, timeout));
     }
 
     /// <summary>
@@ -251,10 +251,7 @@ public: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 公共属性 
     /// 获取KcpConn conv值.
     /// </summary>
     /// <returns>激活时返顺conv, 否则返回0</returns>
-    uint32_t conv() {
-        std::lock_guard<xq::tools::SpinMutex> lk(mtx_);
-        return kcp_ ? kcp_->conv : 0; 
-    }
+    uint32_t conv() const { return conv_; }
 
     /// <summary>
     /// 获取底层UDP 描述符
@@ -322,12 +319,46 @@ public: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 公共方法 
 
         if (timeout_ > 0 && now_ms / 1000 - active_time_ > (uint64_t)timeout_)
             return ERR_KCP_TIMEOUT;
+        
+        uint32_t ms = (uint32_t)(now_ms - time_);
+        if (::ikcp_check(kcp_, ms) - ms <= 0);
+            ::ikcp_update(kcp_, ms);
 
-        ::ikcp_update(kcp_, (uint32_t)(now_ms - time_));
         return 0;
     }
     
 private: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 私有方法 >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
+    /// <summary>
+    /// 构造函数: 创建默认KcpConn.由服务端调用
+    /// </summary>
+    /// <param name="event">IEvent 实现</param>
+    KcpConn(IEvent::Ptr event, uint32_t conv, int timeout) :
+        ufd_(INVALID_SOCKET),
+        addrlen_(0),
+        conv_(conv),
+        kcp_(nullptr),
+        timeout_(timeout),
+        time_(0),
+        active_time_(0),
+        event_(event) {
+        assert(timeout_ >= 0);
+        ::memset(&addr_, 0, sizeof(addr_));
+    }
+
+    /// <summary>
+    /// 构造函数: 创建已激活的KcpConn, 由客户端调用.
+    /// </summary>
+    /// <param name="event">IEvent 实现</param>
+    /// <param name="local">本地监听</param>
+    /// <param name="remote">远端地址</param>
+    /// <param name="conv">kcp conv</param>
+    /// <param name="send_wnd">发送窗口大小</param>
+    /// <param name="recv_wnd">接收窗口大小</param>
+    /// <param name="fast_mode">是否为极速模式</param>
+    KcpConn(IEvent::Ptr event, const char* local, const char* remote, uint32_t conv);
+
+    KcpConn(const KcpConn&) = delete;
+    KcpConn& operator=(const KcpConn&) = delete;
 
     /// <summary>
     /// 将原始码流解析为消息数据
@@ -379,41 +410,13 @@ private: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 私有方法
         }
     }
 
-    /// <summary>
-    /// 构造函数: 创建默认KcpConn.由服务端调用
-    /// </summary>
-    /// <param name="event">IEvent 实现</param>
-    KcpConn(IEvent::Ptr event, int timeout) :
-        ufd_(INVALID_SOCKET),
-        addrlen_(0),
-        kcp_(nullptr),
-        timeout_(timeout),
-        time_(0),
-        active_time_(0),
-        event_(event) {
-        assert(timeout_ >= 0);
-        ::memset(&addr_, 0, sizeof(addr_));
-    }
 
-    /// <summary>
-    /// 构造函数: 创建已激活的KcpConn, 由客户端调用.
-    /// </summary>
-    /// <param name="event">IEvent 实现</param>
-    /// <param name="local">本地监听</param>
-    /// <param name="remote">远端地址</param>
-    /// <param name="conv">kcp conv</param>
-    /// <param name="send_wnd">发送窗口大小</param>
-    /// <param name="recv_wnd">接收窗口大小</param>
-    /// <param name="fast_mode">是否为极速模式</param>
-    KcpConn(IEvent::Ptr event, const char* local, const char* remote, uint32_t conv);
-
-    KcpConn(const KcpConn&) = delete;
-    KcpConn& operator=(const KcpConn&) = delete;
 
 private: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 成员字段 >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
     SOCKET ufd_;            // UDP套接字
     sockaddr addr_;         // KcpConn对端地址
-    socklen_t addrlen_;           // KcpConn对端地址长度
+    socklen_t addrlen_;     // KcpConn对端地址长度
+    uint32_t conv_;
     IKCPCB* kcp_;           // KCP
     int timeout_;           // 超时
     uint64_t time_;         // 创建时间, 单位毫秒
@@ -435,6 +438,8 @@ class KcpListener final {
 
 public: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 类型/符号 >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
     typedef std::unique_ptr<KcpListener> ptr;
+    typedef moodycamel::ConcurrentQueue<KcpConn::Ptr> UpdateQueue;
+    typedef std::shared_ptr<UpdateQueue> UpdateQueuePtr;
 
     /// <summary>
     /// KcpListener 状态
@@ -480,8 +485,7 @@ public: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 公共方法 
 private: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 私有方法 >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
     KcpListener(int timeout)  :
         timeout_(timeout),
-        state_(State::Stopped),
-        ncur_(0) {
+        state_(State::Stopped){
         assert(timeout_ > 0);
     }
 
@@ -494,7 +498,9 @@ private: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 私有方法
     /// <summary>
     /// Kcp协议工作线程
     /// </summary>
-    void update_thread();
+    void update_thread(UpdateQueuePtr que);
+
+    void notify_update(const KcpConn::Ptr& conn);
 
     KcpListener() = delete;
     KcpListener(const KcpListener&) = delete;
@@ -505,9 +511,9 @@ private: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 成员字段
     int timeout_;
     State state_;
 
-    std::atomic<uint32_t> ncur_;
-    std::thread update_thr_;
-    std::vector<std::thread> thread_pool_;
+    std::vector<UpdateQueuePtr> ques_;
+    std::vector<std::thread> update_thr_pool_;
+    std::vector<std::thread> recv_thr_pool_;
     std::vector<KcpConn::Ptr> conn_map_;
 
 private: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 友元类 >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
