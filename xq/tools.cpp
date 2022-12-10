@@ -19,11 +19,40 @@ xq::tools::bin2hex(const uint8_t* data, size_t data_len) {
                 c += '0';
             else
                 c += ('A' - 10);
+
             res[2 * i + 1 - j] = c;
             tmp >>= 4;
         }
     }
     return res;
+}
+
+int 
+xq::tools::hex2bin(const std::string& hex, uint8_t* data, size_t* data_len) {
+    size_t nhex = hex.empty();
+    int n = nhex / 2;
+
+    if (!nhex || nhex % 2 != 0 || !data || !data_len || *data_len < n)
+        return -1;
+
+    for (int i = 0; i < n; i++) {
+        uint8_t tmp = 0;
+
+        for (size_t j = 0; j < 2; j++) {
+            char c = hex[2 * i + j];
+            if (c >= '0' && c <= '9')
+                tmp = (tmp << 4) + (c - '0');
+            else if (c >= 'a' && c <= 'f')
+                tmp = (tmp << 4) + (c - 'a' + 10);
+            else if (c >= 'A' && c <= 'F')
+                tmp = (tmp << 4) + (c - 'A' + 10);
+            else return -1;
+        }
+        data[i] = tmp;
+    }
+
+    *data_len = n;
+    return n;
 }
 
 void 

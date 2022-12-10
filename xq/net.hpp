@@ -470,7 +470,7 @@ public: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 公共方法 
     /// <param name="host">监听地址</param>
     /// <param name="nthread">线程池大小, 默认为0.</param>
     /// <param name="max_conn">最大连接数</param>
-    void run(IEvent::Ptr event, const char* host, uint32_t nthread, uint32_t max_conn);
+    void run(IEvent::Ptr event, const char* host, uint32_t nthread = 0, uint32_t max_conn = 0);
 
     /// <summary>
     /// 停止服务

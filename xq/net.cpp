@@ -158,7 +158,7 @@ xq::net::KcpConn::KcpConn(IEvent::Ptr event, const char* local, const char* remo
     addrlen_(sizeof(sockaddr)),
     kcp_(nullptr),
     timeout_(DEFAULT_TIMEOUT),
-    time_(xq::tools::get_time_ms()),
+    time_(xq::tools::now_milli()),
     active_time_(time_ / 1000),
     event_(event) {
     ::memset(&addr_, 0, sizeof(addr_));
@@ -180,7 +180,7 @@ xq::net::KcpConn::recv() {
     sockaddr addr;
     socklen_t addrlen = sizeof(addr);
     ::memset(&addr, 0, sizeof(addr));
-
+    
     n = ::recvfrom(ufd_, rbuf, KCP_MTU, 0, &addr, &addrlen);
     if (n <= 0) {
         printf("recvfrom failed: %d\n", error());
@@ -216,7 +216,7 @@ xq::net::KcpConn::_recv(SOCKET ufd, uint32_t conv, const sockaddr* addr, int add
             assert(!::ikcp_setmtu(kcp_, KCP_MTU) && "ikcp_setmtu called failed");
             kcp_->output = udp_output;
 
-            time_ = tools::get_time_ms();
+            time_ = tools::now_milli();
             active_time_ = time_ / 1000;
             ::memcpy(&addr_, addr, addrlen);
         }
@@ -276,6 +276,9 @@ xq::net::KcpListener::run(IEvent::Ptr event, const char* host, uint32_t nthread,
     if (!nthread)
         nthread = std::thread::hardware_concurrency();
 
+    if (max_conn == 0)
+        max_conn = nthread * 10; // TODO: 这里需要修改为单线程处理500
+
     state_ = State::Running;
 
     for (uint32_t i = 1; i <= max_conn; i++)
@@ -327,7 +330,7 @@ xq::net::KcpListener::work_thread(const char* host) {
             continue;
         }
 
-        conv = tools::to_le(*((uint32_t*)buf));
+        conv = tools::to_le_u32(*((uint32_t*)buf));
         if (conv > 0 && conv <= max_conv) {
             conn = conn_map_[conv - 1];
             if (conn->_recv(ufd, conv, &addr, addrlen, buf, n, &data[0], MAX_DATA_SIZE) < 0)
@@ -389,7 +392,7 @@ xq::net::KcpListener::work_thread(const char* host) {
             if (buflen < KCP_HEAD_SIZE)
                 continue;
 
-            conv = tools::to_le(*((uint32_t*)buf));
+            conv = tools::to_le_u32(*((uint32_t*)buf));
             if (conv > 0 && conv <= max_conv) {
                 addrlen = msgs[i].msg_hdr.msg_namelen;
                 addr = &addrs[i];
@@ -411,7 +414,7 @@ xq::net::KcpListener::update_thread() {
 
     while (state_ == State::Running) {    
         std::this_thread::sleep_for(std::chrono::microseconds(999));
-        now_ms = tools::get_time_ms();
+        now_ms = tools::now_milli();
         for (auto& conn : conn_map_) {
             if (conn->update(now_ms))
                 conn->_reset();
