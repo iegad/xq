@@ -484,8 +484,11 @@ private: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 私有方法
         nthread_(nthread),
         timeout_(timeout),
         state_(State::Stopped){
-        if (nthread == 0)
-            nthread = std::thread::hardware_concurrency();
+        if (nthread_ == 0) {
+            nthread_ = std::thread::hardware_concurrency() / 2;
+            if (nthread == 0)
+                nthread_ = 1;
+        }
 
         assert(timeout_ > 0);
     }

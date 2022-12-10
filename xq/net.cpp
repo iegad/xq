@@ -202,8 +202,6 @@ xq::net::KcpConn::recv() {
 int
 xq::net::KcpConn::_recv(SOCKET ufd, uint32_t conv, const sockaddr* addr, int addrlen, const char* raw, int raw_len, char* data, int data_len) {
     assert(raw && data && raw_len > 0 && data_len > 0);
-    
-    int ret = 0;
 
     if (!active() || ::memcmp(addr, &addr_, addrlen)) {
         {
@@ -226,8 +224,6 @@ xq::net::KcpConn::_recv(SOCKET ufd, uint32_t conv, const sockaddr* addr, int add
 
         if (event_->on_connected(this))
             return -1;
-
-        ret = 1;
     }
 
     {// kcp locker
@@ -269,14 +265,14 @@ xq::net::KcpConn::_recv(SOCKET ufd, uint32_t conv, const sockaddr* addr, int add
         }
     } while (1);
 
-    return ret;
+    return 0;
 }
 
 // -------------------------------------------------------------------------------------- KCP Listener --------------------------------------------------------------------------------------
 
 void 
 xq::net::KcpListener::run(IEvent::Ptr event, const char* host) {
-    size_t max_conn = nthread_ * CPC;
+    size_t max_conn = nthread_ * 2 * CPC;
     state_ = State::Running;
 
     // 初始化KcpConn 连接池
