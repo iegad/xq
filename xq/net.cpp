@@ -456,6 +456,7 @@ xq::net::KcpListener::update_thread(UpdateQueuePtr que) {
 #ifdef _WIN32
         _mm_pause();
 #else
+        __builtin_ia32_pause();
 #endif // _WIN32   
     }
 }
