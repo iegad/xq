@@ -14,7 +14,9 @@
 // ---------------------------------------------------------------------------- C++ ----------------------------------------------------------------------------
 #include <atomic>
 #include <chrono>
+#include <mutex>
 #include <string>
+#include <unordered_map>
 
 namespace xq {
 namespace tools {
@@ -176,45 +178,68 @@ std::string bin2hex(const uint8_t* data, size_t data_len);
 /// </returns>
 int hex2bin(const std::string& hex, uint8_t *data, size_t *data_len);
 
-// ---------------------------------------------------------------------------- 自旋锁 ----------------------------------------------------------------------------
+// ---------------------------------------------------------------------------- safe map ----------------------------------------------------------------------------
 
-/// <summary>
-/// 自旋锁
-/// </summary>
-class SpinMutex final {
+template<typename TKey, typename TValue, typename TMutex = std::mutex>
+class Map final {
 public:
+    typedef typename std::unordered_map<TKey, TValue>::iterator iterator;
+    typedef typename std::unordered_map<TKey, TValue>::size_type size_type;
 
-    /// <summary>
-    /// 默认构造函数
-    /// </summary>
-    explicit SpinMutex() = default;
+public:
+    explicit Map() {};
+    Map(const Map&) = delete;
+    Map& operator=(const Map&) = delete;
 
-    /// <summary>
-    /// 获取mtx
-    /// </summary>
-    void lock();
-
-    /// <summary>
-    /// 获取mtx
-    /// </summary>
-    /// <returns>成功获取返回true, 否则返回false</returns>
-    bool try_lock() {
-        return !mtx_.load(std::memory_order_relaxed) && !mtx_.exchange(true, std::memory_order_acquire);
+    std::pair<iterator, bool> insert(const TKey& k, const TValue& v) {
+        std::lock_guard<TMutex> lk(mtx_);
+        return m_.insert(std::make_pair(k, v));
     }
 
-    /// <summary>
-    /// 释放锁
-    /// </summary>
-    void unlock() {
-        mtx_.store(false, std::memory_order_release);
+    size_type erase(const TKey& k) {
+        std::lock_guard<TMutex> lk(mtx_);
+        return m_.erase(k);
+    }
+
+    TValue& operator[](const TKey& k) {
+        std::lock_guard<TMutex> lk(mtx_);
+        return m_[k];
+    }
+
+    bool empty() {
+        std::lock_guard<TMutex> lk(mtx_);
+        return m_.empty();
+    }
+
+    void clear() {
+        std::lock_guard<TMutex> lk(mtx_);
+        m_.clear();
+    }
+
+    iterator find(const TKey& k) {
+        std::lock_guard<TMutex> lk(mtx_);
+        return m_.find(k);
+    }
+
+    size_type size() {
+        std::lock_guard<TMutex> lk(mtx_);
+        return m_.size();
+    }
+
+    iterator begin() {
+        std::lock_guard<TMutex> lk(mtx_);
+        return m_.begin();
+    }
+
+    iterator end() {
+        std::lock_guard<TMutex> lk(mtx_);
+        return m_.end();
     }
 
 private:
-    SpinMutex(const SpinMutex&) = delete;
-    SpinMutex& operator=(const SpinMutex&) = delete;
-
-    std::atomic<bool> mtx_;
-}; // class SpinMutex;
+    TMutex mtx_;
+    std::unordered_map<TKey, TValue> m_;
+}; // class Map;
 
 } // namespace tools
 } // namespace xq

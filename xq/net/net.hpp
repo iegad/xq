@@ -244,7 +244,7 @@ public: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 公共属性 
     /// </summary>
     /// <returns>激活返回true, 否则返回false</returns>
     bool active() { 
-        std::lock_guard<xq::tools::SpinMutex> lk(mtx_);
+        std::lock_guard<std::mutex> lk(mtx_);
         return kcp_ != nullptr; 
     }
 
@@ -281,7 +281,7 @@ public: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 公共方法 
     ///     others: 错误;
     /// </returns>
     int send(const char* data, int data_len) {
-        std::lock_guard<xq::tools::SpinMutex> lk(mtx_);
+        std::lock_guard<std::mutex> lk(mtx_);
         return kcp_ ? ::ikcp_send(kcp_, data, data_len) : ERR_KCP_INVALID;
     }
 
@@ -312,7 +312,7 @@ public: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 公共方法 
     ///     -101: KcpConn 超时;
     /// </returns>
     int update(int64_t now_ms) {
-        std::lock_guard<xq::tools::SpinMutex> lk(mtx_);
+        std::lock_guard<std::mutex> lk(mtx_);
 
         // 如果当前KcpConn未激活, 不作检查.
         if (!kcp_)
@@ -379,7 +379,7 @@ private: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 私有方法
     /// </summary>
     void _reset() {
         event_->on_disconnected(this);
-        std::lock_guard<xq::tools::SpinMutex> lk(mtx_);
+        std::lock_guard<std::mutex> lk(mtx_);
 
         if (ufd_ != INVALID_SOCKET) {
             ufd_ = INVALID_SOCKET;
@@ -423,8 +423,8 @@ private: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 成员字段
     int64_t time_;         // 创建时间, 单位毫秒
     int64_t active_time_;  // 最后激活时间, 单位秒
 
-    xq::tools::SpinMutex mtx_;
     IEvent::Ptr event_;
+    std::mutex mtx_;
 
 private: // >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> 友元类 >>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>
     friend class KcpListener;

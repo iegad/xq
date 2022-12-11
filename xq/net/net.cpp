@@ -205,7 +205,7 @@ xq::net::KcpConn::_recv(SOCKET ufd, uint32_t conv, const sockaddr* addr, int add
 
     if (!active() || ::memcmp(addr, &addr_, addrlen)) {
         {
-            std::lock_guard<xq::tools::SpinMutex> lk(mtx_);
+            std::lock_guard<std::mutex> lk(mtx_);
 
             if (kcp_)
                 ::ikcp_release(kcp_);
@@ -227,7 +227,7 @@ xq::net::KcpConn::_recv(SOCKET ufd, uint32_t conv, const sockaddr* addr, int add
     }
 
     {// kcp locker
-        std::lock_guard<xq::tools::SpinMutex> lk(mtx_);
+        std::lock_guard<std::mutex> lk(mtx_);
 
         if (!kcp_)
             return ERR_KCP_INVALID;
@@ -242,7 +242,7 @@ xq::net::KcpConn::_recv(SOCKET ufd, uint32_t conv, const sockaddr* addr, int add
     int n;
     do {
         {// kcp locker
-            std::lock_guard<xq::tools::SpinMutex> lk(mtx_);
+            std::lock_guard<std::mutex> lk(mtx_);
             if (!kcp_)
                 return ERR_KCP_INVALID;
 
@@ -259,7 +259,7 @@ xq::net::KcpConn::_recv(SOCKET ufd, uint32_t conv, const sockaddr* addr, int add
         }
 
         {
-            std::lock_guard<xq::tools::SpinMutex> lk(mtx_);
+            std::lock_guard<std::mutex> lk(mtx_);
             if (!kcp_->nrcv_que)
                 break;
         }
