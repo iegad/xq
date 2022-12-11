@@ -19,14 +19,14 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="ikcp.c" />
-    <ClCompile Include="net.cpp" />
-    <ClCompile Include="tools.cpp" />
+    <ClCompile Include="net\ikcp.c" />
+    <ClCompile Include="net\net.cpp" />
+    <ClCompile Include="tools\tools.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="ikcp.h" />
-    <ClInclude Include="net.hpp" />
-    <ClInclude Include="tools.hpp" />
+    <ClInclude Include="net\ikcp.h" />
+    <ClInclude Include="net\net.hpp" />
+    <ClInclude Include="tools\tools.hpp" />
   </ItemGroup>
   <PropertyGroup Label="Globals">
     <VCProjectVersion>16.0</VCProjectVersion>
@@ -137,6 +137,7 @@
       <ConformanceMode>true</ConformanceMode>
       <PrecompiledHeader>NotUsing</PrecompiledHeader>
       <PrecompiledHeaderFile />
+      <AdditionalIncludeDirectories>D:\iegad\xq\xq;%(AdditionalIncludeDirectories)</AdditionalIncludeDirectories>
     </ClCompile>
     <Link>
       <SubSystem>
