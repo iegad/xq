@@ -123,7 +123,7 @@ xq::net::KcpListener::_recv_thr(SOCKET sockfd) {
 			continue;
 
 		sess->set_remote(sockfd, &addr, addrlen);
-		sess->update();
+		sess->flush();
 
 		if (event_->on_message(sess, data, n) < 0)
 			sess_map_.erase(itr);

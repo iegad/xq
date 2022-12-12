@@ -85,10 +85,15 @@ public:
 		return 0;
 	}
 
+	void flush() {
+		std::lock_guard<std::mutex> lk(mtx_);
+		::ikcp_flush(kcp_);
+	}
+
 	int send(const uint8_t* data, size_t data_len) {
 		std::lock_guard<std::mutex> lk(mtx_);
 		int n = ::ikcp_send(kcp_, data, data_len);
-		if (!n) ::ikcp_update(kcp_, xq::tools::now_milli());
+		if (!n) ::ikcp_flush(kcp_);
 		return n;
 	}
 
@@ -118,6 +123,8 @@ private:
 		kcp_->output = func;
 		assert(!::ikcp_nodelay(kcp_, 1, 10, 1, 1));
 		assert(!::ikcp_wndsize(kcp_, 512, 512));
+
+		kcp_->updated = 1;
 	}
 
 	uint32_t now() {
