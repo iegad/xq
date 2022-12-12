@@ -1,33 +1,28 @@
-#include <iostream>
-#include <mutex>
-#include <shared_mutex>
-#include <vector>
-#include <functional>
-#include "tools/tools.hpp"
-#include <assert.h>
+#include "net/kcp_listener.hpp"
 
-xq::tools::Map<int, std::string> MAP;
+constexpr char HOST[] = ":6688";
 
-void
-worker(int i) {
-	for (int n = i + 1000; i < n; i++) {
-		MAP.insert(i, "Hello world: " + std::to_string(i));
+class EchoEvent : public xq::net::IListenerEvent {
+public:
+	// Í¨¹ý IListenerEvent ¼Ì³Ð
+	virtual int on_message(xq::net::KcpSess* s, const uint8_t* data, size_t datalen) override {
+		printf("%s\n", std::string((char *)data, datalen).c_str());
+		return s->send(data, datalen);
 	}
-}
+};
 
 int
 main(int argc, char **argv) {
-	for (int i = 1; i <= 10; i++) {
-		std::thread(std::bind(worker, i * 1000)).detach();
-	}
+#ifdef _WIN32
+	WSAData wdata;
+	assert(!WSAStartup(0x0202, &wdata));
+#endif // _WIN32
 
-	for (;;) {
-		//for (auto& item : MAP) {
-		//	std::cout << item.second << std::endl;
-		//}
-		printf("%05d--", MAP.size());
-		std::this_thread::sleep_for(std::chrono::milliseconds(10));
-	}
+	auto server = xq::net::KcpListener::create(xq::net::IListenerEvent::Ptr(new EchoEvent), HOST, xq::net::KCP_DEFAULT_TIMEOUT, 1);
+	server->run();
 
+#ifdef _WIN32
+	WSACleanup();
+#endif // _WIN32
 	exit(0);
 }

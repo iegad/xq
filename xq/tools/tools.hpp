@@ -180,7 +180,7 @@ int hex2bin(const std::string& hex, uint8_t *data, size_t *data_len);
 
 // ---------------------------------------------------------------------------- safe map ----------------------------------------------------------------------------
 
-template<typename TKey, typename TValue, typename TMutex = std::mutex>
+template<typename TKey, typename TValue>
 class Map final {
 public:
     typedef typename std::unordered_map<TKey, TValue>::iterator iterator;
@@ -192,52 +192,62 @@ public:
     Map& operator=(const Map&) = delete;
 
     std::pair<iterator, bool> insert(const TKey& k, const TValue& v) {
-        std::lock_guard<TMutex> lk(mtx_);
+        std::lock_guard<std::mutex> lk(mtx_);
         return m_.insert(std::make_pair(k, v));
     }
 
     size_type erase(const TKey& k) {
-        std::lock_guard<TMutex> lk(mtx_);
+        std::lock_guard<std::mutex> lk(mtx_);
         return m_.erase(k);
     }
 
+    iterator erase(iterator itr) {
+        std::lock_guard<std::mutex> lk(mtx_);
+        return m_.erase(itr);
+    }
+
     TValue& operator[](const TKey& k) {
-        std::lock_guard<TMutex> lk(mtx_);
+        std::lock_guard<std::mutex> lk(mtx_);
         return m_[k];
     }
 
     bool empty() {
-        std::lock_guard<TMutex> lk(mtx_);
+        std::lock_guard<std::mutex> lk(mtx_);
         return m_.empty();
     }
 
     void clear() {
-        std::lock_guard<TMutex> lk(mtx_);
+        std::lock_guard<std::mutex> lk(mtx_);
         m_.clear();
     }
 
     iterator find(const TKey& k) {
-        std::lock_guard<TMutex> lk(mtx_);
+        std::lock_guard<std::mutex> lk(mtx_);
         return m_.find(k);
     }
 
+    size_type count(const TKey& k) {
+        std::lock_guard<std::mutex> lk(mtx_);
+        return m_.count(k);
+    }
+
     size_type size() {
-        std::lock_guard<TMutex> lk(mtx_);
+        std::lock_guard<std::mutex> lk(mtx_);
         return m_.size();
     }
 
     iterator begin() {
-        std::lock_guard<TMutex> lk(mtx_);
+        std::lock_guard<std::mutex> lk(mtx_);
         return m_.begin();
     }
 
     iterator end() {
-        std::lock_guard<TMutex> lk(mtx_);
+        std::lock_guard<std::mutex> lk(mtx_);
         return m_.end();
     }
 
 private:
-    TMutex mtx_;
+    std::mutex mtx_;
     std::unordered_map<TKey, TValue> m_;
 }; // class Map;
 

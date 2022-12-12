@@ -21,13 +21,19 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
-    <ClCompile Include="net\ikcp.c" />
+    <ClCompile Include="net\kcp_listener.cpp" />
     <ClCompile Include="net\net.cpp" />
+    <ClCompile Include="third\ikcp.c" />
     <ClCompile Include="tools\tools.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="net\ikcp.h" />
+    <ClInclude Include="net\kcp_listener.hpp" />
+    <ClInclude Include="net\kcp_sess.hpp" />
     <ClInclude Include="net\net.hpp" />
+    <ClInclude Include="third\blockingconcurrentqueue.h" />
+    <ClInclude Include="third\concurrentqueue.h" />
+    <ClInclude Include="third\ikcp.h" />
+    <ClInclude Include="third\lightweightsemaphore.h" />
     <ClInclude Include="tools\tools.hpp" />
   </ItemGroup>
   <ItemGroup>

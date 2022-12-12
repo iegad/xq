@@ -354,7 +354,7 @@ void ikcp_setoutput(ikcpcb *kcp, int (*output)(const char *buf, int len,
 //---------------------------------------------------------------------
 // user/upper level recv: returns size, returns below zero for EAGAIN
 //---------------------------------------------------------------------
-int ikcp_recv(ikcpcb *kcp, char *buffer, int len)
+int ikcp_recv(ikcpcb *kcp, unsigned char *buffer, size_t len)
 {
 	struct IQUEUEHEAD *p;
 	int ispeek = (len < 0)? 1 : 0;
@@ -366,7 +366,7 @@ int ikcp_recv(ikcpcb *kcp, char *buffer, int len)
 	if (iqueue_is_empty(&kcp->rcv_queue))
 		return -1;
 
-	if (len < 0) len = -len;
+	//if (len < 0) len = -len;
 
 	peeksize = ikcp_peeksize(kcp);
 
@@ -430,7 +430,7 @@ int ikcp_recv(ikcpcb *kcp, char *buffer, int len)
 		kcp->probe |= IKCP_ASK_TELL;
 	}
 
-	return len;
+	return (int)len;
 }
 
 
@@ -465,7 +465,7 @@ int ikcp_peeksize(const ikcpcb *kcp)
 //---------------------------------------------------------------------
 // user/upper level send, returns below zero for error
 //---------------------------------------------------------------------
-int ikcp_send(ikcpcb *kcp, const char *buffer, int len)
+int ikcp_send(ikcpcb *kcp, const unsigned char *buffer, size_t len)
 {
 	IKCPSEG *seg;
 	int count, i;
@@ -745,14 +745,14 @@ void ikcp_parse_data(ikcpcb *kcp, IKCPSEG *newseg)
 //---------------------------------------------------------------------
 // input data
 //---------------------------------------------------------------------
-int ikcp_input(ikcpcb *kcp, const char *data, long size)
+int ikcp_input(ikcpcb *kcp, const unsigned char *data, size_t size)
 {
 	IUINT32 prev_una = kcp->snd_una;
 	IUINT32 maxack = 0, latest_ts = 0;
 	int flag = 0;
 
 	if (ikcp_canlog(kcp, IKCP_LOG_INPUT)) {
-		ikcp_log(kcp, IKCP_LOG_INPUT, "[RI] %d bytes", (int)size);
+		ikcp_log(kcp, IKCP_LOG_INPUT, "[RI] %u bytes", size);
 	}
 
 	if (data == NULL || (int)size < (int)IKCP_OVERHEAD) return -1;
