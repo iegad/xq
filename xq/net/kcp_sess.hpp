@@ -52,12 +52,16 @@ public:
 	}
 
 	void set_remote(SOCKET sockfd, sockaddr* addr, socklen_t addrlen) {
+		std::lock_guard<std::mutex> lk(mtx_);
 		if (sockfd_ == sockfd && addrlen_ == addrlen && !::memcmp(&addr_, addr, addrlen))
 			return;
 
+		::ikcp_reset(kcp_);
 		sockfd_ = sockfd;
 		::memcpy(&addr_, addr, addrlen);
 		addrlen_ = addrlen;
+		time_ = xq::tools::now_milli();
+		last_active_ = time_ / 1000;
 	}
 
 	void release() {
@@ -76,13 +80,14 @@ public:
 
 	int recv(uint8_t* buf, size_t buflen) {
 		std::lock_guard<std::mutex> lk(mtx_);
+		last_active_ = xq::tools::now();
 		return ::ikcp_recv(kcp_, buf, buflen);
 	}
 
-	int update() {
+	int update(int64_t now_ms, int64_t timeout = 0) {
 		std::lock_guard<std::mutex> lk(mtx_);
-		::ikcp_update(kcp_, now());
-		return 0;
+		::ikcp_update(kcp_, (uint32_t)(now_ms - time_));
+		return (timeout > 0 && now_ms / 1000 - last_active_ > timeout) ? -1 : 0;
 	}
 
 	void flush() {
@@ -108,7 +113,6 @@ private:
 		, sockfd_(INVALID_SOCKET)
 		, addr_({0, 0})
 		, addrlen_(sizeof(sockaddr))
-		, timeout_(timeout)
 		, time_(xq::tools::now_milli())
 		, last_active_(time_ / 1000)
 		, que_(que) {
@@ -127,23 +131,12 @@ private:
 		kcp_->updated = 1;
 	}
 
-	uint32_t now() {
-		return xq::tools::now_milli() - time_;
-	}
-
-	bool timeout() {
-		std::lock_guard<std::mutex> lk(mtx_);
-		return false;
-	}
-	
-
 	IKCPCB *kcp_;
 
 	SOCKET sockfd_;
 	sockaddr addr_;
 	socklen_t addrlen_;
 
-	uint32_t timeout_;
 	int64_t time_;
 	int64_t last_active_;
 	std::mutex mtx_;

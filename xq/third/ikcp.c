@@ -295,11 +295,87 @@ ikcpcb* ikcp_create(IUINT32 conv, void *user)
 
 
 //---------------------------------------------------------------------
+// declare by iegad
+//---------------------------------------------------------------------
+void ikcp_reset(ikcpcb* kcp) {
+	if (kcp) {
+		IKCPSEG* seg;
+		while (!iqueue_is_empty(&kcp->snd_buf)) {
+			seg = iqueue_entry(kcp->snd_buf.next, IKCPSEG, node);
+			iqueue_del(&seg->node);
+			ikcp_segment_delete(kcp, seg);
+		}
+		while (!iqueue_is_empty(&kcp->rcv_buf)) {
+			seg = iqueue_entry(kcp->rcv_buf.next, IKCPSEG, node);
+			iqueue_del(&seg->node);
+			ikcp_segment_delete(kcp, seg);
+		}
+		while (!iqueue_is_empty(&kcp->snd_queue)) {
+			seg = iqueue_entry(kcp->snd_queue.next, IKCPSEG, node);
+			iqueue_del(&seg->node);
+			ikcp_segment_delete(kcp, seg);
+		}
+		while (!iqueue_is_empty(&kcp->rcv_queue)) {
+			seg = iqueue_entry(kcp->rcv_queue.next, IKCPSEG, node);
+			iqueue_del(&seg->node);
+			ikcp_segment_delete(kcp, seg);
+		}
+
+		kcp->snd_una = 0;
+		kcp->snd_nxt = 0;
+		kcp->rcv_nxt = 0;
+		kcp->ts_recent = 0;
+		kcp->ts_lastack = 0;
+		kcp->ts_probe = 0;
+		kcp->probe_wait = 0;
+		//kcp->snd_wnd = IKCP_WND_SND;
+		//kcp->rcv_wnd = IKCP_WND_RCV;
+		//kcp->rmt_wnd = IKCP_WND_RCV;
+		kcp->cwnd = 0;
+		kcp->incr = 0;
+		kcp->probe = 0;
+		//kcp->mtu = IKCP_MTU_DEF;
+		//kcp->mss = kcp->mtu - IKCP_OVERHEAD;
+		//kcp->stream = 0;
+
+		iqueue_init(&kcp->snd_queue);
+		iqueue_init(&kcp->rcv_queue);
+		iqueue_init(&kcp->snd_buf);
+		iqueue_init(&kcp->rcv_buf);
+		kcp->nrcv_buf = 0;
+		kcp->nsnd_buf = 0;
+		kcp->nrcv_que = 0;
+		kcp->nsnd_que = 0;
+		kcp->state = 0;
+		kcp->ackblock = 0;
+		kcp->ackcount = 0;
+		kcp->rx_srtt = 0;
+		kcp->rx_rttval = 0;
+		kcp->rx_rto = IKCP_RTO_DEF;
+		kcp->rx_minrto = IKCP_RTO_MIN;
+		kcp->current = 0;
+		kcp->interval = IKCP_INTERVAL;
+		kcp->ts_flush = IKCP_INTERVAL;
+		kcp->nodelay = 0;
+		//kcp->updated = 0;
+		kcp->logmask = 0;
+		kcp->ssthresh = IKCP_THRESH_INIT;
+		kcp->fastresend = 0;
+		kcp->fastlimit = IKCP_FASTACK_LIMIT;
+		kcp->nocwnd = 0;
+		kcp->xmit = 0;
+		kcp->dead_link = IKCP_DEADLINK;
+		//kcp->output = NULL;
+		//kcp->writelog = NULL;
+	}
+}
+
+
+//---------------------------------------------------------------------
 // release a new kcpcb
 //---------------------------------------------------------------------
 void ikcp_release(ikcpcb *kcp)
 {
-	assert(kcp);
 	if (kcp) {
 		IKCPSEG *seg;
 		while (!iqueue_is_empty(&kcp->snd_buf)) {

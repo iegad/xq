@@ -345,6 +345,8 @@ extern "C" {
 // output callback can be setup like this: 'kcp->output = my_udp_output'
 ikcpcb* ikcp_create(IUINT32 conv, void *user);
 
+void ikcp_reset(ikcpcb* kcp);
+
 // release kcp control object
 void ikcp_release(ikcpcb *kcp);
 

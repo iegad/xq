@@ -14,12 +14,11 @@ int
 main(int argc, char **argv) {
 #ifdef _WIN32
 	WSAData wdata;
-	if (WSAStartup(0x0202, &wdata) || wdata.wVersion != 0x0202) {
+	if (WSAStartup(0x0202, &wdata) || wdata.wVersion != 0x0202)
 		exit(1);
-	}
 #endif // _WIN32
 
-	auto server = xq::net::KcpListener::create(xq::net::IListenerEvent::Ptr(new EchoEvent), HOST, xq::net::KCP_DEFAULT_TIMEOUT, 1);
+	auto server = xq::net::KcpListener::create(xq::net::IListenerEvent::Ptr(new EchoEvent), HOST, xq::net::KCP_DEFAULT_TIMEOUT, 4);
 	server->run();
 
 #ifdef _WIN32

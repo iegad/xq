@@ -54,12 +54,16 @@ xq::net::KcpListener::_udp_output(const char* data, int datalen, IKCPCB* kcp, vo
 
 void
 xq::net::KcpListener::_update_thr() {
+	int64_t now_ms;
+
 	while (State::Runing == state_) {
 		std::this_thread::sleep_for(std::chrono::milliseconds(10));
 		
+		now_ms = xq::tools::now_milli();
 		for (auto itr = sess_map_.begin(); itr != sess_map_.end(); ++itr) {
 			auto& s = itr->second;
-			if (s->update() < 0) {
+			if (s->update(now_ms, timeout_) < 0) {
+				printf("timeout....\n");
 				s->release();
 				sess_map_.erase(itr++);
 			}
@@ -110,6 +114,7 @@ xq::net::KcpListener::_recv_thr(SOCKET sockfd) {
 			}
 		}
 		sess = itr->second.get();
+		sess->set_remote(sockfd, &addr, addrlen);
 
 		if (sess->input(rbuf, n) < 0) {
 			event_->on_error(ErrType::ET_SessRead, &addr, addrlen);
@@ -122,7 +127,7 @@ xq::net::KcpListener::_recv_thr(SOCKET sockfd) {
 		if (n <= 0)
 			continue;
 
-		sess->set_remote(sockfd, &addr, addrlen);
+		
 		sess->flush();
 
 		if (event_->on_message(sess, data, n) < 0)
@@ -136,14 +141,13 @@ xq::net::KcpListener::_send_thr(SOCKET sockfd) {
 	int n;
 
 	while (State::Runing == state_) {
-		if (que_.wait_dequeue_timed(seg, std::chrono::milliseconds(5))) {
-			n = ::sendto(sockfd, (char*)seg->data, (int)seg->len, 0, &seg->addr, seg->addrlen);
-			if (n <= 0) {
-				event_->on_error(ErrType::ET_ListenerWrite, this, error());
-				continue;
-			}
-			event_->on_send(sockfd, &seg->addr, seg->addrlen, seg->data, seg->len);
+		que_.wait_dequeue(seg);
+		n = ::sendto(sockfd, (char*)seg->data, (int)seg->len, 0, &seg->addr, seg->addrlen);
+		if (n <= 0) {
+			event_->on_error(ErrType::ET_ListenerWrite, this, error());
+			continue;
 		}
+		event_->on_send(sockfd, &seg->addr, seg->addrlen, seg->data, seg->len);
 	}
 }
 #else 

@@ -107,7 +107,7 @@ inline bool is_be() {
 /// <param name="v"></param>
 /// <returns></returns>
 inline uint16_t to_le_u16(uint16_t v) {
-   return is_le() ? v : __rvs_u16(v);
+    return is_le() ? v : __rvs_u16(v);
 }
 
 /// <summary>
