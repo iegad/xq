@@ -4,6 +4,7 @@
 #include "net/net.hpp"
 #include "net/kcp_sess.hpp"
 #include "third/blockingconcurrentqueue.h"
+#include "spdlog/sinks/basic_file_sink.h"
 
 namespace xq {
 namespace net {
@@ -44,6 +45,8 @@ private:
 		, event_(event) {
 		assert(timeout_ > 0 && "timeout is invalid");
 		assert(nthread_ > 0 && "nthread is invalid");
+
+		log_ = spdlog::basic_logger_mt("log", "logs/server.log");
 	}
 
 	static int _udp_output(const char* data, int datalen, IKCPCB* kcp, void* user);
@@ -66,6 +69,8 @@ private:
 	moodycamel::BlockingConcurrentQueue<KcpSeg::Ptr> que_;
 
 	IListenerEvent::Ptr event_;
+
+	std::shared_ptr<spdlog::logger> log_;
 
 	KcpListener(const KcpListener&) = delete;
 	KcpListener& operator=(const KcpListener&) = delete;

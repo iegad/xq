@@ -2,6 +2,7 @@
 #define __KCP_HPP__
 
 #include "third/blockingconcurrentqueue.h"
+#include "spdlog/spdlog.h"
 #include "net/net.hpp"
 
 namespace xq {
@@ -51,26 +52,28 @@ public:
 		return que_;
 	}
 
-	void set_remote(SOCKET sockfd, sockaddr* addr, socklen_t addrlen) {
+	uint32_t conv() {
 		std::lock_guard<std::mutex> lk(mtx_);
-		if (sockfd_ == sockfd && addrlen_ == addrlen && !::memcmp(&addr_, addr, addrlen))
-			return;
+		return kcp_->conv;
+	}
 
-		::ikcp_reset(kcp_);
+	bool change(SOCKET sockfd, sockaddr* addr, socklen_t addrlen) {
+		std::lock_guard<std::mutex> lk(mtx_);
+
+		if (sockfd_ != sockfd)
+			sockfd_ = sockfd;
+
+		if (addrlen_ == addrlen && !::memcmp(&addr_, addr, addrlen))
+			return false;
+
+		bool res = addr_.sa_family != 0;
+		ikcp_reset(kcp_);
 		sockfd_ = sockfd;
 		::memcpy(&addr_, addr, addrlen);
 		addrlen_ = addrlen;
 		time_ = xq::tools::now_milli();
 		last_active_ = time_ / 1000;
-	}
-
-	void release() {
-		std::lock_guard<std::mutex> lk(mtx_);
-		if (kcp_) {
-			::ikcp_release(kcp_);
-			kcp_ = nullptr;
-		}
-		time_ = last_active_ = 0;
+		return res;
 	}
 
 	int input(const uint8_t *raw, size_t raw_len) {
@@ -86,8 +89,12 @@ public:
 
 	int update(int64_t now_ms, int64_t timeout = 0) {
 		std::lock_guard<std::mutex> lk(mtx_);
-		::ikcp_update(kcp_, (uint32_t)(now_ms - time_));
-		return (timeout > 0 && now_ms / 1000 - last_active_ > timeout) ? -1 : 0;
+		uint32_t now = (uint32_t)(now_ms - time_);
+		::ikcp_update(kcp_, now);
+		if (timeout > 0 && now_ms / 1000 - last_active_ > timeout)
+			return -1;
+
+		return 0;
 	}
 
 	void flush() {
@@ -116,11 +123,6 @@ private:
 		, time_(xq::tools::now_milli())
 		, last_active_(time_ / 1000)
 		, que_(que) {
-		if (conv == 0) {
-			srand((uint32_t)::time(nullptr));
-			conv = (uint32_t)::rand();
-		}
-
 		kcp_ = ::ikcp_create(conv, this);
 		assert(kcp_);
 
@@ -129,6 +131,16 @@ private:
 		assert(!::ikcp_wndsize(kcp_, 512, 512));
 
 		kcp_->updated = 1;
+	}
+
+	void release() {
+		std::lock_guard<std::mutex> lk(mtx_);
+
+		if (kcp_) {
+			::ikcp_release(kcp_);
+			kcp_ = nullptr;
+		}
+		time_ = last_active_ = 0;
 	}
 
 	IKCPCB *kcp_;

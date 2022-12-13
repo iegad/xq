@@ -63,6 +63,7 @@ constexpr size_t KCP_MTU = 1418;
 constexpr size_t KCP_MAX_DATA_SIZE = 1418 * 128;
 constexpr size_t KCP_HEAD_SIZE = 24;
 constexpr uint32_t KCP_DEFAULT_TIMEOUT = 60;
+constexpr int64_t KCP_UPDATE_MS = 20;
 
 enum class ErrType {
     ET_ListenerRead = 0,

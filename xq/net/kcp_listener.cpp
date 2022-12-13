@@ -1,5 +1,6 @@
 #include "net/kcp_listener.hpp"
 #include <string>
+#include <spdlog/spdlog.h>
 
 void 
 xq::net::KcpListener::run() {
@@ -57,14 +58,13 @@ xq::net::KcpListener::_update_thr() {
 	int64_t now_ms;
 
 	while (State::Runing == state_) {
-		std::this_thread::sleep_for(std::chrono::milliseconds(10));
-		
+		std::this_thread::sleep_for(std::chrono::milliseconds(xq::net::KCP_UPDATE_MS));
 		now_ms = xq::tools::now_milli();
 		for (auto itr = sess_map_.begin(); itr != sess_map_.end(); ++itr) {
 			auto& s = itr->second;
+
 			if (s->update(now_ms, timeout_) < 0) {
-				printf("timeout....\n");
-				s->release();
+				log_->info("{} update failed then remove.", s->conv());
 				sess_map_.erase(itr++);
 			}
 		}
@@ -112,12 +112,16 @@ xq::net::KcpListener::_recv_thr(SOCKET sockfd) {
 				sess_map_.erase(itr);
 				continue;
 			}
+			log_->info("{} has connected.", conv);
 		}
 		sess = itr->second.get();
-		sess->set_remote(sockfd, &addr, addrlen);
+		if (sess->change(sockfd, &addr, addrlen)) {
+			log_->info("{} has reset.", conv);
+		}
 
 		if (sess->input(rbuf, n) < 0) {
 			event_->on_error(ErrType::ET_SessRead, &addr, addrlen);
+			log_->info("{} has error then remove.", conv);
 			sess_map_.erase(itr);
 			continue;
 		}
@@ -130,8 +134,10 @@ xq::net::KcpListener::_recv_thr(SOCKET sockfd) {
 		
 		sess->flush();
 
-		if (event_->on_message(sess, data, n) < 0)
+		if (event_->on_message(sess, data, n) < 0) {
+			log_->info("{} has on_message failed then remove.", conv);
 			sess_map_.erase(itr);
+		}
 	}
 }
 
