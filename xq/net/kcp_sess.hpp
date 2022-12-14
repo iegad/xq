@@ -15,16 +15,15 @@ struct KcpSeg {
 		return Ptr(new KcpSeg(data, len, addr, addrlen));
 	}
 
-	uint8_t* data;
-	size_t len;
+	std::vector<uint8_t> data;
 	sockaddr addr;
 	socklen_t addrlen;
 
 private:
-	KcpSeg(uint8_t* data, size_t len, const sockaddr* dst, socklen_t addrlen)
-		: data(data)
-		, len(len)
+	KcpSeg(uint8_t* raw, size_t len, const sockaddr* dst, socklen_t addrlen)
+		: data(len)
 		, addrlen(addrlen) {
+		::memcpy(&data[0], raw, len);
 		::memcpy(&addr, dst, addrlen);
 	}
 }; // struct KcpSeg;

@@ -64,8 +64,7 @@ xq::net::KcpListener::_update_thr() {
 			auto& s = itr->second;
 
 			if (s->update(now_ms, timeout_) < 0) {
-				log_->info("{} update failed then remove.", s->conv());
-				sess_map_.erase(itr++);
+				remove_sess(itr++);
 			}
 		}
 	}
@@ -85,6 +84,7 @@ xq::net::KcpListener::_recv_thr(SOCKET sockfd) {
 
 	uint32_t conv;
 	KcpSess* sess;
+	KcpSess::Ptr nconn;
 	xq::tools::Map<uint32_t, KcpSess::Ptr>::iterator itr;
 	std::pair<xq::tools::Map<uint32_t, KcpSess::Ptr>::iterator, bool> pair;
 
@@ -105,24 +105,22 @@ xq::net::KcpListener::_recv_thr(SOCKET sockfd) {
 		conv = *(uint32_t*)rbuf;
 		itr = sess_map_.find(conv);
 		if (itr == sess_map_.end()) {
-			pair = sess_map_.insert(conv, KcpSess::create(que_, conv, timeout_, &KcpListener::_udp_output));
+			nconn = KcpSess::create(que_, conv, timeout_, &KcpListener::_udp_output);
+			if (event_->on_connected(nconn.get()) < 0)
+				continue;
+
+			pair = add_sess(conv, nconn);
 			assert(pair.second);
 			itr = pair.first;
-			if (event_->on_connected(itr->second.get()) < 0) {
-				sess_map_.erase(itr);
-				continue;
-			}
-			log_->info("{} has connected.", conv);
 		}
 		sess = itr->second.get();
 		if (sess->change(sockfd, &addr, addrlen)) {
-			log_->info("{} has reset.", conv);
+			// TODO: ÖØÁ¬
 		}
 
 		if (sess->input(rbuf, n) < 0) {
 			event_->on_error(ErrType::ET_SessRead, &addr, addrlen);
-			log_->info("{} has error then remove.", conv);
-			sess_map_.erase(itr);
+			remove_sess(itr);
 			continue;
 		}
 
@@ -131,29 +129,24 @@ xq::net::KcpListener::_recv_thr(SOCKET sockfd) {
 		if (n <= 0)
 			continue;
 
-		
 		sess->flush();
 
-		if (event_->on_message(sess, data, n) < 0) {
-			log_->info("{} has on_message failed then remove.", conv);
-			sess_map_.erase(itr);
-		}
+		if (event_->on_message(sess, data, n) < 0)
+			remove_sess(itr);
 	}
 }
 
 void 
 xq::net::KcpListener::_send_thr(SOCKET sockfd) {
-	KcpSeg::Ptr seg;
 	int n;
-
+	KcpSeg::Ptr seg;
 	while (State::Runing == state_) {
 		que_.wait_dequeue(seg);
-		n = ::sendto(sockfd, (char*)seg->data, (int)seg->len, 0, &seg->addr, seg->addrlen);
-		if (n <= 0) {
+		event_->on_send(sockfd, &seg->addr, seg->addrlen, &seg->data[0], seg->data.size());
+		n = ::sendto(sockfd, (char*)&seg->data[0], (int)seg->data.size(), 0, &seg->addr, seg->addrlen);
+		if (n <= 0)
 			event_->on_error(ErrType::ET_ListenerWrite, this, error());
-			continue;
-		}
-		event_->on_send(sockfd, &seg->addr, seg->addrlen, seg->data, seg->len);
+		seg.reset();
 	}
 }
 #else 

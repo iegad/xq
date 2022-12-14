@@ -12,6 +12,7 @@ namespace net {
 class KcpListener final {
 public:
 	typedef std::unique_ptr<KcpListener> ptr;
+	typedef xq::tools::Map<uint32_t, KcpSess::Ptr> SessMap;
 
 	enum class State {
 		Stopped = 0,
@@ -45,8 +46,14 @@ private:
 		, event_(event) {
 		assert(timeout_ > 0 && "timeout is invalid");
 		assert(nthread_ > 0 && "nthread is invalid");
+	}
 
-		log_ = spdlog::basic_logger_mt("log", "logs/server.log");
+	std::pair<SessMap::iterator, bool> add_sess(uint32_t conv, KcpSess::Ptr s) {
+		return sess_map_.insert(conv, s);
+	}
+
+	SessMap::iterator remove_sess(SessMap::iterator itr) {
+		return sess_map_.erase(itr);
 	}
 
 	static int _udp_output(const char* data, int datalen, IKCPCB* kcp, void* user);
@@ -64,13 +71,9 @@ private:
 	std::vector<SOCKET> ufds_;
 	std::vector<std::thread> recv_pool_;
 	std::vector<std::thread> send_pool_;
-	xq::tools::Map<uint32_t, KcpSess::Ptr> sess_map_;
-
+	SessMap sess_map_;
 	moodycamel::BlockingConcurrentQueue<KcpSeg::Ptr> que_;
-
 	IListenerEvent::Ptr event_;
-
-	std::shared_ptr<spdlog::logger> log_;
 
 	KcpListener(const KcpListener&) = delete;
 	KcpListener& operator=(const KcpListener&) = delete;
