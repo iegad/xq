@@ -1,7 +1,6 @@
 #ifndef __KCP_HPP__
 #define __KCP_HPP__
 
-#include "third/blockingconcurrentqueue.h"
 #include "net/net.hpp"
 
 namespace xq {
@@ -32,8 +31,8 @@ public:
 	typedef std::shared_ptr<KcpSess> Ptr;
 	typedef int (*Output)(const char*, int, IKCPCB*, void*);
 
-    static Ptr create(moodycamel::BlockingConcurrentQueue<KcpSeg::Ptr>& que, uint32_t conv, Output func) {
-        return Ptr(new KcpSess(que, conv, func));
+    static Ptr create(uint32_t conv, Output func) {
+        return Ptr(new KcpSess(conv, func));
 	}
 
 	~KcpSess() {
@@ -44,9 +43,7 @@ public:
 		return std::make_pair(&addr_, addrlen_);
 	}
 
-	moodycamel::BlockingConcurrentQueue<KcpSeg::Ptr>& que() {
-		return que_;
-	}
+    SOCKET sockfd() const {return sockfd_; }
 
 	uint32_t conv() {
 		std::lock_guard<std::mutex> lk(mtx_);
@@ -111,14 +108,13 @@ public:
 	}
 
 private:
-    KcpSess(moodycamel::BlockingConcurrentQueue<KcpSeg::Ptr>& que, uint32_t conv, Output func)
+    KcpSess(uint32_t conv, Output func)
 		: kcp_(nullptr)
 		, sockfd_(INVALID_SOCKET)
         , addr_({0, {0}})
 		, addrlen_(sizeof(sockaddr))
 		, time_(xq::tools::now_milli())
-		, last_active_(time_ / 1000)
-		, que_(que) {
+		, last_active_(time_ / 1000) {
 		kcp_ = ::ikcp_create(conv, this);
 		assert(kcp_);
 
@@ -148,7 +144,6 @@ private:
 	int64_t time_;
 	int64_t last_active_;
 	std::mutex mtx_;
-	moodycamel::BlockingConcurrentQueue<KcpSeg::Ptr>& que_;
 }; // class KcpSess;
 
 } // namespace net
