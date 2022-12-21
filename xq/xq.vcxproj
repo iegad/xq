@@ -21,7 +21,6 @@
   </ItemGroup>
   <ItemGroup>
     <ClCompile Include="main.cpp" />
-    <ClCompile Include="net\kcp_listener.cpp" />
     <ClCompile Include="net\net.cpp" />
     <ClCompile Include="third\ikcp.c" />
     <ClCompile Include="tools\tools.cpp" />

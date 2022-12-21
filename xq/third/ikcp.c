@@ -57,7 +57,7 @@ static inline char *ikcp_encode8u(char *p, unsigned char c)
 }
 
 /* decode 8 bits unsigned int */
-static inline const char *ikcp_decode8u(const char *p, unsigned char *c)
+static inline const unsigned char *ikcp_decode8u(const unsigned char *p, unsigned char *c)
 {
 	*c = *(unsigned char*)p++;
 	return p;
@@ -77,7 +77,7 @@ static inline char *ikcp_encode16u(char *p, unsigned short w)
 }
 
 /* decode 16 bits unsigned int (lsb) */
-static inline const char *ikcp_decode16u(const char *p, unsigned short *w)
+static inline const unsigned char *ikcp_decode16u(const unsigned char *p, unsigned short *w)
 {
 #if IWORDS_BIG_ENDIAN || IWORDS_MUST_ALIGN
 	*w = *(const unsigned char*)(p + 1);
@@ -105,7 +105,7 @@ static inline char *ikcp_encode32u(char *p, IUINT32 l)
 }
 
 /* decode 32 bits unsigned int (lsb) */
-static inline const char *ikcp_decode32u(const char *p, IUINT32 *l)
+static inline const unsigned char *ikcp_decode32u(const unsigned char *p, IUINT32 *l)
 {
 #if IWORDS_BIG_ENDIAN || IWORDS_MUST_ALIGN
 	*l = *(const unsigned char*)(p + 3);
@@ -1367,7 +1367,7 @@ int ikcp_waitsnd(const ikcpcb *kcp)
 IUINT32 ikcp_getconv(const void *ptr)
 {
 	IUINT32 conv;
-	ikcp_decode32u((const char*)ptr, &conv);
+    ikcp_decode32u((const unsigned char*)ptr, &conv);
 	return conv;
 }
 

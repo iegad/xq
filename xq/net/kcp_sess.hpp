@@ -2,41 +2,38 @@
 #define __KCP_HPP__
 
 #include "third/blockingconcurrentqueue.h"
-#include "spdlog/spdlog.h"
 #include "net/net.hpp"
 
 namespace xq {
 namespace net {
 
 struct KcpSeg {
-	typedef std::shared_ptr<KcpSeg> Ptr;
+    typedef std::shared_ptr<KcpSeg> Ptr;
 
-	static Ptr create(uint8_t *data, size_t len, const sockaddr *addr, socklen_t addrlen) {
-		return Ptr(new KcpSeg(data, len, addr, addrlen));
+    static Ptr create(uint8_t *data, size_t len, const sockaddr *addr, socklen_t addrlen) {
+        return Ptr(new KcpSeg(data, len, addr, addrlen));
 	}
 
-	std::vector<uint8_t> data;
+    std::vector<uint8_t> data;
 	sockaddr addr;
 	socklen_t addrlen;
 
 private:
-	KcpSeg(uint8_t* raw, size_t len, const sockaddr* dst, socklen_t addrlen)
-		: data(len)
-		, addrlen(addrlen) {
-		::memcpy(&data[0], raw, len);
-		::memcpy(&addr, dst, addrlen);
-	}
+    KcpSeg(uint8_t* raw, size_t len, const sockaddr* dst, socklen_t addrlen)
+        : data(len)
+        , addrlen(addrlen) {
+        ::memcpy(&data[0], raw, len);
+        ::memcpy(&addr, dst, addrlen);
+    }
 }; // struct KcpSeg;
-
-class KcpListener;
 
 class KcpSess {
 public:
 	typedef std::shared_ptr<KcpSess> Ptr;
 	typedef int (*Output)(const char*, int, IKCPCB*, void*);
 
-	static Ptr create(moodycamel::BlockingConcurrentQueue<KcpSeg::Ptr>& que, uint32_t conv, int32_t timeout, Output func) {
-		return Ptr(new KcpSess(que, conv, KCP_DEFAULT_TIMEOUT, func));
+    static Ptr create(moodycamel::BlockingConcurrentQueue<KcpSeg::Ptr>& que, uint32_t conv, Output func) {
+        return Ptr(new KcpSess(que, conv, func));
 	}
 
 	~KcpSess() {
@@ -114,10 +111,10 @@ public:
 	}
 
 private:
-	KcpSess(moodycamel::BlockingConcurrentQueue<KcpSeg::Ptr>& que, uint32_t conv, int32_t timeout, Output func)
+    KcpSess(moodycamel::BlockingConcurrentQueue<KcpSeg::Ptr>& que, uint32_t conv, Output func)
 		: kcp_(nullptr)
 		, sockfd_(INVALID_SOCKET)
-		, addr_({0, 0})
+        , addr_({0, {0}})
 		, addrlen_(sizeof(sockaddr))
 		, time_(xq::tools::now_milli())
 		, last_active_(time_ / 1000)

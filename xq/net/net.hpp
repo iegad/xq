@@ -11,7 +11,6 @@
 //! |- time                |- coder                  |- content 
 
 
-// ---------------------------------------------------------------------------- system ----------------------------------------------------------------------------
 #ifdef _WIN32
 #pragma comment(lib, "ws2_32.lib")
 #include <WinSock2.h>
@@ -25,12 +24,10 @@
 #include <jemalloc/jemalloc.h>
 #endif
 
-// ---------------------------------------------------------------------------- C ----------------------------------------------------------------------------
 #include <assert.h>
 #include <errno.h>
 #include <memory.h>
 
-// ---------------------------------------------------------------------------- C++ ----------------------------------------------------------------------------
 #include <atomic>
 #include <chrono>
 #include <functional>
@@ -40,10 +37,7 @@
 #include <unordered_map>
 #include <vector>
 
-// ---------------------------------------------------------------------------- third party ----------------------------------------------------------------------------
 #include "third/ikcp.h"
-
-// ---------------------------------------------------------------------------- xq ----------------------------------------------------------------------------
 #include "tools/tools.hpp"
 
 #ifndef INVALID_SOCKET
@@ -59,36 +53,17 @@ namespace net {
     typedef int SOCKET;
 #endif
 
-constexpr size_t KCP_MTU = 1418;
-constexpr size_t KCP_MAX_DATA_SIZE = 1418 * 128;
-constexpr size_t KCP_HEAD_SIZE = 24;
+constexpr size_t   KCP_MTU             = 1418;
+constexpr size_t   KCP_MAX_DATA_SIZE   = 1418 * 128;
+constexpr size_t   KCP_HEAD_SIZE       = 24;
 constexpr uint32_t KCP_DEFAULT_TIMEOUT = 60;
-constexpr int64_t KCP_UPDATE_MS = 20;
+constexpr int64_t  KCP_UPDATE_MS       = 20;
 
 enum class ErrType {
     ET_ListenerRead = 0,
     ET_ListenerWrite,
     ET_SessRead,
 };
-
-
-
-class KcpSess;
-class KcpListener;
-
-class IListenerEvent {
-public:
-    typedef std::shared_ptr<IListenerEvent> Ptr;
-
-    virtual int on_inited(KcpListener* listener) { return 0; }
-    virtual void on_stopped(KcpListener* listener) {}
-    virtual int on_connected(KcpSess* s) { return 0; }
-    virtual void on_disconnected(KcpSess* s) {}
-    virtual void on_error(ErrType et, void* sender, int errcode) {}
-    virtual void on_recv(SOCKET ufd, const sockaddr* from, socklen_t fromlen, const uint8_t* raw, size_t rawlen) {}
-    virtual void on_send(SOCKET ufd, const sockaddr* to, socklen_t tolen, const uint8_t* raw, size_t rawlen) {}
-    virtual int on_message(KcpSess* s, const uint8_t* data, size_t datalen) = 0;
-}; // class ListenerEvent;
 
 /// <summary>
 /// 关闭套接字

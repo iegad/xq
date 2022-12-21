@@ -1,22 +1,22 @@
 #ifndef __TOOLS_HPP__
 #define __TOOLS_HPP__
 
-// ---------------------------------------------------------------------------- system ----------------------------------------------------------------------------
 #ifdef _WIN32
 #include <WinSock2.h>
 #else
 #include <arpa/inet.h>
 #endif // !_WIN32
 
-// ---------------------------------------------------------------------------- C ----------------------------------------------------------------------------
 #include <stdint.h>
 
-// ---------------------------------------------------------------------------- C++ ----------------------------------------------------------------------------
 #include <atomic>
 #include <chrono>
+#include <memory>
 #include <mutex>
 #include <string>
 #include <unordered_map>
+
+#include "third/concurrentqueue.h"
 
 namespace xq {
 namespace tools {
@@ -250,6 +250,43 @@ private:
     std::mutex mtx_;
     std::unordered_map<TKey, TValue> m_;
 }; // class Map;
+
+// ---------------------------------------------------------------------------- safe object pool  ----------------------------------------------------------------------------
+template <typename T>
+class ObjectPool {
+public:
+    typedef std::shared_ptr<T> Ptr;
+
+    ObjectPool() {}
+    ObjectPool(const ObjectPool &) = delete;
+    ObjectPool& operator=(const ObjectPool &) = delete;
+
+    ~ObjectPool() {
+        Ptr p;
+        while(que_.try_enqueue(p));
+    }
+
+    static ObjectPool*
+    Instance() {
+        static ObjectPool instance_;
+        return &instance_;
+    }
+
+    Ptr get() {
+        Ptr p;
+        if (!que_.try_dequeue(p))
+            p = Ptr(new T);
+
+        return p;
+    }
+
+    void put(Ptr p) {
+        que_.enqueue(p);
+    }
+
+private:
+    moodycamel::ConcurrentQueue<Ptr> que_;
+}; // class ObjectPool;
 
 } // namespace tools
 } // namespace xq

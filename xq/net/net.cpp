@@ -1,9 +1,8 @@
 #include "net/net.hpp"
-#include "tools/tools.hpp"
 
 // -------------------------------------------------------------------------------------- 公共函数 --------------------------------------------------------------------------------------
 
-SOCKET
+xq::net::SOCKET
 xq::net::udp_socket(const char* local, const char* remote, sockaddr *addr, socklen_t *addrlen) {
     static constexpr int ON = 1;
 
