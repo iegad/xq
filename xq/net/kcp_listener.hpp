@@ -3,276 +3,180 @@
 
 #include "net/net.hpp"
 #include "net/kcp_sess.hpp"
+#include "third/blockingconcurrentqueue.h"
+#include <functional>
+#include <unordered_set>
 
 namespace xq {
 namespace net {
 
-template <typename TEvent>
 class KcpListener {
 public:
-    typedef std::unique_ptr<KcpListener> ptr;
-    typedef xq::tools::Map<uint32_t, KcpSess::Ptr> SessMap;
+	typedef std::shared_ptr<KcpListener> Ptr;
 
-    enum class State {
-        Stopped = 0,
-        Stopping,
-        Runing,
-    };
+	enum class State {
+		Stopped,
+		Stopping,
+		Running
+	};
 
-    static ptr create(const std::string &host, uint32_t timeout = 0, uint32_t nthread = 0) {
-        if (!timeout)
-            timeout = KCP_DEFAULT_TIMEOUT;
+	static Ptr create(const std::string& host, uint32_t max_conn) {
+		return Ptr(new KcpListener(host, max_conn));
+	}
 
-        if (!nthread)
-            nthread = std::thread::hardware_concurrency();
+	~KcpListener() {
+		close(ufd_);
+	}
 
-        return ptr(new KcpListener(host, timeout, nthread));
-    }
+	void run() {
+		state_ = State::Running;
 
-    ~KcpListener() {
-        stop();
-    }
+		for (size_t i = 0, n = std::thread::hardware_concurrency(); i < n; i++) {
+			thread_pool_.emplace_back(std::thread(std::bind(&KcpListener::_thread, this)));
+		}
 
-    void run() {
-        update_thr_ = std::thread(std::bind(&KcpListener::_update_thr, this));
+		update_thread_ = std::thread(std::bind(&KcpListener::_update, this));
+		io_thread_ = std::thread(std::bind(&KcpListener::_io, this));
+		
+		io_thread_.join();
+		update_thread_.join();
 
-        state_ = State::Runing;
+		for (auto &t : thread_pool_) {
+			t.join();
+		}
 
-        for (uint32_t i = 0; i < nthread_; i++) {
-            SOCKET sockfd = udp_socket(host_.c_str(), nullptr);
-            assert(sockfd != INVALID_SOCKET);
-            ufds_.emplace_back(sockfd);
+		KcpSeg* item[10];
+		while (que_.try_dequeue_bulk(item, 10));
 
-            recv_pool_.emplace_back(std::thread(std::bind(&KcpListener::_recv_thr, this, sockfd)));
-        }
+		state_ = State::Stopped;
+	}
 
-        update_thr_.join();
-
-        for (uint32_t i = 0; i < nthread_; i++) {
-            std::thread& rt = recv_pool_[i];
-            rt.join();
-        }
-
-        for (auto ufd : ufds_)
-            close(ufd);
-
-        recv_pool_.clear();
-        state_ = State::Stopped;
-    }
-
-    void stop() {
-        state_ = State::Stopping;
-        for (auto ufd : ufds_)
-            close(ufd);
-
-        ufds_.clear();
-    }
+	void stop() {
+		state_ = State::Stopping;
+	}
 
 private:
-    explicit KcpListener(const std::string &host, uint32_t timeout, uint32_t nthread)
-        : host_(host)
-        , state_(State::Stopped)
-        , timeout_(timeout)
-        , nthread_(nthread) {
-        assert(timeout_ > 0 && "timeout is invalid");
-        assert(nthread_ > 0 && "nthread is invalid");
-    }
+	KcpListener(const std::string& host, uint32_t max_conn)
+		: max_conn_(max_conn)
+		, state_(State::Stopped)
+		, ufd_(INVALID_SOCKET)
+		, host_(host)
+		, sessions_(Kcp::sessions()) {
 
-    std::pair<SessMap::iterator, bool> add_sess(uint32_t conv, KcpSess::Ptr s) {
-        return sess_map_.insert(conv, s);
-    }
+		assert(max_conn_ > 0 && "max_conn is invalid");
 
-    SessMap::iterator remove_sess(SessMap::iterator itr) {
-        return sess_map_.erase(itr);
-    }
+		sessions_.clear();
+		for (uint32_t conv = 1; conv <= max_conn; conv++) {
+			KcpSess::Ptr s = KcpSess::create(conv);
+			s->nodelay(1, 20, 2, 1);
+			s->set_output(KcpListener::output);
+			sessions_[conv] = s;
+		}
+	}
 
-    static int _udp_output(const char* data, int datalen, IKCPCB*, void* user) {
-        KcpSess* s = (KcpSess*)user;
-        auto addr = s->addr();
-        if (::sendto(s->sockfd(), data, datalen, 0, addr.first, addr.second) < 0)
-            printf("send failed\n");
+	static int output(const char* raw, int len, IKCPCB* kcp, void* user) {
+		KcpSess* s = (KcpSess*)user;
+		std::pair<sockaddr*, socklen_t> addr = s->addr();
+		if (::sendto(s->ufd(), raw, len, 0, addr.first, addr.second) < 0) {
+			printf("sendto error: %d\n", error());
+		}
 
-        return 0;
-    }
+		return 0;
+	}
 
-    void _update_thr() {
-        int64_t now_ms, timeout = timeout_;
+	void _active_sess(uint32_t conv) {
+		as_mtx_.lock();
+		active_sessions_.insert(conv);
+		as_mtx_.unlock();
+	}
 
-        while (State::Runing == state_) {
-            std::this_thread::sleep_for(std::chrono::milliseconds(xq::net::KCP_UPDATE_MS));
-            now_ms = xq::tools::now_milli();
-            for (auto itr = sess_map_.begin(); itr != sess_map_.end(); ++itr) {
-                auto& s = itr->second;
+	void _unactive_sess(uint32_t conv) {
+		as_mtx_.lock();
+		active_sessions_.erase(conv);
+		as_mtx_.unlock();
+	}
 
-                if (s->update(now_ms, timeout) < 0) {
-                    remove_sess(itr++);
-                }
-            }
-        }
-    }
-#ifdef _WIN32
-    void _recv_thr(SOCKET sockfd) {
-        int n;
-        uint8_t rbuf[KCP_MTU];
-        uint8_t* data = new uint8_t[KCP_MAX_DATA_SIZE];
-        size_t datalen;
+	std::vector<uint32_t> _get_active_sessions() {
+		as_mtx_.lock();
+		std::vector<uint32_t> rzt(active_sessions_.begin(), active_sessions_.end());
+		as_mtx_.unlock();
+		return rzt;
+	}
 
-        sockaddr addr;
-        socklen_t addrlen = sizeof(addr);
-        ::memset(&addr, 0, sizeof(addr));
+	void _io() {
+		ufd_ = udp_socket(host_.c_str(), nullptr);
+		assert(ufd_ != INVALID_SOCKET && "ufd create failed");
 
-        uint32_t conv;
-        KcpSess* sess;
-        KcpSess::Ptr nconn;
-        xq::tools::Map<uint32_t, KcpSess::Ptr>::iterator itr;
-        std::pair<xq::tools::Map<uint32_t, KcpSess::Ptr>::iterator, bool> pair;
+		sockaddr addr;
+		socklen_t addrlen = sizeof(addr);
+		char raw[KCP_MTU];
+		size_t rawlen = -1;
 
-        while (State::Runing == state_) {
-            n = ::recvfrom(sockfd, (char*)rbuf, KCP_MTU, 0, &addr, &addrlen);
-            if (n <= 0) {
-                event_.on_error(ErrType::ET_ListenerRead, this, error());
-                continue;
-            }
+		uint32_t conv;
+		KcpSess::Ptr sess;
 
-            event_.on_recv(sockfd, &addr, addrlen, rbuf, n);
+		while (state_ == State::Running) {
+			rawlen = ::recvfrom(ufd_, raw, KCP_MTU, 0, &addr, &addrlen);
+			if (rawlen < 0) {
+				printf("recvfrom error: %d\n", error());
+				continue;
+			}
 
-            if (n < KCP_HEAD_SIZE) {
-                event_.on_error(ErrType::ET_SessRead, &addr, addrlen);
-                continue;
-            }
+			conv = Kcp::get_conv(raw);
+			sess = sessions_[conv];
 
-            conv = *(uint32_t*)rbuf;
-            itr = sess_map_.find(conv);
-            if (itr == sess_map_.end()) {
-                nconn = KcpSess::create(conv, &KcpListener::_udp_output);
-                if (event_.on_connected(nconn.get()) < 0)
-                    continue;
+			if (sess->input(raw, rawlen) < 0) {
+				_unactive_sess(conv);
+				continue;
+			}
 
-                pair = add_sess(conv, nconn);
-                assert(pair.second);
-                itr = pair.first;
-            }
-            sess = itr->second.get();
-            if (sess->change(sockfd, &addr, addrlen)) {
-                // TODO:
-            }
+			sess->flush();
 
-            if (sess->input(rbuf, n) < 0) {
-                event_.on_error(ErrType::ET_SessRead, &addr, addrlen);
-                remove_sess(itr);
-                continue;
-            }
+			KcpSeg* seg = KcpSeg::Pool::Instance()->get();
 
-            datalen = KCP_MAX_DATA_SIZE;
-            n = sess->recv(data, datalen);
-            if (n <= 0)
-                continue;
+			do {
+				if (sess->recv(raw, KCP_MTU) < 0) {
+					break;
+				}
 
-            sess->flush();
+				if (!que_.enqueue(seg)) {
+					printf("que_.enqueue failed\n");
+					break;
+				}
+			} while (sess->peeksize());
+		}
+	}
 
-            if (event_.on_message(sess, data, n) < 0)
-                remove_sess(itr);
-        }
+	void _update() {
+		while (state_ == State::Running) {
+			
+		}
+	}
 
-        delete []data;
-    }
-#else
-    void _recv_thr(SOCKET sockfd) {
-        static constexpr int MSG_LEN = 64;
-        int i, n;
+	void _thread() {
+		while (state_ == State::Running) {
 
-        sockaddr addrs[MSG_LEN];
-        ::memset(&addrs, 0, sizeof(addrs));
+		}
+	}
 
-        uint8_t bufs[MSG_LEN][KCP_MTU];
+	const uint32_t max_conn_;
 
-        mmsghdr msgs[MSG_LEN];
-        ::memset(msgs, 0, sizeof(msgs));
+	State state_;
 
-        iovec iovecs[MSG_LEN];
-        for (i = 0; i < MSG_LEN; i++) {
-            iovecs[i].iov_base = bufs[i];
-            iovecs[i].iov_len = KCP_MTU;
-            msgs[i].msg_hdr.msg_name = &addrs[i];
-            msgs[i].msg_hdr.msg_namelen = sizeof(addrs[i]);
-            msgs[i].msg_hdr.msg_iov = &iovecs[i];
-            msgs[i].msg_hdr.msg_iovlen = 1;
-        }
+	SOCKET ufd_;
+	std::string host_;
 
-        uint32_t conv;
-        KcpSess::Ptr s;
-        KcpSess* sess;
-        xq::tools::Map<uint32_t, KcpSess::Ptr>::iterator itr;
-        std::pair<xq::tools::Map<uint32_t, KcpSess::Ptr>::iterator, bool> pair;
-        std::vector<uint8_t> data(KCP_MAX_DATA_SIZE);
+	std::mutex as_mtx_;
+	std::unordered_set<uint32_t> active_sessions_;
 
-        size_t buflen;
-        socklen_t addrlen;
-        sockaddr* addr = nullptr;
-        uint8_t *buf = nullptr;
+	std::vector<std::thread> thread_pool_;
+	std::thread io_thread_;
+	std::thread update_thread_;
 
-        while(state_ == State::Runing) {
-            if (n = ::recvmmsg(sockfd, msgs, MSG_LEN, MSG_WAITFORONE, nullptr), n < 0)
-                continue;
+	moodycamel::BlockingConcurrentQueue<KcpSeg*> que_;
 
-            for (i = 0; i < n; i++) {
-                buf = bufs[i];
-                buflen = msgs[i].msg_len;
-                if (buflen < KCP_HEAD_SIZE)
-                    continue;
-
-                addrlen = msgs[i].msg_hdr.msg_namelen;
-                addr = &addrs[i];
-
-                conv = xq::tools::to_le_u32(*(uint32_t*)buf);
-                itr = sess_map_.find(conv);
-                if (itr == sess_map_.end()) {
-                    s = KcpSess::create(conv, &KcpListener::_udp_output);
-                    if (event_.on_connected(s.get()) < 0)
-                        continue;
-
-                    pair = add_sess(conv, s);
-                    assert(pair.second);
-                    itr = pair.first;
-                }
-                sess =  itr->second.get();
-                if (sess->change(sockfd, addr, addrlen)) {
-                    // TODO reconnected
-                }
-
-                if (sess->input(buf, buflen) < 0) {
-                    remove_sess(itr);
-                    continue;
-                }
-
-                n = sess->recv(&data[0], KCP_MAX_DATA_SIZE);
-                if (n <= 0)
-                    continue;
-
-                sess->flush();
-
-                if (event_.on_message(sess, &data[0], n) < 0)
-                    remove_sess(itr);
-            }
-        }
-    }
-#endif
-
-    std::string host_;
-    State state_;
-    uint32_t timeout_;
-    uint32_t nthread_;
-
-    std::thread update_thr_;
-    std::vector<SOCKET> ufds_;
-    std::vector<std::thread> recv_pool_;
-    SessMap sess_map_;
-    TEvent event_;
-
-    KcpListener(const KcpListener&) = delete;
-    KcpListener& operator=(const KcpListener&) = delete;
+	std::unordered_map<uint32_t, KcpSess::Ptr> &sessions_;
 }; // class KcpListener;
-
 
 } // namespace net;
 } // namespace xq;

@@ -18,6 +18,7 @@
 #include <stdio.h>
 
 
+
 //=====================================================================
 // KCP BASIC
 //=====================================================================
@@ -57,7 +58,7 @@ static inline char *ikcp_encode8u(char *p, unsigned char c)
 }
 
 /* decode 8 bits unsigned int */
-static inline const unsigned char *ikcp_decode8u(const unsigned char *p, unsigned char *c)
+static inline const char *ikcp_decode8u(const char *p, unsigned char *c)
 {
 	*c = *(unsigned char*)p++;
 	return p;
@@ -77,7 +78,7 @@ static inline char *ikcp_encode16u(char *p, unsigned short w)
 }
 
 /* decode 16 bits unsigned int (lsb) */
-static inline const unsigned char *ikcp_decode16u(const unsigned char *p, unsigned short *w)
+static inline const char *ikcp_decode16u(const char *p, unsigned short *w)
 {
 #if IWORDS_BIG_ENDIAN || IWORDS_MUST_ALIGN
 	*w = *(const unsigned char*)(p + 1);
@@ -105,7 +106,7 @@ static inline char *ikcp_encode32u(char *p, IUINT32 l)
 }
 
 /* decode 32 bits unsigned int (lsb) */
-static inline const unsigned char *ikcp_decode32u(const unsigned char *p, IUINT32 *l)
+static inline const char *ikcp_decode32u(const char *p, IUINT32 *l)
 {
 #if IWORDS_BIG_ENDIAN || IWORDS_MUST_ALIGN
 	*l = *(const unsigned char*)(p + 3);
@@ -295,87 +296,11 @@ ikcpcb* ikcp_create(IUINT32 conv, void *user)
 
 
 //---------------------------------------------------------------------
-// declare by iegad
-//---------------------------------------------------------------------
-void ikcp_reset(ikcpcb* kcp) {
-	if (kcp) {
-		IKCPSEG* seg;
-		while (!iqueue_is_empty(&kcp->snd_buf)) {
-			seg = iqueue_entry(kcp->snd_buf.next, IKCPSEG, node);
-			iqueue_del(&seg->node);
-			ikcp_segment_delete(kcp, seg);
-		}
-		while (!iqueue_is_empty(&kcp->rcv_buf)) {
-			seg = iqueue_entry(kcp->rcv_buf.next, IKCPSEG, node);
-			iqueue_del(&seg->node);
-			ikcp_segment_delete(kcp, seg);
-		}
-		while (!iqueue_is_empty(&kcp->snd_queue)) {
-			seg = iqueue_entry(kcp->snd_queue.next, IKCPSEG, node);
-			iqueue_del(&seg->node);
-			ikcp_segment_delete(kcp, seg);
-		}
-		while (!iqueue_is_empty(&kcp->rcv_queue)) {
-			seg = iqueue_entry(kcp->rcv_queue.next, IKCPSEG, node);
-			iqueue_del(&seg->node);
-			ikcp_segment_delete(kcp, seg);
-		}
-
-		kcp->snd_una = 0;
-		kcp->snd_nxt = 0;
-		kcp->rcv_nxt = 0;
-		kcp->ts_recent = 0;
-		kcp->ts_lastack = 0;
-		kcp->ts_probe = 0;
-		kcp->probe_wait = 0;
-		//kcp->snd_wnd = IKCP_WND_SND;
-		//kcp->rcv_wnd = IKCP_WND_RCV;
-		//kcp->rmt_wnd = IKCP_WND_RCV;
-		kcp->cwnd = 0;
-		kcp->incr = 0;
-		kcp->probe = 0;
-		//kcp->mtu = IKCP_MTU_DEF;
-		//kcp->mss = kcp->mtu - IKCP_OVERHEAD;
-		//kcp->stream = 0;
-
-		iqueue_init(&kcp->snd_queue);
-		iqueue_init(&kcp->rcv_queue);
-		iqueue_init(&kcp->snd_buf);
-		iqueue_init(&kcp->rcv_buf);
-		kcp->nrcv_buf = 0;
-		kcp->nsnd_buf = 0;
-		kcp->nrcv_que = 0;
-		kcp->nsnd_que = 0;
-		kcp->state = 0;
-		kcp->ackblock = 0;
-		kcp->ackcount = 0;
-		kcp->rx_srtt = 0;
-		kcp->rx_rttval = 0;
-		kcp->rx_rto = IKCP_RTO_DEF;
-		kcp->rx_minrto = IKCP_RTO_MIN;
-		kcp->current = 0;
-		kcp->interval = IKCP_INTERVAL;
-		kcp->ts_flush = IKCP_INTERVAL;
-		kcp->nodelay = 0;
-		//kcp->updated = 0;
-		kcp->logmask = 0;
-		kcp->ssthresh = IKCP_THRESH_INIT;
-		kcp->fastresend = 0;
-		kcp->fastlimit = IKCP_FASTACK_LIMIT;
-		kcp->nocwnd = 0;
-		kcp->xmit = 0;
-		kcp->dead_link = IKCP_DEADLINK;
-		//kcp->output = NULL;
-		//kcp->writelog = NULL;
-	}
-}
-
-
-//---------------------------------------------------------------------
 // release a new kcpcb
 //---------------------------------------------------------------------
 void ikcp_release(ikcpcb *kcp)
 {
+	assert(kcp);
 	if (kcp) {
 		IKCPSEG *seg;
 		while (!iqueue_is_empty(&kcp->snd_buf)) {
@@ -430,7 +355,7 @@ void ikcp_setoutput(ikcpcb *kcp, int (*output)(const char *buf, int len,
 //---------------------------------------------------------------------
 // user/upper level recv: returns size, returns below zero for EAGAIN
 //---------------------------------------------------------------------
-int ikcp_recv(ikcpcb *kcp, unsigned char *buffer, size_t len)
+int ikcp_recv(ikcpcb *kcp, char *buffer, int len)
 {
 	struct IQUEUEHEAD *p;
 	int ispeek = (len < 0)? 1 : 0;
@@ -442,7 +367,7 @@ int ikcp_recv(ikcpcb *kcp, unsigned char *buffer, size_t len)
 	if (iqueue_is_empty(&kcp->rcv_queue))
 		return -1;
 
-	//if (len < 0) len = -len;
+	if (len < 0) len = -len;
 
 	peeksize = ikcp_peeksize(kcp);
 
@@ -506,7 +431,7 @@ int ikcp_recv(ikcpcb *kcp, unsigned char *buffer, size_t len)
 		kcp->probe |= IKCP_ASK_TELL;
 	}
 
-	return (int)len;
+	return len;
 }
 
 
@@ -541,7 +466,7 @@ int ikcp_peeksize(const ikcpcb *kcp)
 //---------------------------------------------------------------------
 // user/upper level send, returns below zero for error
 //---------------------------------------------------------------------
-int ikcp_send(ikcpcb *kcp, const unsigned char *buffer, size_t len)
+int ikcp_send(ikcpcb *kcp, const char *buffer, int len)
 {
 	IKCPSEG *seg;
 	int count, i;
@@ -558,7 +483,7 @@ int ikcp_send(ikcpcb *kcp, const unsigned char *buffer, size_t len)
 				int extend = (len < capacity)? len : capacity;
 				seg = ikcp_segment_new(kcp, old->len + extend);
 				assert(seg);
-				if (seg == NULL) { 
+				if (seg == NULL) {
 					return -2;
 				}
 				iqueue_add_tail(&seg->node, &kcp->snd_queue);
@@ -821,14 +746,14 @@ void ikcp_parse_data(ikcpcb *kcp, IKCPSEG *newseg)
 //---------------------------------------------------------------------
 // input data
 //---------------------------------------------------------------------
-int ikcp_input(ikcpcb *kcp, const unsigned char *data, size_t size)
+int ikcp_input(ikcpcb *kcp, const char *data, long size)
 {
 	IUINT32 prev_una = kcp->snd_una;
 	IUINT32 maxack = 0, latest_ts = 0;
 	int flag = 0;
 
 	if (ikcp_canlog(kcp, IKCP_LOG_INPUT)) {
-		ikcp_log(kcp, IKCP_LOG_INPUT, "[RI] %u bytes", size);
+		ikcp_log(kcp, IKCP_LOG_INPUT, "[RI] %d bytes", (int)size);
 	}
 
 	if (data == NULL || (int)size < (int)IKCP_OVERHEAD) return -1;
@@ -1367,7 +1292,7 @@ int ikcp_waitsnd(const ikcpcb *kcp)
 IUINT32 ikcp_getconv(const void *ptr)
 {
 	IUINT32 conv;
-    ikcp_decode32u((const unsigned char*)ptr, &conv);
+	ikcp_decode32u((const char*)ptr, &conv);
 	return conv;
 }
 

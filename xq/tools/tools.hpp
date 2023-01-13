@@ -255,15 +255,14 @@ private:
 template <typename T>
 class ObjectPool {
 public:
-    typedef std::shared_ptr<T> Ptr;
-
-    ObjectPool() {}
     ObjectPool(const ObjectPool &) = delete;
     ObjectPool& operator=(const ObjectPool &) = delete;
 
     ~ObjectPool() {
-        Ptr p;
-        while(que_.try_enqueue(p));
+        T* p;
+        while (que_.try_dequeue(p)) {
+            delete p;
+        }
     }
 
     static ObjectPool*
@@ -272,20 +271,26 @@ public:
         return &instance_;
     }
 
-    Ptr get() {
-        Ptr p;
-        if (!que_.try_dequeue(p))
-            p = Ptr(new T);
+    T* get() {
+        T* p;
+        if (!que_.try_dequeue(p)) {
+            p = new T;
+            assert(p);
+        }
 
         return p;
     }
 
-    void put(Ptr p) {
-        que_.enqueue(p);
+    void put(T* p) {
+        if (p) {
+            que_.enqueue(p);
+        }
     }
 
 private:
-    moodycamel::ConcurrentQueue<Ptr> que_;
+    ObjectPool() {}
+
+    moodycamel::ConcurrentQueue<T*> que_;
 }; // class ObjectPool;
 
 } // namespace tools
