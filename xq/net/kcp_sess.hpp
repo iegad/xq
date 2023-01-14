@@ -6,27 +6,6 @@
 namespace xq {
 namespace net {
 
-struct KcpSeg {
-	typedef xq::tools::ObjectPool<KcpSeg> Pool;
-
-	uint8_t* data;
-	size_t len;
-	sockaddr addr;
-	socklen_t addrlen;
-
-	KcpSeg()
-		: data(new uint8_t[KCP_MAX_DATA_SIZE])
-		, len(KCP_MAX_DATA_SIZE)
-		, addr({ {0},0 })
-		, addrlen(sizeof(addr)) {
-		assert(data);
-	}
-
-	~KcpSeg() {
-		delete[] data;
-	}
-}; // struct KcpSeg;
-
 class KcpSess: public Kcp {
 public:
 	typedef std::shared_ptr<KcpSess>  Ptr;
@@ -49,20 +28,50 @@ public:
 		return ufd_;
 	}
 
+	int update(int64_t now_ms) {
+		if (ufd_ == INVALID_SOCKET || !state() || now_ms - last_ms_ > KCP_DEFAULT_TIMEOUT) {
+			return -1;
+		}
+
+		uint32_t ts = now_ms - time_ms_;
+		Kcp::update(ts);
+
+		return 0;
+	}
+
+	bool check_new(const sockaddr* addr, socklen_t addrlen) {
+		bool res = addrlen != addrlen_;
+		if (res || ::memcmp(addr, &addr_, addrlen)) {
+			if (res) {
+				addrlen_ = addrlen;
+			}
+			
+			::memcpy(&addr_, addr, addrlen_);
+			reset();
+			return true;
+		}
+
+		return false;
+	}
+
 private:
 	KcpSess(uint32_t conv)
 		: Kcp(conv, this)
 		, ufd_(INVALID_SOCKET)
-		, addr_({ {0}, 0 })
+		, time_ms_(xq::tools::now_milli())
+		, last_ms_(time_ms_)
+		, addr_({{0},0})
 		, addrlen_(sizeof(addr_)) {
 	}
 
 	SOCKET ufd_;
+	int64_t time_ms_;
+	int64_t last_ms_;
 	sockaddr addr_;
-	size_t addrlen_;
+	socklen_t addrlen_;
 
-    KcpSess(const KcpSess&);
-    KcpSess& operator=(const KcpSess&);
+	KcpSess(const KcpSess&) = delete;
+	KcpSess& operator=(const KcpSess&) = delete;
 }; // class KcpSess;
 
 } // namespace net
