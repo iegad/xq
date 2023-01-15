@@ -34,6 +34,7 @@ struct KcpSeg {
 class KcpListener {
 public:
     typedef std::shared_ptr<KcpListener> Ptr;
+    typedef moodycamel::BlockingConcurrentQueue<KcpSeg*> WorkQueue;
 
     enum class State {
         Stopped,
@@ -53,7 +54,9 @@ public:
         state_ = State::Running;
 
         for (size_t i = 0, n = std::thread::hardware_concurrency(); i < n; i++) {
-            wthread_pool_.emplace_back(std::thread(std::bind(&KcpListener::_work_thread, this)));
+            WorkQueue* q = new WorkQueue(1024);
+            que_vec_.push_back(q);
+            wthread_pool_.emplace_back(std::thread(std::bind(&KcpListener::_work_thread, this, q)));
         }
         
         update_thread_ = std::thread(std::bind(&KcpListener::_update, this));
@@ -67,7 +70,10 @@ public:
         }
 
         KcpSeg* item[10];
-        while (que_.try_dequeue_bulk(item, 10));
+        for (auto& que : que_vec_) {
+            while (que->try_dequeue_bulk(item, 10));
+            delete que;
+        }
 
         state_ = State::Stopped;
     }
@@ -116,7 +122,9 @@ private:
         socklen_t addrlen = sizeof(addr);
         char raw[KCP_MTU];
         char* rbuf = new char[KCP_MAX_DATA_SIZE];
-        int nrecv = 0, rawlen = 0;
+        int nrecv, rawlen, idx = 0;
+        
+        const size_t QUE_SIZE = que_vec_.size();
 
         uint32_t conv;
         KcpSess::Ptr sess;
@@ -159,10 +167,9 @@ private:
                 seg->len = nrecv;
 
                 // Step 6: 投递消息
-                if (!que_.enqueue(seg)) {
-                    printf("que_.enqueue failed\n");
-                    KcpSeg::pool()->put(seg);
-                    break;
+                assert(que_vec_[idx++]->enqueue(seg));
+                if (idx >= QUE_SIZE) {
+                    idx = 0;
                 }
             }
         }
@@ -277,10 +284,10 @@ private:
         }
     }
 
-    void _work_thread() {
+    void _work_thread(WorkQueue *que) {
+        KcpSeg* seg;
         while (state_ == State::Running) {
-            KcpSeg* seg;
-            que_.wait_dequeue(seg);
+            que->wait_dequeue(seg);
 
             KcpSess::Ptr s = seg->sess;
             s->send((char*)seg->data, seg->len);
@@ -300,7 +307,7 @@ private:
     std::thread io_thread_;
     std::thread update_thread_;
 
-    moodycamel::BlockingConcurrentQueue<KcpSeg*> que_;
+    std::vector<WorkQueue*> que_vec_;
 
     std::unordered_map<uint32_t, KcpSess::Ptr> &sessions_;
 }; // class KcpListener;

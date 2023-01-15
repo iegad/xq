@@ -56,7 +56,11 @@ public:
 
     int send(const char* buf, int len) {
         std::lock_guard<std::mutex> lk(kmtx_);
-        return kcp_->send(buf, len);
+        int rzt = kcp_->send(buf, len);
+        if (rzt == 0) {
+            kcp_->flush();
+        }
+        return rzt;
     }
 
     size_t nrcv_que() {
@@ -110,7 +114,7 @@ public:
             }
 
             kcp_->update((uint32_t)(now_ms - time_ms_));
-        } while(0);
+        } while (0);
     }
 
     void set_last_ms(int64_t now_ms) {
@@ -124,12 +128,12 @@ public:
                 std::lock_guard<std::mutex> lk(kmtx_);
                 kcp_->reset();
             }
-            
+
             {
                 std::lock_guard<std::mutex> lk(tmtx_);
                 last_ms_ = time_ms_ = xq::tools::now_milli();
             }
-            
+
             return true;
         }
 
@@ -141,7 +145,7 @@ private:
         : ufd_(INVALID_SOCKET)
         , time_ms_(0)
         , last_ms_(0)
-        , addr_({{0},0})
+        , addr_({ 0,{0}})
         , addrlen_(sizeof(addr_))
         , kcp_(new Kcp(conv, this)) {
     }
