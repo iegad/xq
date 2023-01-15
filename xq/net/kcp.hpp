@@ -12,9 +12,8 @@ namespace net {
 
 class KcpSess;
 
-class Kcp {
+class Kcp final {
 public:
-    typedef std::shared_ptr<Kcp> Ptr;
     typedef std::shared_ptr<KcpSess> KSPtr;
 
     static std::unordered_map<uint32_t, KSPtr>& sessions() {
@@ -22,8 +21,10 @@ public:
         return m_;
     }
 
-    static Ptr create(uint32_t conv, void *user) {
-        return Ptr(new Kcp(conv, user));
+    Kcp(uint32_t conv, void* user)
+        : kcp_(::ikcp_create(conv, user)) {
+        ::ikcp_setmtu(kcp_, KCP_MTU);
+        ::ikcp_wndsize(kcp_, KCP_WND, KCP_WND);
     }
 
     static uint32_t get_conv(const void *raw) {
@@ -31,77 +32,52 @@ public:
     }
 
     ~Kcp() {
-        mtx_.lock();
         if (kcp_) {
             ::ikcp_release(kcp_);
         }
-        mtx_.unlock();
     }
 
     void set_output(int (*output)(const char* buf, int len, ikcpcb* kcp, void* user)) {
-        mtx_.lock();
         kcp_->output = output;
-        mtx_.unlock();
     }
 
     int recv(char* buf, int len) {
-        mtx_.lock();
-        int rzt = ::ikcp_recv(kcp_, buf, len);
-        mtx_.unlock();
-        return rzt;
+        return ::ikcp_recv(kcp_, buf, len);
     }
 
     int send(const char* buf, int len) {
-        mtx_.lock();
-        int rzt = ::ikcp_send(kcp_, buf, len);
-        if (rzt == 0) {
-            ::ikcp_flush(kcp_);
-        }
-        mtx_.unlock();
-        return rzt;
+        return ::ikcp_send(kcp_, buf, len);
     }
 
     void update(uint32_t current) {
-        mtx_.lock();
         ::ikcp_update(kcp_, current);
-        mtx_.unlock();
     }
 
     int input(const char* data, long size) {
-        mtx_.lock();
-        int rzt = ::ikcp_input(kcp_, data, size);
-        if (rzt == 0) {
-            ikcp_flush(kcp_);
-        }
-        mtx_.unlock();
-        return rzt;
+        return ::ikcp_input(kcp_, data, size);
     }
 
     bool state() {
-        mtx_.lock();
-        bool rzt = kcp_->state == 0;
-        mtx_.unlock();
-        return rzt;
+        return kcp_->state == 0;
+    }
+
+    void flush() {
+        ::ikcp_flush(kcp_);
     }
 
     int nodelay(int nodelay, int interval, int resend, int nc) {
-        mtx_.lock();
-        int rzt = ::ikcp_nodelay(kcp_, nodelay, interval, resend, nc);
-        mtx_.unlock();
-        return rzt;
+        return ::ikcp_nodelay(kcp_, nodelay, interval, resend, nc);
     }
 
-    size_t rque_count() {
+    size_t nrcv_que() const {
         return kcp_->nrcv_que;
     }
 
-    uint32_t conv() {
+    uint32_t conv() const {
         return kcp_->conv;
     }
 
     void reset() {
-        mtx_.lock();
-
         IKCPSEG* seg;
         while (!IQUEUE_IS_EMPTY(&kcp_->snd_buf)) {
             seg = IQUEUE_ENTRY(kcp_->snd_buf.next, IKCPSEG, node);
@@ -152,22 +128,13 @@ public:
         kcp_->fastresend = 0;
         kcp_->nocwnd = 0;
         kcp_->xmit = 0;
-        mtx_.unlock();
-    }
-
-protected:
-    Kcp(uint32_t conv, void* user)
-        : kcp_(::ikcp_create(conv, user)) {
-        ::ikcp_setmtu(kcp_, KCP_MTU);
-        ::ikcp_wndsize(kcp_, KCP_WND, KCP_WND);
     }
 
 private:
     IKCPCB* kcp_;
-    std::mutex mtx_;
 
-    Kcp(const Kcp&);
-    Kcp& operator=(const Kcp&);
+    Kcp(const Kcp&) = delete;
+    Kcp& operator=(const Kcp&) = delete;
 }; // class Kcp
 
 } // namespace net

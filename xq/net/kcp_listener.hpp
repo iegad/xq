@@ -145,7 +145,7 @@ private:
                 continue;
             }
 
-            do {
+            while (sess->nrcv_que()) {
                 // Step 5: 获取消息包
                 nrecv = sess->recv(rbuf, KCP_MAX_DATA_SIZE);
                 if (nrecv < 0) {
@@ -164,7 +164,7 @@ private:
                     KcpSeg::pool()->put(seg);
                     break;
                 }
-            } while (sess->rque_count());
+            }
         }
 
         delete[] rbuf;
@@ -244,7 +244,7 @@ private:
                     continue;
                 }
 
-                while(sess->rque_count()) {
+                while(sess->nrcv_que()) {
                     nrecv = sess->recv(rbuf, KCP_MAX_DATA_SIZE);
                     if (nrecv < 0) {
                         break;
