@@ -22,7 +22,6 @@
   <ItemGroup>
     <ClCompile Include="main.cpp" />
     <ClCompile Include="third\ikcp.c" />
-    <ClCompile Include="tools\tools.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="net\kcp.hpp" />

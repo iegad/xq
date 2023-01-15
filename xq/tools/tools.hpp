@@ -36,7 +36,7 @@ inline int64_t now() {
 /// </summary>
 /// <returns></returns>
 inline int64_t now_milli() {
-	return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
+    return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
 /// <summary>
@@ -89,8 +89,8 @@ inline uint64_t __rvs_u64(uint64_t v) {
 /// </summary>
 /// <returns></returns>
 inline bool is_le() {
-	static constexpr union { uint16_t a; uint8_t b; } tt = { 0x0001 };
-	return tt.b == 0x01;
+    static constexpr union { uint16_t a; uint8_t b; } tt = { 0x0001 };
+    return tt.b == 0x01;
 }
 
 /// <summary>
@@ -98,7 +98,7 @@ inline bool is_le() {
 /// </summary>
 /// <returns></returns>
 inline bool is_be() {
-	return !is_le();
+    return !is_le();
 }
 
 /// <summary>
@@ -161,7 +161,31 @@ inline uint64_t to_be_u64(uint64_t v) {
 /// <param name="data">二进制码流</param>
 /// <param name="data_len">码流长度</param>
 /// <returns>16进制字符串</returns>
-std::string bin2hex(const uint8_t* data, size_t data_len);
+std::string bin2hex(const uint8_t* data, size_t data_len) {
+    assert(data);
+
+    if (!data_len)
+        return "";
+
+    std::string res(data_len * 2, 0);
+    uint8_t tmp;
+
+    for (size_t i = 0; i < data_len; i++) {
+        tmp = data[i];
+        for (size_t j = 0; j < 2; j++) {
+            uint8_t c = (tmp & 0x0f);
+            if (c < 10)
+                c += '0';
+            else
+                c += ('A' - 10);
+
+            res[2 * i + 1 - j] = c;
+            tmp >>= 4;
+        }
+    }
+    return res;
+}
+
 
 /// <summary>
 /// 将16进制字符串转为二进制码流
@@ -176,7 +200,32 @@ std::string bin2hex(const uint8_t* data, size_t data_len);
 ///         * data 为nullptr;
 ///         * data_len 为nullptr 或缓冲区没有足够存放码流的空间;
 /// </returns>
-int hex2bin(const std::string& hex, uint8_t *data, size_t *data_len);
+int hex2bin(const std::string& hex, uint8_t *data, size_t *data_len) {
+    size_t nhex = hex.empty();
+    size_t n = nhex / 2;
+
+    if (!nhex || nhex % 2 != 0 || !data || !data_len || *data_len < n)
+        return -1;
+
+    for (size_t i = 0; i < n; i++) {
+        uint8_t tmp = 0;
+
+        for (size_t j = 0; j < 2; j++) {
+            char c = hex[2 * i + j];
+            if (c >= '0' && c <= '9')
+                tmp = (tmp << 4) + (c - '0');
+            else if (c >= 'a' && c <= 'f')
+                tmp = (tmp << 4) + (c - 'a' + 10);
+            else if (c >= 'A' && c <= 'F')
+                tmp = (tmp << 4) + (c - 'A' + 10);
+            else return -1;
+        }
+        data[i] = tmp;
+    }
+
+    *data_len = n;
+    return (int)n;
+}
 
 // ---------------------------------------------------------------------------- safe map ----------------------------------------------------------------------------
 

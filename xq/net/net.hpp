@@ -37,9 +37,6 @@
 #include <unordered_map>
 #include <vector>
 
-#include "third/ikcp.h"
-#include "tools/tools.hpp"
-
 #ifndef INVALID_SOCKET
 #define INVALID_SOCKET (SOCKET)(~0)
 #endif // !INVALID_SOCKET
@@ -53,6 +50,7 @@ namespace net {
     typedef int SOCKET;
 #endif
 
+constexpr size_t   KCP_WND             = 512;
 constexpr size_t   KCP_MTU             = 1418;
 constexpr size_t   KCP_MAX_DATA_SIZE   = 1418 * 128;
 constexpr size_t   KCP_HEAD_SIZE       = 24;
@@ -230,7 +228,6 @@ SOCKET udp_socket(const char* local, const char* remote, sockaddr *addr = nullpt
 
     return fd;
 }
-
 
 } // namespace net
 } // namespace xq
