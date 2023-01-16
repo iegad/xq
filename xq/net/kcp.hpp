@@ -27,7 +27,7 @@ public:
         ::ikcp_wndsize(kcp_, KCP_WND, KCP_WND);
     }
 
-    static uint32_t get_conv(const void *raw) {
+    static uint32_t get_conv(const void* raw) {
         return ::ikcp_getconv(raw);
     }
 
@@ -71,6 +71,36 @@ public:
 
     size_t nrcv_que() const {
         return kcp_->nrcv_que;
+    }
+
+    struct Head {
+        uint32_t conv;
+        uint8_t cmd;
+        uint8_t frg;
+        uint16_t wnd;
+        uint32_t ts;
+        uint32_t sn;
+        uint32_t una;
+        uint32_t len;
+    };
+
+    static void decode_head(const char* raw, Head* head) {
+        const char* p = raw;
+        head->conv = *(uint32_t*)p;
+        p += 4;
+        head->cmd = *(uint8_t*)p;
+        p += 1;
+        head->frg = *(uint8_t*)p;
+        p += 1;
+        head->wnd = *(uint16_t*)p;
+        p += 2;
+        head->ts = *(uint32_t*)p;
+        p += 4;
+        head->sn = *(uint32_t*)p;
+        p += 4;
+        head->una = *(uint32_t*)p;
+        p += 4;
+        head->len = *(uint32_t*)p;
     }
 
     uint32_t conv() const {

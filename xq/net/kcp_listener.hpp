@@ -15,19 +15,16 @@ struct KcpSeg {
         return xq::tools::ObjectPool<KcpSeg>::Instance();
     }
 
-    uint8_t* data;
     int len;
-       KcpSess::Ptr sess;
-    
-    KcpSeg()
-        : data(new uint8_t[KCP_MAX_DATA_SIZE])
-        , len(KCP_MAX_DATA_SIZE)
-        , sess(nullptr) {
-        assert(data);
-    }
-    
-    ~KcpSeg() {
-        delete[] data;
+    sockaddr addr;
+    socklen_t addrlen;
+    uint8_t raw[KCP_MTU * 8];
+
+    explicit KcpSeg()
+        : len(KCP_MAX_DATA_SIZE)
+        , addr({ 0,{0} })
+        , addrlen(sizeof(addr)) {
+        assert(raw);
     }
 }; // struct KcpSeg;
 
@@ -45,27 +42,27 @@ public:
     static Ptr create(const std::string& host, uint32_t max_conn) {
         return Ptr(new KcpListener(host, max_conn));
     }
-    
+
     ~KcpListener() {
         close(ufd_);
     }
-    
+
     void run() {
         state_ = State::Running;
 
         for (size_t i = 0, n = std::thread::hardware_concurrency(); i < n; i++) {
             WorkQueue* q = new WorkQueue(1024);
             que_vec_.push_back(q);
-            wthread_pool_.emplace_back(std::thread(std::bind(&KcpListener::_work_thread, this, q)));
+            wthread_pool_.emplace_back(std::thread(std::bind(&KcpListener::_kcp_proc, this, q)));
         }
-        
+
         update_thread_ = std::thread(std::bind(&KcpListener::_update, this));
         io_thread_ = std::thread(std::bind(&KcpListener::_io, this));
-        
+
         io_thread_.join();
         update_thread_.join();
-        
-        for (auto &t : wthread_pool_) {
+
+        for (auto& t : wthread_pool_) {
             t.join();
         }
 
@@ -77,21 +74,21 @@ public:
 
         state_ = State::Stopped;
     }
-    
+
     void stop() {
         state_ = State::Stopping;
     }
 
 private:
     KcpListener(const std::string& host, uint32_t max_conn)
-        : max_conn_(max_conn)
+        : MAX_CONN(max_conn)
         , state_(State::Stopped)
         , ufd_(INVALID_SOCKET)
         , host_(host)
         , sessions_(Kcp::sessions()) {
-        
-        assert(max_conn_ > 0 && "max_conn is invalid");
-        
+
+        assert(MAX_CONN > 0 && "max_conn is invalid");
+
         sessions_.clear();
         for (uint32_t conv = 1; conv <= max_conn; conv++) {
             KcpSess::Ptr s = KcpSess::create(conv);
@@ -121,64 +118,42 @@ private:
         sockaddr addr;
         socklen_t addrlen = sizeof(addr);
         char raw[KCP_MTU];
-        char* rbuf = new char[KCP_MAX_DATA_SIZE];
-        int nrecv, rawlen, idx = 0;
-        
-        const size_t QUE_SIZE = que_vec_.size();
+        int rawlen, idx = 0;
 
-        uint32_t conv;
-        KcpSess::Ptr sess;
-        KcpSeg *seg;
-        int64_t now_ms;
+        const size_t QUE_SIZE = que_vec_.size();
+        KcpSeg* seg;
 
         while (state_ == State::Running) {
-            now_ms = xq::tools::now_milli();
-
-            // Step 2: 获取数据
+            // Step 1: 获取数据
             rawlen = ::recvfrom(ufd_, raw, KCP_MTU, 0, &addr, &addrlen);
             if (rawlen < 0) {
                 printf("recvfrom error: %d\n", error());
                 continue;
             }
 
-            // Step 3: 获取对应的KcpSession
-            conv = Kcp::get_conv(raw);
-            sess = sessions_[conv];
-            if (sess->check_new(&addr, addrlen)) {
-                sess->set_ufd(ufd_);
-            }
-
-            // Step 4: 获取KCP消息包
-            if (sess->input(raw, rawlen) < 0) {
+            if (rawlen < KCP_HEAD_SIZE) {
                 continue;
             }
 
-            while (sess->nrcv_que()) {
-                // Step 5: 获取消息包
-                nrecv = sess->recv(rbuf, KCP_MAX_DATA_SIZE);
-                if (nrecv < 0) {
-                    break;
-                }
+            // Step 2: 构建对象
+            seg = KcpSeg::pool()->get();
+            seg->len = rawlen;
+            seg->addrlen = addrlen;
+            ::memcpy(seg->raw, raw, rawlen);
+            ::memcpy(&seg->addr, &addr, addrlen);
 
-                sess->set_last_ms(now_ms);
-                seg = KcpSeg::pool()->get();
-                seg->sess = sess;
-                ::memcpy(seg->data, rbuf, nrecv);
-                seg->len = nrecv;
-
-                // Step 6: 投递消息
-                assert(que_vec_[idx++]->enqueue(seg));
-                if (idx >= QUE_SIZE) {
-                    idx = 0;
-                }
+            // Step 3: 投递消息
+            assert(que_vec_[idx++]->enqueue(seg));
+            if (idx >= QUE_SIZE) {
+                idx = 0;
             }
         }
-
-        delete[] rbuf;
     }
 
 #else // 类UNIX平台 io 工作线程
     void _io() {
+        const size_t QUE_SIZE = que_vec_.size();
+
         ufd_ = udp_socket(host_.c_str(), nullptr);
         assert(ufd_ != INVALID_SOCKET && "ufd create failed");
 
@@ -190,17 +165,15 @@ private:
         sockaddr addrs[MSG_LEN];
         ::memset(addrs, 0, sizeof(addrs));
 
-        char bufs[MSG_LEN][KCP_MTU];
+        uint8_t bufs[MSG_LEN][KCP_MTU];
 
         mmsghdr msgs[MSG_LEN];
         ::memset(msgs, 0, sizeof(msgs));
 
-        size_t rawlen;
-        char *raw;
-        char *rbuf = new char[KCP_MAX_DATA_SIZE];
-        mmsghdr *msg;
+        size_t rawlen, idx = 0;
+        mmsghdr* msg;
 
-        int i, n, nrecv;
+        int i, n;
         iovec iovecs[MSG_LEN];
         for (i = 0; i < MSG_LEN; i++) {
             iovecs[i].iov_base = bufs[i];
@@ -212,60 +185,30 @@ private:
         }
 
         socklen_t addrlen;
-        sockaddr *addr;
-        uint32_t conv;
-        KcpSess::Ptr sess;
-        KcpSeg *seg;
-        KcpSeg* segs[MSG_LEN];
-        size_t seglen;
-        int64_t now_ms;
+        KcpSeg* seg;
 
-        while(state_ == State::Running) {
-            seglen = 0;
-            now_ms = xq::tools::now_milli();
-
+        while (state_ == State::Running) {
             n = ::recvmmsg(ufd_, msgs, MSG_LEN, MSG_WAITFORONE, nullptr);
-            if (n < 0) {
-                continue;
-            }
-
-            for (int i = 0; i < n; i++) {
+            for (i = 0; i < n; i++) {
                 msg = &msgs[i];
-                raw = bufs[i];
+
                 rawlen = msg->msg_len;
                 if (rawlen < KCP_HEAD_SIZE) {
                     continue;
                 }
 
                 addrlen = msg->msg_hdr.msg_namelen;
-                addr = (sockaddr*)msg->msg_hdr.msg_name;
+                seg = KcpSeg::pool()->get();
+                seg->len = rawlen;
+                seg->addrlen = addrlen;
+                ::memcpy(&seg->addr, (sockaddr*)msg->msg_hdr.msg_name, addrlen);
+                ::memcpy(&seg->raw, bufs[i], rawlen);
 
-                conv = Kcp::get_conv(raw);
-
-                sess = sessions_[conv];
-                if (sess->check_new(addr, addrlen)) {
-                    sess->set_ufd(ufd_);
+                assert(que_vec_[idx++]->enqueue(seg));
+                if (idx >= QUE_SIZE) {
+                    idx = 0;
                 }
-
-                if (sess->input(raw, rawlen) < 0) {
-                    continue;
-                }
-
-                while(sess->nrcv_que()) {
-                    nrecv = sess->recv(rbuf, KCP_MAX_DATA_SIZE);
-                    if (nrecv < 0) {
-                        break;
-                    }
-
-                    sess->set_last_ms(now_ms);
-                    segs[seglen++] = seg = KcpSeg::pool()->get();
-                    seg->sess = sess;
-                    ::memcpy(seg->data, rbuf, nrecv);
-                    seg->len = nrecv;
-                };
             } // for (i = 0; i < n; i++);
-
-            assert(que_.enqueue_bulk(segs, seglen));
         }
     }
 #endif // WIN32
@@ -278,25 +221,65 @@ private:
         while (state_ == State::Running) {
             now_ms = xq::tools::now_milli();
             std::this_thread::sleep_for(INTVAL);
-            for (auto &itr: sessions_) {
+            for (auto& itr : sessions_) {
                 itr.second->update(now_ms);
             }
         }
     }
 
-    void _work_thread(WorkQueue *que) {
+    void _kcp_proc(WorkQueue* que) {
+        int nrecv;
+        uint32_t conv;
+
+        uint8_t* raw;
+        uint8_t* rbuf = new uint8_t[KCP_MAX_DATA_SIZE];
+
         KcpSeg* seg;
+        KcpSess::Ptr sess;
+
         while (state_ == State::Running) {
             que->wait_dequeue(seg);
+            raw = seg->raw;
+            assert(raw);
 
-            KcpSess::Ptr s = seg->sess;
-            s->send((char*)seg->data, seg->len);
+            do {
+                // Step 1: 获取对应的KcpSession
+                conv = Kcp::get_conv(raw);
+                if (conv == 0 || conv > MAX_CONN) {
+                    break;
+                }
+
+                sess = sessions_[conv];
+                assert(sess);
+                if (sess->check_new(&seg->addr, seg->addrlen)) {
+                    sess->set_ufd(ufd_);
+                }
+
+                // Step 2: 获取KCP消息包
+                if (sess->input(raw, seg->len) < 0) {
+                    continue;
+                }
+
+                while (sess->nrcv_que()) {
+                    // Step 3: 获取消息包
+                    nrecv = sess->recv(rbuf, KCP_MAX_DATA_SIZE);
+                    if (nrecv < 0) {
+                        break;
+                    }
+
+                    if (sess->send(rbuf, nrecv) < 0) {
+                        // TODO
+                    }
+                }
+            } while (0);
 
             KcpSeg::pool()->put(seg);
         }
+
+        delete[] rbuf;
     }
 
-    const uint32_t max_conn_;
+    const uint32_t MAX_CONN;
 
     State state_;
 
@@ -309,10 +292,10 @@ private:
 
     std::vector<WorkQueue*> que_vec_;
 
-    std::unordered_map<uint32_t, KcpSess::Ptr> &sessions_;
+    std::unordered_map<uint32_t, KcpSess::Ptr>& sessions_;
 }; // class KcpListener;
 
-} // namespace net;
+    } // namespace net;
 } // namespace xq;
 
 #endif // __KCP_LISTENER__

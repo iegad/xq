@@ -40,23 +40,23 @@ public:
         kcp_->set_output(output);
     }
 
-    int input(const char* data, long size) {
+    int input(const uint8_t* data, long size) {
         std::lock_guard<std::mutex> lk(kmtx_);
-        int rzt = kcp_->input(data, size);
+        int rzt = kcp_->input((char*)data, size);
         if (rzt == 0) {
             kcp_->flush();
         }
         return rzt;
     }
 
-    int recv(char* buf, int len) {
+    int recv(uint8_t* buf, int len) {
         std::lock_guard<std::mutex> lk(kmtx_);
-        return kcp_->recv(buf, len);
+        return kcp_->recv((char*)buf, len);
     }
 
-    int send(const char* buf, int len) {
+    int send(const uint8_t* buf, int len) {
         std::lock_guard<std::mutex> lk(kmtx_);
-        int rzt = kcp_->send(buf, len);
+        int rzt = kcp_->send((char*)buf, len);
         if (rzt == 0) {
             kcp_->flush();
         }
@@ -145,7 +145,7 @@ private:
         : ufd_(INVALID_SOCKET)
         , time_ms_(0)
         , last_ms_(0)
-        , addr_({ 0,{0}})
+        , addr_({ 0,{0} })
         , addrlen_(sizeof(addr_))
         , kcp_(new Kcp(conv, this)) {
     }
