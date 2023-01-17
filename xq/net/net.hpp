@@ -57,6 +57,10 @@ constexpr size_t   KCP_HEAD_SIZE       = 24;
 constexpr uint32_t KCP_DEFAULT_TIMEOUT = 60000;
 constexpr int64_t  KCP_UPDATE_MS       = 20;
 
+constexpr uint32_t IO_RCVBUF_SIZE      = 1024 * 1024 * 32;
+constexpr int      IO_BLOCK_SIZE       = 8;
+constexpr int      IO_MSG_SIZE         = 128;
+
 enum class ErrType {
     ET_ListenerRead = 0,
     ET_ListenerWrite,

@@ -51,12 +51,12 @@ public:
 
     int recv(uint8_t* buf, int len) {
         std::lock_guard<std::mutex> lk(kmtx_);
-        return kcp_->recv((char*)buf, len);
+        return kcp_->recv((char *)buf, len);
     }
 
     int send(const uint8_t* buf, int len) {
         std::lock_guard<std::mutex> lk(kmtx_);
-        int rzt = kcp_->send((char*)buf, len);
+        int rzt = kcp_->send((char *)buf, len);
         if (rzt == 0) {
             kcp_->flush();
         }
@@ -145,7 +145,7 @@ private:
         : ufd_(INVALID_SOCKET)
         , time_ms_(0)
         , last_ms_(0)
-        , addr_({ 0,{0} })
+        , addr_({ 0,{0}})
         , addrlen_(sizeof(addr_))
         , kcp_(new Kcp(conv, this)) {
     }

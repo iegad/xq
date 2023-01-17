@@ -16,6 +16,17 @@ class Kcp final {
 public:
     typedef std::shared_ptr<KcpSess> KSPtr;
 
+    struct Head {
+        uint32_t conv;
+        uint8_t cmd;
+        uint8_t frg;
+        uint16_t wnd;
+        uint32_t ts;
+        uint32_t sn;
+        uint32_t una;
+        uint32_t len;
+    };
+
     static std::unordered_map<uint32_t, KSPtr>& sessions() {
         static std::unordered_map<uint32_t, KSPtr> m_;
         return m_;
@@ -27,7 +38,7 @@ public:
         ::ikcp_wndsize(kcp_, KCP_WND, KCP_WND);
     }
 
-    static uint32_t get_conv(const void* raw) {
+    static uint32_t get_conv(const void *raw) {
         return ::ikcp_getconv(raw);
     }
 
@@ -73,19 +84,8 @@ public:
         return kcp_->nrcv_que;
     }
 
-    struct Head {
-        uint32_t conv;
-        uint8_t cmd;
-        uint8_t frg;
-        uint16_t wnd;
-        uint32_t ts;
-        uint32_t sn;
-        uint32_t una;
-        uint32_t len;
-    };
-
-    static void decode_head(const char* raw, Head* head) {
-        const char* p = raw;
+    static void decode_head(const char* raw, Head *head) {
+        const char *p = raw;
         head->conv = *(uint32_t*)p;
         p += 4;
         head->cmd = *(uint8_t*)p;

@@ -62,7 +62,7 @@ public:
         io_thread_.join();
         update_thread_.join();
 
-        for (auto& t : wthread_pool_) {
+        for (auto &t : wthread_pool_) {
             t.join();
         }
 
@@ -98,9 +98,10 @@ private:
         }
     }
 
-    static int output(const char* raw, int len, IKCPCB*, void* user) {
+    static int output(const char* raw, int len, IKCPCB* , void* user) {
         KcpSess* s = (KcpSess*)user;
         std::pair<sockaddr*, socklen_t> addr = s->addr();
+
         if (::sendto(s->ufd(), raw, len, 0, addr.first, addr.second) < 0) {
             printf("sendto error: %d\n", error());
         }
@@ -121,7 +122,7 @@ private:
         int rawlen, idx = 0;
 
         const size_t QUE_SIZE = que_vec_.size();
-        KcpSeg* seg;
+        KcpSeg *seg;
 
         while (state_ == State::Running) {
             // Step 1: 获取数据
@@ -157,57 +158,65 @@ private:
         ufd_ = udp_socket(host_.c_str(), nullptr);
         assert(ufd_ != INVALID_SOCKET && "ufd create failed");
 
-        constexpr uint32_t RCVBUF_SIZE = 1024 * 1024 * 32;
-        socklen_t opt_len = sizeof(RCVBUF_SIZE);
-        assert(::setsockopt(ufd_, SOL_SOCKET, SO_RCVBUF, &RCVBUF_SIZE, opt_len) == 0 && "set udp recv buffer size failed");
 
-        constexpr int MSG_LEN = 128;
-        sockaddr addrs[MSG_LEN];
+        socklen_t opt_len = sizeof(IO_RCVBUF_SIZE);
+        assert(::setsockopt(ufd_, SOL_SOCKET, SO_RCVBUF, &IO_RCVBUF_SIZE, opt_len) == 0 && "set udp recv buffer size failed");
+
+        uint8_t bufs[IO_MSG_SIZE][IO_BLOCK_SIZE][KCP_MTU], *raw, *p;
+
+        sockaddr addrs[IO_MSG_SIZE];
         ::memset(addrs, 0, sizeof(addrs));
 
-        uint8_t bufs[MSG_LEN][KCP_MTU];
-
-        mmsghdr msgs[MSG_LEN];
+        mmsghdr msgs[IO_MSG_SIZE];
         ::memset(msgs, 0, sizeof(msgs));
 
-        size_t rawlen, idx = 0;
-        mmsghdr* msg;
+        size_t rawlen = 0, idx = 0, nleft, ncpy;
+        mmsghdr *msg;
 
-        int i, n;
-        iovec iovecs[MSG_LEN];
-        for (i = 0; i < MSG_LEN; i++) {
-            iovecs[i].iov_base = bufs[i];
-            iovecs[i].iov_len = KCP_MTU;
+        iovec iovecs[IO_MSG_SIZE][IO_BLOCK_SIZE];
+
+        int i, j, n;
+        for (i = 0; i < IO_MSG_SIZE; i++) {
             msgs[i].msg_hdr.msg_name = &addrs[i];
             msgs[i].msg_hdr.msg_namelen = sizeof(addrs[i]);
-            msgs[i].msg_hdr.msg_iov = &iovecs[i];
-            msgs[i].msg_hdr.msg_iovlen = 1;
+            msgs[i].msg_hdr.msg_iov = iovecs[i];
+            msgs[i].msg_hdr.msg_iovlen = IO_BLOCK_SIZE;
+
+            for (j = 0; j < 4; j++) {
+                iovecs[i][j].iov_base = bufs[i][j];
+                iovecs[i][j].iov_len = KCP_MTU;
+            }
         }
 
         socklen_t addrlen;
-        KcpSeg* seg;
+        KcpSeg *seg;
 
-        while (state_ == State::Running) {
-            n = ::recvmmsg(ufd_, msgs, MSG_LEN, MSG_WAITFORONE, nullptr);
+        while(state_ == State::Running) {
+            n = ::recvmmsg(ufd_, msgs, IO_MSG_SIZE, MSG_WAITFORONE, nullptr);
             for (i = 0; i < n; i++) {
                 msg = &msgs[i];
-
                 rawlen = msg->msg_len;
                 if (rawlen < KCP_HEAD_SIZE) {
                     continue;
                 }
 
-                addrlen = msg->msg_hdr.msg_namelen;
                 seg = KcpSeg::pool()->get();
-                seg->len = rawlen;
-                seg->addrlen = addrlen;
+                seg->addrlen = addrlen  = msg->msg_hdr.msg_namelen;
+                seg->len = nleft = rawlen;
                 ::memcpy(&seg->addr, (sockaddr*)msg->msg_hdr.msg_name, addrlen);
-                ::memcpy(&seg->raw, bufs[i], rawlen);
 
-                assert(que_vec_[idx++]->enqueue(seg));
-                if (idx >= QUE_SIZE) {
-                    idx = 0;
+                for (j = 0; j < 4 && nleft > 0; j++) {
+                    raw = bufs[i][j];
+                    p = seg->raw + (rawlen - nleft);
+                    ncpy = nleft > KCP_MTU ? KCP_MTU : nleft;
+                    ::memcpy(p, raw, ncpy);
+                    nleft -= ncpy;
                 }
+
+                 assert(que_vec_[idx++]->enqueue(seg));
+                 if (idx >= QUE_SIZE) {
+                    idx = 0;
+                 }
             } // for (i = 0; i < n; i++);
         }
     }
@@ -221,13 +230,13 @@ private:
         while (state_ == State::Running) {
             now_ms = xq::tools::now_milli();
             std::this_thread::sleep_for(INTVAL);
-            for (auto& itr : sessions_) {
+            for (auto &itr: sessions_) {
                 itr.second->update(now_ms);
             }
         }
     }
 
-    void _kcp_proc(WorkQueue* que) {
+    void _kcp_proc(WorkQueue *que) {
         int nrecv;
         uint32_t conv;
 
@@ -292,10 +301,10 @@ private:
 
     std::vector<WorkQueue*> que_vec_;
 
-    std::unordered_map<uint32_t, KcpSess::Ptr>& sessions_;
+    std::unordered_map<uint32_t, KcpSess::Ptr> &sessions_;
 }; // class KcpListener;
 
-    } // namespace net;
+} // namespace net;
 } // namespace xq;
 
 #endif // __KCP_LISTENER__
