@@ -3,12 +3,12 @@
 
 //! --------------------------------------------------------------------------------------------------------------------
 //! xq 网络框架, 目前只支持KCP版本.
-//! 
+//!
 //! @author:      iegad
 //! @create at:   2022-12-06
 //! @update:
 //! --------------------------------------------------------------------------------------------------------------------
-//! |- time                |- coder                  |- content 
+//! |- time                |- coder                  |- content
 
 
 #ifdef _WIN32
@@ -37,6 +37,9 @@
 #include <unordered_map>
 #include <vector>
 
+#include "third/blockingconcurrentqueue.h"
+#include "tools/tools.hpp"
+
 #ifndef INVALID_SOCKET
 #define INVALID_SOCKET (SOCKET)(~0)
 #endif // !INVALID_SOCKET
@@ -44,22 +47,63 @@
 namespace xq {
 namespace net {
 
+constexpr size_t   KCP_WND = 512;
+constexpr size_t   KCP_MTU = 1418;
+constexpr size_t   KCP_MAX_DATA_SIZE = 1418 * 128;
+constexpr size_t   KCP_HEAD_SIZE = 24;
+constexpr uint32_t KCP_DEFAULT_TIMEOUT = 60000;
+constexpr int64_t  KCP_UPDATE_MS = 20;
+
+constexpr uint32_t IO_RCVBUF_SIZE = 1024 * 1024 * 32;
+constexpr int      IO_BLOCK_SIZE = 8;
+constexpr int      IO_MSG_SIZE = 128;
+
 #ifdef _WIN32
     typedef SOCKET SOCKET;
 #else
     typedef int SOCKET;
 #endif
 
-constexpr size_t   KCP_WND             = 512;
-constexpr size_t   KCP_MTU             = 1418;
-constexpr size_t   KCP_MAX_DATA_SIZE   = 1418 * 128;
-constexpr size_t   KCP_HEAD_SIZE       = 24;
-constexpr uint32_t KCP_DEFAULT_TIMEOUT = 60000;
-constexpr int64_t  KCP_UPDATE_MS       = 20;
+struct RxSeg {
+    static xq::tools::ObjectPool<RxSeg>* pool() {
+        return xq::tools::ObjectPool<RxSeg>::Instance();
+    }
 
-constexpr uint32_t IO_RCVBUF_SIZE      = 1024 * 1024 * 32;
-constexpr int      IO_BLOCK_SIZE       = 8;
-constexpr int      IO_MSG_SIZE         = 128;
+    int len;
+    socklen_t addrlen;
+    sockaddr addr;
+    uint8_t data[KCP_MTU * IO_BLOCK_SIZE];
+
+    explicit RxSeg()
+        : len(KCP_MTU* IO_BLOCK_SIZE)
+        , addrlen(sizeof(addr))
+        , addr({ 0,{0} }) {
+        assert(data);
+    }
+}; // struct RxSeg;
+
+struct TxSeg {
+    static xq::tools::ObjectPool<TxSeg>* pool() {
+        return xq::tools::ObjectPool<TxSeg>::Instance();
+    }
+
+    uint32_t conv;
+    int len;
+    sockaddr addr;
+    socklen_t addrlen;
+    uint8_t data[KCP_MTU];
+
+    explicit TxSeg()
+        : conv(0)
+        , len(KCP_MTU)
+        , addr({ 0, {0} })
+        , addrlen(sizeof(addr)) {
+        assert(data);
+    }
+}; // struct TxSeg
+
+typedef moodycamel::BlockingConcurrentQueue<RxSeg*> RxQueue;
+typedef moodycamel::BlockingConcurrentQueue<TxSeg*> TxQueue;
 
 enum class ErrType {
     ET_ListenerRead = 0,
@@ -140,7 +184,7 @@ SOCKET udp_socket(const char* local, const char* remote, sockaddr *addr = nullpt
                 return INVALID_SOCKET;
             }
 
-#ifndef _WIN32 
+#ifndef _WIN32
             if (::setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &ON, sizeof(int))) {
                 close(fd);
                 return INVALID_SOCKET;
@@ -203,7 +247,7 @@ SOCKET udp_socket(const char* local, const char* remote, sockaddr *addr = nullpt
                     return INVALID_SOCKET;
                 }
 
-#ifndef _WIN32 
+#ifndef _WIN32
                 if (::setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &ON, sizeof(int))) {
                     close(fd);
                     return INVALID_SOCKET;

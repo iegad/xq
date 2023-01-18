@@ -52,20 +52,20 @@ public:
         kcp_->output = output;
     }
 
-    int recv(char* buf, int len) {
-        return ::ikcp_recv(kcp_, buf, len);
+    int recv(uint8_t* buf, int len) {
+        return ::ikcp_recv(kcp_, (char *)buf, len);
     }
 
-    int send(const char* buf, int len) {
-        return ::ikcp_send(kcp_, buf, len);
+    int send(const uint8_t* buf, int len) {
+        return ::ikcp_send(kcp_, (const char *)buf, len);
     }
 
     void update(uint32_t current) {
         ::ikcp_update(kcp_, current);
     }
 
-    int input(const char* data, long size) {
-        return ::ikcp_input(kcp_, data, size);
+    int input(const uint8_t* data, long size) {
+        return ::ikcp_input(kcp_, (const char *)data, size);
     }
 
     bool state() {
@@ -84,8 +84,8 @@ public:
         return kcp_->nrcv_que;
     }
 
-    static void decode_head(const char* raw, Head *head) {
-        const char *p = raw;
+    static void decode_head(const uint8_t* raw, Head *head) {
+        const uint8_t*p = raw;
         head->conv = *(uint32_t*)p;
         p += 4;
         head->cmd = *(uint8_t*)p;

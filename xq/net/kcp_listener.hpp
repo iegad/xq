@@ -10,28 +10,9 @@
 namespace xq {
 namespace net {
 
-struct KcpSeg {
-    static xq::tools::ObjectPool<KcpSeg>* pool() {
-        return xq::tools::ObjectPool<KcpSeg>::Instance();
-    }
-
-    int len;
-    sockaddr addr;
-    socklen_t addrlen;
-    uint8_t raw[KCP_MTU * 8];
-
-    explicit KcpSeg()
-        : len(KCP_MAX_DATA_SIZE)
-        , addr({ 0,{0} })
-        , addrlen(sizeof(addr)) {
-        assert(raw);
-    }
-}; // struct KcpSeg;
-
 class KcpListener {
 public:
     typedef std::shared_ptr<KcpListener> Ptr;
-    typedef moodycamel::BlockingConcurrentQueue<KcpSeg*> WorkQueue;
 
     enum class State {
         Stopped,
@@ -51,23 +32,25 @@ public:
         state_ = State::Running;
 
         for (size_t i = 0, n = std::thread::hardware_concurrency(); i < n; i++) {
-            WorkQueue* q = new WorkQueue(1024);
-            que_vec_.push_back(q);
-            wthread_pool_.emplace_back(std::thread(std::bind(&KcpListener::_kcp_proc, this, q)));
+            RxQueue* q = new RxQueue(1024);
+            rques_.push_back(q);
+            kp_thread_pool_.emplace_back(std::thread(std::bind(&KcpListener::_kcp_proc, this, q)));
         }
 
+        tx_thread_ = std::thread(std::bind(&KcpListener::_tx, this));
         update_thread_ = std::thread(std::bind(&KcpListener::_update, this));
-        io_thread_ = std::thread(std::bind(&KcpListener::_io, this));
+        rx_thread_ = std::thread(std::bind(&KcpListener::_rx, this));
 
-        io_thread_.join();
+        rx_thread_.join();
         update_thread_.join();
+        tx_thread_.join();
 
-        for (auto &t : wthread_pool_) {
+        for (auto &t : kp_thread_pool_) {
             t.join();
         }
 
-        KcpSeg* item[10];
-        for (auto& que : que_vec_) {
+        RxSeg* item[10];
+        for (auto& que : rques_) {
             while (que->try_dequeue_bulk(item, 10));
             delete que;
         }
@@ -91,27 +74,33 @@ private:
 
         sessions_.clear();
         for (uint32_t conv = 1; conv <= max_conn; conv++) {
-            KcpSess::Ptr s = KcpSess::create(conv);
+            KcpSess::Ptr s = KcpSess::create(conv, tque_);
             s->nodelay(1, 20, 2, 1);
             s->set_output(KcpListener::output);
             sessions_[conv] = s;
         }
     }
 
-    static int output(const char* raw, int len, IKCPCB* , void* user) {
-        KcpSess* s = (KcpSess*)user;
-        std::pair<sockaddr*, socklen_t> addr = s->addr();
+    static int output(const char* raw, int len, IKCPCB*, void* user) {
+        KcpSess* sess = (KcpSess*)user;
+        TxSeg* seg = TxSeg::pool()->get();
 
-        if (::sendto(s->ufd(), raw, len, 0, addr.first, addr.second) < 0) {
-            printf("sendto error: %d\n", error());
-        }
+        seg->conv = sess->conv();
 
+        seg->len = len;
+        ::memcpy(seg->data, raw, len);
+
+        std::pair<sockaddr*, socklen_t> addr = sess->addr();
+        seg->addrlen = addr.second;
+        ::memcpy(&seg->addr, addr.first, seg->addrlen);
+
+        sess->push_tx_seg(seg);
         return 0;
     }
 
 #ifdef WIN32 // WINDOWS平台 io 工作线程
 
-    void _io() {
+    void _rx() {
         // Step 1: 创建 udp 监听套接字
         ufd_ = udp_socket(host_.c_str(), nullptr);
         assert(ufd_ != INVALID_SOCKET && "ufd create failed");
@@ -121,8 +110,8 @@ private:
         char raw[KCP_MTU];
         int rawlen, idx = 0;
 
-        const size_t QUE_SIZE = que_vec_.size();
-        KcpSeg *seg;
+        const size_t QUE_SIZE = rques_.size();
+        RxSeg *seg;
 
         while (state_ == State::Running) {
             // Step 1: 获取数据
@@ -137,23 +126,40 @@ private:
             }
 
             // Step 2: 构建对象
-            seg = KcpSeg::pool()->get();
+            seg = RxSeg::pool()->get();
             seg->len = rawlen;
             seg->addrlen = addrlen;
-            ::memcpy(seg->raw, raw, rawlen);
+            ::memcpy(seg->data, raw, rawlen);
             ::memcpy(&seg->addr, &addr, addrlen);
 
             // Step 3: 投递消息
-            assert(que_vec_[idx++]->enqueue(seg));
+            assert(rques_[idx++]->enqueue(seg));
             if (idx >= QUE_SIZE) {
                 idx = 0;
             }
         }
     }
 
+    void _tx() {
+        size_t n, i, res;
+        TxSeg* segs[10], *seg;
+        while (state_ == State::Running) {
+            n = tque_.wait_dequeue_bulk(segs, 10);
+            for (i = 0; i < n; i++) {
+                seg = segs[i];
+                res = ::sendto(ufd_, (const char*)seg->data, seg->len, 0, &seg->addr, seg->addrlen);
+                if (res < 0) {
+                    // TODO: ...
+                    continue;
+                }
+                TxSeg::pool()->put(seg);
+            }
+        }
+    }
+
 #else // 类UNIX平台 io 工作线程
-    void _io() {
-        const size_t QUE_SIZE = que_vec_.size();
+    void _rx() {
+        const size_t QUE_SIZE = rques_.size();
 
         ufd_ = udp_socket(host_.c_str(), nullptr);
         assert(ufd_ != INVALID_SOCKET && "ufd create failed");
@@ -182,14 +188,14 @@ private:
             msgs[i].msg_hdr.msg_iov = iovecs[i];
             msgs[i].msg_hdr.msg_iovlen = IO_BLOCK_SIZE;
 
-            for (j = 0; j < 4; j++) {
+            for (j = 0; j < IO_BLOCK_SIZE; j++) {
                 iovecs[i][j].iov_base = bufs[i][j];
                 iovecs[i][j].iov_len = KCP_MTU;
             }
         }
 
         socklen_t addrlen;
-        KcpSeg *seg;
+        RxSeg *seg;
 
         while(state_ == State::Running) {
             n = ::recvmmsg(ufd_, msgs, IO_MSG_SIZE, MSG_WAITFORONE, nullptr);
@@ -200,24 +206,55 @@ private:
                     continue;
                 }
 
-                seg = KcpSeg::pool()->get();
+                seg = RxSeg::pool()->get();
                 seg->addrlen = addrlen  = msg->msg_hdr.msg_namelen;
                 seg->len = nleft = rawlen;
                 ::memcpy(&seg->addr, (sockaddr*)msg->msg_hdr.msg_name, addrlen);
 
                 for (j = 0; j < 4 && nleft > 0; j++) {
                     raw = bufs[i][j];
-                    p = seg->raw + (rawlen - nleft);
+                    p = seg->data + (rawlen - nleft);
                     ncpy = nleft > KCP_MTU ? KCP_MTU : nleft;
                     ::memcpy(p, raw, ncpy);
                     nleft -= ncpy;
                 }
 
-                 assert(que_vec_[idx++]->enqueue(seg));
-                 if (idx >= QUE_SIZE) {
+                assert(rques_[idx++]->enqueue(seg));
+                if (idx >= QUE_SIZE) {
                     idx = 0;
-                 }
+                }
             } // for (i = 0; i < n; i++);
+        }
+    }
+
+    void _tx() {
+        size_t n, i, res;
+        TxSeg* segs[10], *seg;
+        mmsghdr msgs[10];
+        ::memset(&msgs, 0, sizeof(msgs));
+
+        iovec iovecs[10];
+        while(state_ == State::Running) {
+            n = tque_.wait_dequeue_bulk(segs, 10);
+            for (i = 0; i < n; i++) {
+                seg = segs[i];
+                msgs[i].msg_hdr.msg_name = &seg->addr;
+                msgs[i].msg_hdr.msg_namelen = seg->addrlen;
+                msgs[i].msg_hdr.msg_iov = &iovecs[i];
+                msgs[i].msg_hdr.msg_iovlen = 1;
+
+                iovecs[i].iov_base = seg->data;
+                iovecs[i].iov_len = seg->len;
+            }
+
+            res = ::sendmmsg(ufd_, msgs, n, 0);
+            if (res < 0) {
+                // TODO: ...
+            }
+
+            for (i = 0; i < n; i++) {
+                TxSeg::pool()->put(segs[i]);
+            }
         }
     }
 #endif // WIN32
@@ -236,19 +273,19 @@ private:
         }
     }
 
-    void _kcp_proc(WorkQueue *que) {
+    void _kcp_proc(RxQueue *que) {
         int nrecv;
         uint32_t conv;
 
         uint8_t* raw;
         uint8_t* rbuf = new uint8_t[KCP_MAX_DATA_SIZE];
 
-        KcpSeg* seg;
+        RxSeg* seg;
         KcpSess::Ptr sess;
 
         while (state_ == State::Running) {
             que->wait_dequeue(seg);
-            raw = seg->raw;
+            raw = seg->data;
             assert(raw);
 
             do {
@@ -282,7 +319,7 @@ private:
                 }
             } while (0);
 
-            KcpSeg::pool()->put(seg);
+            RxSeg::pool()->put(seg);
         }
 
         delete[] rbuf;
@@ -295,11 +332,13 @@ private:
     SOCKET ufd_;
     std::string host_;
 
-    std::vector<std::thread> wthread_pool_;
-    std::thread io_thread_;
+    std::vector<std::thread> kp_thread_pool_;
+    std::thread rx_thread_;
+    std::thread tx_thread_;
     std::thread update_thread_;
 
-    std::vector<WorkQueue*> que_vec_;
+    TxQueue tque_;
+    std::vector<RxQueue*> rques_;
 
     std::unordered_map<uint32_t, KcpSess::Ptr> &sessions_;
 }; // class KcpListener;
