@@ -37,13 +37,11 @@ public:
             kp_thread_pool_.emplace_back(std::thread(std::bind(&KcpListener::_kcp_proc, this, q)));
         }
 
-        tx_thread_ = std::thread(std::bind(&KcpListener::_tx, this));
         update_thread_ = std::thread(std::bind(&KcpListener::_update, this));
         rx_thread_ = std::thread(std::bind(&KcpListener::_rx, this));
 
         rx_thread_.join();
         update_thread_.join();
-        tx_thread_.join();
 
         for (auto &t : kp_thread_pool_) {
             t.join();
@@ -74,7 +72,7 @@ private:
 
         sessions_.clear();
         for (uint32_t conv = 1; conv <= max_conn; conv++) {
-            KcpSess::Ptr s = KcpSess::create(conv, tque_);
+            KcpSess::Ptr s = KcpSess::create(conv);
             s->nodelay(1, 20, 2, 1);
             s->set_output(KcpListener::output);
             sessions_[conv] = s;
@@ -85,14 +83,8 @@ private:
         KcpSess* sess = (KcpSess*)user;
         TxSeg* seg = TxSeg::pool()->get();
 
-        seg->conv = sess->conv();
-
         seg->len = len;
         ::memcpy(seg->data, raw, len);
-
-        std::pair<sockaddr*, socklen_t> addr = sess->addr();
-        seg->addrlen = addr.second;
-        ::memcpy(&seg->addr, addr.first, seg->addrlen);
 
         sess->push_tx_seg(seg);
         return 0;
@@ -136,23 +128,6 @@ private:
             assert(rques_[idx++]->enqueue(seg));
             if (idx >= QUE_SIZE) {
                 idx = 0;
-            }
-        }
-    }
-
-    void _tx() {
-        size_t n, i, res;
-        TxSeg* segs[10], *seg;
-        while (state_ == State::Running) {
-            n = tque_.wait_dequeue_bulk(segs, 10);
-            for (i = 0; i < n; i++) {
-                seg = segs[i];
-                res = ::sendto(ufd_, (const char*)seg->data, seg->len, 0, &seg->addr, seg->addrlen);
-                if (res < 0) {
-                    // TODO: ...
-                    continue;
-                }
-                TxSeg::pool()->put(seg);
             }
         }
     }
@@ -224,37 +199,6 @@ private:
                     idx = 0;
                 }
             } // for (i = 0; i < n; i++);
-        }
-    }
-
-    void _tx() {
-        size_t n, i, res;
-        TxSeg* segs[10], *seg;
-        mmsghdr msgs[10];
-        ::memset(&msgs, 0, sizeof(msgs));
-
-        iovec iovecs[10];
-        while(state_ == State::Running) {
-            n = tque_.wait_dequeue_bulk(segs, 10);
-            for (i = 0; i < n; i++) {
-                seg = segs[i];
-                msgs[i].msg_hdr.msg_name = &seg->addr;
-                msgs[i].msg_hdr.msg_namelen = seg->addrlen;
-                msgs[i].msg_hdr.msg_iov = &iovecs[i];
-                msgs[i].msg_hdr.msg_iovlen = 1;
-
-                iovecs[i].iov_base = seg->data;
-                iovecs[i].iov_len = seg->len;
-            }
-
-            res = ::sendmmsg(ufd_, msgs, n, 0);
-            if (res < 0) {
-                // TODO: ...
-            }
-
-            for (i = 0; i < n; i++) {
-                TxSeg::pool()->put(segs[i]);
-            }
         }
     }
 #endif // WIN32
@@ -334,10 +278,8 @@ private:
 
     std::vector<std::thread> kp_thread_pool_;
     std::thread rx_thread_;
-    std::thread tx_thread_;
     std::thread update_thread_;
 
-    TxQueue tque_;
     std::vector<RxQueue*> rques_;
 
     std::unordered_map<uint32_t, KcpSess::Ptr> &sessions_;

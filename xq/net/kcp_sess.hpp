@@ -12,8 +12,8 @@ class KcpSess final {
 public:
     typedef std::shared_ptr<KcpSess>  Ptr;
 
-    static Ptr create(uint32_t conv, xq::net::TxQueue& que) {
-        return Ptr(new KcpSess(conv, que));
+    static Ptr create(uint32_t conv) {
+        return Ptr(new KcpSess(conv));
     }
 
     ~KcpSess() {
@@ -49,6 +49,7 @@ public:
         int rzt = kcp_->input(data, size);
         if (rzt == 0) {
             kcp_->flush();
+            _sendmsg();
         }
             return rzt;
     }
@@ -63,6 +64,7 @@ public:
         int rzt = kcp_->send(buf, len);
         if (rzt == 0) {
             kcp_->flush();
+            _sendmsg();
         }
         return rzt;
     }
@@ -111,6 +113,7 @@ public:
         {
             std::lock_guard<std::mutex> lk(kmtx_);
             kcp_->update((uint32_t)(now_ms - time_ms_));
+            _sendmsg();
         }
     }
 
@@ -138,18 +141,51 @@ public:
     }
 
     void push_tx_seg(TxSeg* seg) {
-        que_.enqueue(seg);
+        segs_.push_back(seg);
     }
 
 private:
-    KcpSess(uint32_t conv, xq::net::TxQueue &que)
+    KcpSess(uint32_t conv)
         : ufd_(INVALID_SOCKET)
         , time_ms_(0)
         , last_ms_(0)
         , addr_({ 0,{0}})
         , addrlen_(sizeof(addr_))
-        , kcp_(new Kcp(conv, this))
-        , que_(que) {
+        , kcp_(new Kcp(conv, this))  {
+    }
+
+    void _sendmsg() {
+        size_t n = segs_.size();
+        iovec *iovs = new iovec[n], *iov;
+        TxSeg *seg;
+
+        msghdr msg;
+        ::memset(&msg, 0, sizeof(msg));
+
+        msg.msg_name = &addr_;
+        msg.msg_namelen = addrlen_;
+
+        msg.msg_iov = iovs;
+        msg.msg_iovlen = n;
+
+        for (size_t i = 0; i < n; i++) {
+            seg = segs_[i];
+            iov = &iovs[i];
+            iov->iov_base = seg->data;
+            iov->iov_len = seg->len;
+        }
+
+        if (::sendmsg(ufd_, &msg, 0) < 0) {
+            //TODO: ...
+        }
+
+        delete[] iovs;
+
+        for (auto seg: segs_) {
+            TxSeg::pool()->put(seg);
+        }
+
+        segs_.clear();
     }
 
     bool _addr_changed(const sockaddr* addr, socklen_t addrlen) {
@@ -178,7 +214,7 @@ private:
 
     Kcp* kcp_;
 
-    xq::net::TxQueue& que_;
+    std::vector<TxSeg*> segs_;
 
     std::mutex kmtx_;
     std::mutex tmtx_;

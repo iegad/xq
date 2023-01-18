@@ -87,17 +87,11 @@ struct TxSeg {
         return xq::tools::ObjectPool<TxSeg>::Instance();
     }
 
-    uint32_t conv;
     int len;
-    sockaddr addr;
-    socklen_t addrlen;
     uint8_t data[KCP_MTU];
 
     explicit TxSeg()
-        : conv(0)
-        , len(KCP_MTU)
-        , addr({ 0, {0} })
-        , addrlen(sizeof(addr)) {
+        : len(KCP_MTU) {
         assert(data);
     }
 }; // struct TxSeg
