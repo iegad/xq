@@ -153,11 +153,11 @@ private:
         , addrlen_(sizeof(addr_))
         , kcp_(new Kcp(conv, this))  {
     }
-
+#ifndef WIN32
     void _sendmsg() {
         size_t n = segs_.size();
-        iovec *iovs = new iovec[n], *iov;
-        TxSeg *seg;
+        iovec* iovs = new iovec[n], * iov;
+        TxSeg* seg;
 
         msghdr msg;
         ::memset(&msg, 0, sizeof(msg));
@@ -181,12 +181,28 @@ private:
 
         delete[] iovs;
 
-        for (auto seg: segs_) {
+        for (auto seg : segs_) {
             TxSeg::pool()->put(seg);
         }
 
         segs_.clear();
     }
+#else
+    void _sendmsg() {
+        TxSeg* seg;
+        int n;
+        for (size_t i = 0, n = segs_.size(); i < n; i++) {
+            seg = segs_[i];
+            n = ::sendto(ufd_, (const char *)seg->data, seg->len, 0, &addr_, addrlen_);
+            if (n < 0) {
+                // TODO: ...
+            }
+            TxSeg::pool()->put(seg);
+        }
+
+        segs_.clear();
+    }
+#endif // !WIN32
 
     bool _addr_changed(const sockaddr* addr, socklen_t addrlen) {
         bool res = false;
