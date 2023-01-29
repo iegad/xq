@@ -29,7 +29,7 @@ public:
         , tx_iovs_(new iovec[IO_BLOCK_SIZE])
 #endif // !WIN32
         , kcp_(new Kcp(conv, this))  {
-        kcp_->nodelay(1, 20, 2, 1);
+        kcp_->nodelay(1, KCP_UPDATE_MS, 2, 0);
     }
 
     ~KcpSess() {
@@ -99,11 +99,6 @@ public:
             _sendmsg();
         }
         return rzt;
-    }
-
-    size_t nrcv_que() {
-        std::lock_guard<std::mutex> lk(kmtx_);
-        return kcp_->nrcv_que();
     }
 
     std::string remote() const {
@@ -202,24 +197,6 @@ private:
         segs_.clear();
     }
 #endif // !WIN32
-
-    bool _addr_changed(const sockaddr* addr, socklen_t addrlen) {
-        bool res = false;
-        std::lock_guard<std::mutex> lk(amtx_);
-        if (addrlen != addrlen_) {
-            addrlen_ = addrlen;
-            res = true;
-        }
-
-        if (::memcmp(&addr_, addr, addrlen_)) {
-            ::memcpy(&addr_, addr, addrlen_);
-            if (!res) {
-                res = true;
-            }
-        }
-
-        return res;
-    }
 
     SOCKET ufd_;
 

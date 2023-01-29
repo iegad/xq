@@ -156,39 +156,35 @@ private:
         ufd_ = udp_socket(host_.c_str(), nullptr);
         assert(ufd_ != INVALID_SOCKET && "ufd create failed");
 
-        socklen_t opt_len = sizeof(IO_RCVBUF_SIZE);
-        assert(::setsockopt(ufd_, SOL_SOCKET, SO_RCVBUF, &IO_RCVBUF_SIZE, opt_len) == 0 && "set udp recv buffer size failed");
-
-        uint8_t bufs[IO_MSG_SIZE][IO_BLOCK_SIZE][KCP_MTU], *raw, *p;
-
-        sockaddr addrs[IO_MSG_SIZE];
-        ::memset(addrs, 0, sizeof(addrs));
-
         mmsghdr msgs[IO_MSG_SIZE];
         ::memset(msgs, 0, sizeof(msgs));
 
-        size_t rawlen = 0, nleft, ncpy;
+        size_t rawlen;
         mmsghdr *msg;
 
         iovec iovecs[IO_MSG_SIZE][IO_BLOCK_SIZE];
 
-        int i, j, n;
-        for (i = 0; i < IO_MSG_SIZE; i++) {
-            msgs[i].msg_hdr.msg_name = &addrs[i];
-            msgs[i].msg_hdr.msg_namelen = sizeof(addrs[i]);
-            msgs[i].msg_hdr.msg_iov = iovecs[i];
-            msgs[i].msg_hdr.msg_iovlen = IO_BLOCK_SIZE;
+        int i, j, n = IO_MSG_SIZE;
 
-            for (j = 0; j < IO_BLOCK_SIZE; j++) {
-                iovecs[i][j].iov_base = bufs[i][j];
-                iovecs[i][j].iov_len = KCP_MTU;
-            }
-        }
-
-        socklen_t addrlen;
+        std::vector<RxSeg*> segs;
         RxSeg *seg;
 
         while(state_ == State::Running) {
+            for (i = 0; i < n; i++) {
+                seg = RxSeg::pool()->get();
+                msgs[i].msg_hdr.msg_name = &seg->addr;
+                msgs[i].msg_hdr.msg_namelen = sizeof(sockaddr);
+                msgs[i].msg_hdr.msg_iov = iovecs[i];
+                msgs[i].msg_hdr.msg_iovlen = IO_BLOCK_SIZE;
+
+                for (j = 0; j < IO_BLOCK_SIZE; j++) {
+                    iovecs[i][j].iov_base = seg->data[j];
+                    iovecs[i][j].iov_len = KCP_MTU;
+                }
+
+                segs.push_back(seg);
+            }
+
             n = ::recvmmsg(ufd_, msgs, IO_MSG_SIZE, MSG_WAITFORONE, nullptr);
             for (i = 0; i < n; i++) {
                 msg = &msgs[i];
@@ -197,18 +193,9 @@ private:
                     continue;
                 }
 
-                seg = RxSeg::pool()->get();
-                seg->addrlen = addrlen  = msg->msg_hdr.msg_namelen;
-                seg->len = nleft = rawlen;
-                ::memcpy(&seg->addr, (sockaddr*)msg->msg_hdr.msg_name, addrlen);
-
-                for (j = 0; j < 4 && nleft > 0; j++) {
-                    raw = bufs[i][j];
-                    p = seg->data + (rawlen - nleft);
-                    ncpy = nleft > KCP_MTU ? KCP_MTU : nleft;
-                    ::memcpy(p, raw, ncpy);
-                    nleft -= ncpy;
-                }
+                seg = segs[i];
+                seg->addrlen = msg->msg_hdr.msg_namelen;
+                seg->len = rawlen;
 
                 std::string remote = addr2str(&seg->addr);
                 auto itr = sessions_.find(remote);
@@ -221,6 +208,8 @@ private:
                 seg->sess = itr->second;
                 assert(rques_[itr->second->get_que_idx()]->enqueue(seg));
             } // for (i = 0; i < n; i++);
+
+            segs.clear();
         }
     }
 #endif // WIN32
@@ -259,8 +248,7 @@ private:
 
         while (state_ == State::Running) {
             que->wait_dequeue(seg);
-            raw = seg->data;
-            assert(raw);
+            raw = seg->data[0];
 
             do {
                 // Step 1: 获取对应的KcpSession
@@ -271,17 +259,26 @@ private:
                 sess = seg->sess;
 
                 // Step 2: 获取KCP消息包
-                if (sess->input(raw, seg->len) < 0) {
-                    continue;
+                size_t nleft = seg->len, i = 0 ;
+
+                while (nleft > 0) {
+                    int n = nleft > KCP_MTU ? KCP_MTU : nleft;
+                    raw = seg->data[i++];
+                    if (sess->input(raw, n) < 0) {
+                        // TODO:
+                        break;
+                    }
+                    nleft -=  n;
                 }
 
-                while (sess->nrcv_que()) {
+                while (true) {
                     // Step 3: 获取消息包
                     nrecv = sess->recv(rbuf, KCP_MAX_DATA_SIZE);
                     if (nrecv < 0) {
                         break;
                     }
 
+                    assert(sess->remote() == addr2str(&seg->addr));
                     if (sess->send(rbuf, nrecv) < 0) {
                         // TODO
                     }
