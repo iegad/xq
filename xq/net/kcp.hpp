@@ -10,8 +10,6 @@
 namespace xq {
 namespace net {
 
-class KcpSess;
-
 class Kcp final {
 public:
     struct Head {
@@ -24,11 +22,6 @@ public:
         uint32_t una;
         uint32_t len;
     };
-
-    static xq::tools::Map<std::string, KcpSess*>& sessions() {
-        static xq::tools::Map<std::string, KcpSess*> m_;
-        return m_;
-    }
 
     Kcp(uint32_t conv, void* user)
         : kcp_(::ikcp_create(conv, user)) {
@@ -53,6 +46,10 @@ public:
 
     void set_conv(uint32_t conv) {
         kcp_->conv = conv;
+    }
+
+    uint32_t get_conv() const {
+        return kcp_->conv;
     }
 
     int recv(uint8_t* buf, int len) {
@@ -104,10 +101,6 @@ public:
         head->una = *(uint32_t*)p;
         p += 4;
         head->len = *(uint32_t*)p;
-    }
-
-    uint32_t get_conv() const {
-        return kcp_->conv;
     }
 
     void reset() {

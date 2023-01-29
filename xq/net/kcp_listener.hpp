@@ -20,6 +20,12 @@ public:
         Running
     };
 
+    /// <summary>
+    /// 创建KcpListener
+    /// </summary>
+    /// <param name="host">监听地址</param>
+    /// <param name="max_conn">最大连接数</param>
+    /// <returns></returns>
     static Ptr create(const std::string& host, uint32_t max_conn) {
         return Ptr(new KcpListener(host, max_conn));
     }
@@ -28,16 +34,23 @@ public:
         close(ufd_);
     }
 
+    /// <summary>
+    /// 启动服务
+    /// </summary>
     void run() {
         state_ = State::Running;
 
+        // 开启工作线程
         for (size_t i = 0, n = std::thread::hardware_concurrency(); i < n; i++) {
             RxQueue* q = new RxQueue(2048);
             rques_.push_back(q);
             kp_thread_pool_.emplace_back(std::thread(std::bind(&KcpListener::_kcp_proc, this, q)));
         }
 
+        // 开启 kcp update线程
         update_thread_ = std::thread(std::bind(&KcpListener::_update, this));
+
+        // 开启 io read 线程
         rx_thread_ = std::thread(std::bind(&KcpListener::_rx, this));
 
         rx_thread_.join();
@@ -47,9 +60,10 @@ public:
             t.join();
         }
 
-        RxSeg* item[10];
+        // 请空队列
+        RxSeg* item[IO_BLOCK_SIZE];
         for (auto& que : rques_) {
-            while (que->try_dequeue_bulk(item, 10));
+            while (que->try_dequeue_bulk(item, IO_BLOCK_SIZE));
             delete que;
         }
 
@@ -61,12 +75,17 @@ public:
     }
 
 private:
+    /// <summary>
+    /// 构造函数
+    /// </summary>
+    /// <param name="host">监听地址</param>
+    /// <param name="max_conn">最大连接数</param>
     KcpListener(const std::string& host, uint32_t max_conn)
         : MAX_CONN(max_conn)
         , state_(State::Stopped)
         , ufd_(INVALID_SOCKET)
         , host_(host)
-        , sessions_(Kcp::sessions()) {
+        , sessions_(KcpSess::sessions()) {
 
         assert(MAX_CONN > 0 && "max_conn is invalid");
     }
@@ -92,7 +111,7 @@ private:
         sockaddr addr;
         socklen_t addrlen = sizeof(addr);
         char raw[KCP_MTU];
-        int rawlen, idx = 0;
+        int rawlen;
 
         const size_t QUE_SIZE = rques_.size();
         RxSeg *seg;
@@ -116,11 +135,16 @@ private:
             ::memcpy(seg->data, raw, rawlen);
             ::memcpy(&seg->addr, &addr, addrlen);
 
-            // Step 3: 投递消息
-            assert(rques_[idx++]->enqueue(seg));
-            if (idx >= QUE_SIZE) {
-                idx = 0;
+            std::string remote = addr2str(&addr);
+            auto itr = sessions_.find(remote);
+            if (itr == sessions_.end()) {
+                KcpSess* sess = KcpSess::pool()->get();
+                sess->set(Kcp::get_conv(raw), ufd_, &addr, addrlen, remote, conns_++, KcpListener::output);
+                itr = sessions_.insert(remote, sess).first;
             }
+
+            // Step 3: 投递消息
+            assert(rques_[itr->second->get_que_idx()]->enqueue(seg));
         }
     }
 
@@ -128,9 +152,9 @@ private:
     void _rx() {
         const size_t QUE_SIZE = rques_.size();
 
+        // Step 1: 构建udp socket
         ufd_ = udp_socket(host_.c_str(), nullptr);
         assert(ufd_ != INVALID_SOCKET && "ufd create failed");
-
 
         socklen_t opt_len = sizeof(IO_RCVBUF_SIZE);
         assert(::setsockopt(ufd_, SOL_SOCKET, SO_RCVBUF, &IO_RCVBUF_SIZE, opt_len) == 0 && "set udp recv buffer size failed");
@@ -202,7 +226,7 @@ private:
 #endif // WIN32
 
     void _update() {
-        constexpr std::chrono::milliseconds INTVAL = std::chrono::milliseconds(10);
+        constexpr std::chrono::milliseconds INTVAL = std::chrono::milliseconds(KCP_UPDATE_MS);
 
         int64_t now_ms = 0;
 
@@ -270,21 +294,20 @@ private:
         delete[] rbuf;
     }
 
-    const uint32_t MAX_CONN;
+    const uint32_t MAX_CONN;                    // 最大连接数
+    State state_;                               // 服务端状态
 
-    State state_;
+    SOCKET ufd_;                                // 监听套接字
+    std::string host_;                          // 监听地址
+    std::atomic_int32_t conns_;                 // 当前连接数
 
-    SOCKET ufd_;
-    std::string host_;
-    std::atomic_int32_t conns_;
+    std::vector<std::thread> kp_thread_pool_;   // 工作线程池 kcp procedure thread pool
+    std::thread rx_thread_;                     // io read thread
+    std::thread update_thread_;                 // kcp update thread
 
-    std::vector<std::thread> kp_thread_pool_;
-    std::thread rx_thread_;
-    std::thread update_thread_;
+    std::vector<RxQueue*> rques_;               // read data queue
 
-    std::vector<RxQueue*> rques_;
-
-    xq::tools::Map<std::string, KcpSess*> &sessions_;
+    xq::tools::Map<std::string, KcpSess*> &sessions_; // 会话集
 }; // class KcpListener;
 
 } // namespace net;

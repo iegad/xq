@@ -52,7 +52,7 @@ constexpr size_t   KCP_MTU = 1418;
 constexpr size_t   KCP_MAX_DATA_SIZE = 1418 * 128;
 constexpr size_t   KCP_HEAD_SIZE = 24;
 constexpr uint32_t KCP_DEFAULT_TIMEOUT = 60000;
-constexpr int64_t  KCP_UPDATE_MS = 20;
+constexpr int64_t  KCP_UPDATE_MS = 10;
 
 constexpr uint32_t IO_RCVBUF_SIZE = 1024 * 1024 * 32;
 constexpr int      IO_BLOCK_SIZE = 16;

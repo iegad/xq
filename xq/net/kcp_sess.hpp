@@ -10,22 +10,38 @@ namespace net {
 
 class KcpSess final {
 public:
-    static tools::ObjectPool<KcpSess>* pool() {
-        return tools::ObjectPool<KcpSess>::Instance();
+    static xq::tools::ObjectPool<KcpSess>* pool() {
+        return xq::tools::ObjectPool<KcpSess>::Instance();
     }
 
-    KcpSess(uint32_t conv = 0xFFFFFFFF)
+    static xq::tools::Map<std::string, KcpSess*>& sessions() {
+        static xq::tools::Map<std::string, KcpSess*> m_;
+        return m_;
+    }
+
+    explicit KcpSess(uint32_t conv = ~(0))
         : ufd_(INVALID_SOCKET)
         , time_ms_(0)
         , last_ms_(0)
         , addr_({ 0,{0}})
         , addrlen_(sizeof(addr_))
+#ifndef WIN32
+        , tx_iovs_(new iovec[IO_BLOCK_SIZE])
+#endif // !WIN32
         , kcp_(new Kcp(conv, this))  {
         kcp_->nodelay(1, 20, 2, 1);
     }
 
     ~KcpSess() {
-        delete kcp_;
+#ifndef WIN32
+        if (tx_iovs_) {
+            delete[] tx_iovs_;
+    }
+#endif // !WIN32
+
+        if (kcp_) {
+            delete kcp_;
+        }
     }
 
     std::pair<sockaddr*, socklen_t> addr() {
@@ -47,7 +63,7 @@ public:
         qidx_ = qidx;
     }
 
-    uint32_t get_conv() {
+    uint32_t get_conv() const {
         return kcp_->get_conv();
     }
 
@@ -130,6 +146,7 @@ public:
     }
 
 private:
+#ifndef WIN32
     void _sendmsg() {
         size_t n = segs_.size();
 
@@ -137,8 +154,8 @@ private:
             return;
         }
 
-        iovec *iovs = new iovec[n], *iov;
-        TxSeg *seg;
+        iovec *iov;
+        TxSeg* seg;
 
         msghdr msg;
         ::memset(&msg, 0, sizeof(msg));
@@ -146,12 +163,12 @@ private:
         msg.msg_name = &addr_;
         msg.msg_namelen = addrlen_;
 
-        msg.msg_iov = iovs;
+        msg.msg_iov = tx_iovs_;
         msg.msg_iovlen = n;
 
         for (size_t i = 0; i < n; i++) {
             seg = segs_[i];
-            iov = &iovs[i];
+            iov = &tx_iovs_[i];
             iov->iov_base = seg->data;
             iov->iov_len = seg->len;
         }
@@ -161,14 +178,30 @@ private:
             printf("sendmsg failed: %d\n", error());
         }
 
-        delete[] iovs;
-
-        for (auto seg: segs_) {
+        for (auto seg : segs_) {
             TxSeg::pool()->put(seg);
         }
 
         segs_.clear();
     }
+#else
+    void _sendmsg() {
+        size_t n = segs_.size();
+
+        if (n == 0) {
+            return;
+        }
+
+        for (auto& seg : segs_) {
+            if (::sendto(ufd_, (const char*)seg->data, seg->len, 0, &addr_, addrlen_)) {
+                printf("sendto failed: %d\n", error());
+                break;
+            }
+        }
+
+        segs_.clear();
+    }
+#endif // !WIN32
 
     bool _addr_changed(const sockaddr* addr, socklen_t addrlen) {
         bool res = false;
@@ -195,6 +228,10 @@ private:
     size_t qidx_;
     sockaddr addr_;
     socklen_t addrlen_;
+
+#ifndef WIN32
+    iovec* tx_iovs_;
+#endif // !WIN32
 
     Kcp* kcp_;
 
