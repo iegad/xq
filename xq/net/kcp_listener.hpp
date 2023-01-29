@@ -32,7 +32,7 @@ public:
         state_ = State::Running;
 
         for (size_t i = 0, n = std::thread::hardware_concurrency(); i < n; i++) {
-            RxQueue* q = new RxQueue(1024);
+            RxQueue* q = new RxQueue(2048);
             rques_.push_back(q);
             kp_thread_pool_.emplace_back(std::thread(std::bind(&KcpListener::_kcp_proc, this, q)));
         }
@@ -69,14 +69,6 @@ private:
         , sessions_(Kcp::sessions()) {
 
         assert(MAX_CONN > 0 && "max_conn is invalid");
-
-        sessions_.clear();
-        for (uint32_t conv = 1; conv <= max_conn; conv++) {
-            KcpSess::Ptr s = KcpSess::create(conv);
-            s->nodelay(1, 20, 2, 1);
-            s->set_output(KcpListener::output);
-            sessions_[conv] = s;
-        }
     }
 
     static int output(const char* raw, int len, IKCPCB*, void* user) {
@@ -151,7 +143,7 @@ private:
         mmsghdr msgs[IO_MSG_SIZE];
         ::memset(msgs, 0, sizeof(msgs));
 
-        size_t rawlen = 0, idx = 0, nleft, ncpy;
+        size_t rawlen = 0, nleft, ncpy;
         mmsghdr *msg;
 
         iovec iovecs[IO_MSG_SIZE][IO_BLOCK_SIZE];
@@ -194,10 +186,16 @@ private:
                     nleft -= ncpy;
                 }
 
-                assert(rques_[idx++]->enqueue(seg));
-                if (idx >= QUE_SIZE) {
-                    idx = 0;
+                std::string remote = addr2str(&seg->addr);
+                auto itr = sessions_.find(remote);
+                if (itr == sessions_.end()) {
+                    KcpSess* sess = KcpSess::pool()->get();
+                    sess->set(Kcp::get_conv(seg->data), ufd_, &seg->addr, seg->addrlen, remote, conns_++ % QUE_SIZE, KcpListener::output);
+                    itr = sessions_.insert(remote, sess).first;
                 }
+
+                seg->sess = itr->second;
+                assert(rques_[itr->second->get_que_idx()]->enqueue(seg));
             } // for (i = 0; i < n; i++);
         }
     }
@@ -206,14 +204,22 @@ private:
     void _update() {
         constexpr std::chrono::milliseconds INTVAL = std::chrono::milliseconds(10);
 
-        int64_t now_ms;
+        int64_t now_ms = 0;
+
+        auto updater = [&](const std::string &, KcpSess* &sess) {
+            if (!sess->update(now_ms)) {
+                KcpSess::pool()->put(sess);
+                conns_--;
+                return false;
+            }
+
+            return true;
+        };
 
         while (state_ == State::Running) {
             now_ms = xq::tools::now_milli();
             std::this_thread::sleep_for(INTVAL);
-            for (auto &itr: sessions_) {
-                itr.second->update(now_ms);
-            }
+            sessions_.range(updater);
         }
     }
 
@@ -225,7 +231,7 @@ private:
         uint8_t* rbuf = new uint8_t[KCP_MAX_DATA_SIZE];
 
         RxSeg* seg;
-        KcpSess::Ptr sess;
+        KcpSess* sess;
 
         while (state_ == State::Running) {
             que->wait_dequeue(seg);
@@ -238,12 +244,7 @@ private:
                 if (conv == 0 || conv > MAX_CONN) {
                     break;
                 }
-
-                sess = sessions_[conv];
-                assert(sess);
-                if (sess->check_new(&seg->addr, seg->addrlen)) {
-                    sess->set_ufd(ufd_);
-                }
+                sess = seg->sess;
 
                 // Step 2: 获取KCP消息包
                 if (sess->input(raw, seg->len) < 0) {
@@ -275,6 +276,7 @@ private:
 
     SOCKET ufd_;
     std::string host_;
+    std::atomic_int32_t conns_;
 
     std::vector<std::thread> kp_thread_pool_;
     std::thread rx_thread_;
@@ -282,7 +284,7 @@ private:
 
     std::vector<RxQueue*> rques_;
 
-    std::unordered_map<uint32_t, KcpSess::Ptr> &sessions_;
+    xq::tools::Map<std::string, KcpSess*> &sessions_;
 }; // class KcpListener;
 
 } // namespace net;

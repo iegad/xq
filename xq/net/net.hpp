@@ -64,6 +64,8 @@ constexpr int      IO_MSG_SIZE = 256;
     typedef int SOCKET;
 #endif
 
+class KcpSess;
+
 struct RxSeg {
     static xq::tools::ObjectPool<RxSeg>* pool() {
         return xq::tools::ObjectPool<RxSeg>::Instance();
@@ -73,6 +75,7 @@ struct RxSeg {
     socklen_t addrlen;
     sockaddr addr;
     uint8_t data[KCP_MTU * IO_BLOCK_SIZE];
+    KcpSess *sess;
 
     explicit RxSeg()
         : len(KCP_MTU* IO_BLOCK_SIZE)
@@ -269,6 +272,28 @@ SOCKET udp_socket(const char* local, const char* remote, sockaddr *addr = nullpt
     }
 
     return fd;
+}
+
+std::string addr2str(const sockaddr *addr) {
+    std::string rzt;
+    char buf[38] = { 0 };
+
+    switch (addr->sa_family) {
+
+    case AF_INET: {
+        sockaddr_in* ra = (sockaddr_in*)addr;
+        assert(::inet_ntop(AF_INET, &ra->sin_addr, buf, sizeof(buf)) && "inet_ntop failed");
+        rzt = std::string(buf) + ":" + std::to_string(ntohs(ra->sin_port));
+    } break;
+
+    case AF_INET6: {
+        sockaddr_in6* ra = (sockaddr_in6*)addr;
+        assert(::inet_ntop(AF_INET6, &ra->sin6_addr, buf, sizeof(buf)) && "inet_ntop failed");
+        rzt = std::string(buf) + ":" + std::to_string(ntohs(ra->sin6_port));
+    } break;
+    } // switch (addr_.sa_family);
+
+    return rzt;
 }
 
 } // namespace net

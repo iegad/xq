@@ -295,6 +295,22 @@ public:
         return m_.end();
     }
 
+    template<typename TFunc>
+    void range(TFunc func) {
+        std::vector<TKey> rmv;
+
+        std::lock_guard<std::mutex> lk(mtx_);
+        for (auto &itr: m_) {
+            if (!func(itr.first, itr.second)) {
+                rmv.push_back(itr.first);
+            }
+        }
+
+        for (auto &k: rmv) {
+            m_.erase(k);
+        }
+    }
+
 private:
     std::mutex mtx_;
     std::unordered_map<TKey, TValue> m_;

@@ -14,8 +14,6 @@ class KcpSess;
 
 class Kcp final {
 public:
-    typedef std::shared_ptr<KcpSess> KSPtr;
-
     struct Head {
         uint32_t conv;
         uint8_t cmd;
@@ -27,8 +25,8 @@ public:
         uint32_t len;
     };
 
-    static std::unordered_map<uint32_t, KSPtr>& sessions() {
-        static std::unordered_map<uint32_t, KSPtr> m_;
+    static xq::tools::Map<std::string, KcpSess*>& sessions() {
+        static xq::tools::Map<std::string, KcpSess*> m_;
         return m_;
     }
 
@@ -36,6 +34,7 @@ public:
         : kcp_(::ikcp_create(conv, user)) {
         ::ikcp_setmtu(kcp_, KCP_MTU);
         ::ikcp_wndsize(kcp_, KCP_WND, KCP_WND);
+        kcp_->updated = 1;
     }
 
     static uint32_t get_conv(const void *raw) {
@@ -50,6 +49,10 @@ public:
 
     void set_output(int (*output)(const char* buf, int len, ikcpcb* kcp, void* user)) {
         kcp_->output = output;
+    }
+
+    void set_conv(uint32_t conv) {
+        kcp_->conv = conv;
     }
 
     int recv(uint8_t* buf, int len) {
@@ -103,7 +106,7 @@ public:
         head->len = *(uint32_t*)p;
     }
 
-    uint32_t conv() const {
+    uint32_t get_conv() const {
         return kcp_->conv;
     }
 
@@ -130,6 +133,7 @@ public:
             ::free(seg);
         }
 
+        kcp_->conv = 0xFFFFFFFF;
         kcp_->snd_una = 0;
         kcp_->snd_nxt = 0;
         kcp_->rcv_nxt = 0;

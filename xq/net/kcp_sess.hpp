@@ -10,10 +10,18 @@ namespace net {
 
 class KcpSess final {
 public:
-    typedef std::shared_ptr<KcpSess>  Ptr;
+    static tools::ObjectPool<KcpSess>* pool() {
+        return tools::ObjectPool<KcpSess>::Instance();
+    }
 
-    static Ptr create(uint32_t conv) {
-        return Ptr(new KcpSess(conv));
+    KcpSess(uint32_t conv = 0xFFFFFFFF)
+        : ufd_(INVALID_SOCKET)
+        , time_ms_(0)
+        , last_ms_(0)
+        , addr_({ 0,{0}})
+        , addrlen_(sizeof(addr_))
+        , kcp_(new Kcp(conv, this))  {
+        kcp_->nodelay(1, 20, 2, 1);
     }
 
     ~KcpSess() {
@@ -24,24 +32,32 @@ public:
         return std::make_pair(&addr_, addrlen_);
     }
 
-    uint32_t conv() {
-        return kcp_->conv();
-    }
-
-    void set_ufd(SOCKET ufd) {
-        if (ufd_ != ufd) {
+    void set(uint32_t conv, SOCKET ufd, sockaddr *addr, socklen_t addrlen, const std::string &remote, size_t qidx, int (*output)(const char* buf, int len, ikcpcb* kcp, void* user)) {
+        kcp_->reset();
+        kcp_->set_conv(conv);
+        kcp_->set_output(output);
+        last_ms_ = time_ms_ = xq::tools::now_milli();
+        if (ufd != ufd_) {
             ufd_ = ufd;
         }
+
+        ::memcpy(&addr_, addr, addrlen);
+        addrlen_ = addrlen;
+        remote_ = remote;
+        qidx_ = qidx;
+    }
+
+    uint32_t get_conv() {
+        return kcp_->get_conv();
+    }
+
+    uint32_t get_que_idx() const {
+        return qidx_;
     }
 
     void nodelay(int nodelay, int interval, int resend, int nc) {
         std::lock_guard<std::mutex> lk(kmtx_);
         kcp_->nodelay(nodelay, interval, resend, nc);
-    }
-
-    void set_output(int (*output)(const char* buf, int len, ikcpcb* kcp, void* user)) {
-        std::lock_guard<std::mutex> lk(kmtx_);
-        kcp_->set_output(output);
     }
 
     int input(const uint8_t* data, long size) {
@@ -74,39 +90,24 @@ public:
         return kcp_->nrcv_que();
     }
 
-    std::string remote() {
-        std::string rzt;
-        char buf[100] = { 0 };
-
-        std::lock_guard<std::mutex> lk(amtx_);
-        switch (addr_.sa_family) {
-
-        case AF_INET: {
-            sockaddr_in* addr = (sockaddr_in*)&addr_;
-            assert(::inet_ntop(AF_INET, &addr->sin_addr, buf, sizeof(buf)) && "inet_ntop failed");
-            rzt = std::string(buf) + ":" + std::to_string(ntohs(addr->sin_port));
-        } break;
-
-        case AF_INET6: {
-            sockaddr_in6* addr = (sockaddr_in6*)&addr_;
-            assert(::inet_ntop(AF_INET6, &addr->sin6_addr, buf, sizeof(buf)) && "inet_ntop failed");
-            rzt = std::string(buf) + ":" + std::to_string(ntohs(addr->sin6_port));
-        } break;
-        } // switch (addr_.sa_family);
-
-        return rzt;
+    std::string remote() const {
+        return remote_;
     }
 
-    SOCKET ufd() {
-        std::lock_guard<std::mutex> lk(tmtx_);
+    SOCKET ufd() const {
         return ufd_;
     }
 
-    void update(int64_t now_ms) {
+    bool update(int64_t now_ms) {
         {
             std::lock_guard<std::mutex> lk(tmtx_);
-            if (ufd_ == INVALID_SOCKET || now_ms - last_ms_ > KCP_DEFAULT_TIMEOUT) {
-                return;
+            if (ufd_ == INVALID_SOCKET || last_ms_ == 0) {
+                return true;
+            }
+
+            if (now_ms - last_ms_ > KCP_DEFAULT_TIMEOUT) {
+                last_ms_ = 0;
+                return false;
             }
         }
 
@@ -115,6 +116,8 @@ public:
             kcp_->update((uint32_t)(now_ms - time_ms_));
             _sendmsg();
         }
+
+        return true;
     }
 
     void set_last_ms(int64_t now_ms) {
@@ -122,42 +125,20 @@ public:
         last_ms_ = now_ms;
     }
 
-    bool check_new(const sockaddr* addr, socklen_t addrlen) {
-        if (_addr_changed(addr, addrlen)) {
-            {
-                std::lock_guard<std::mutex> lk(kmtx_);
-                kcp_->reset();
-            }
-
-            {
-                std::lock_guard<std::mutex> lk(tmtx_);
-                last_ms_ = time_ms_ = xq::tools::now_milli();
-            }
-
-            return true;
-        }
-
-        return false;
-    }
-
     void push_tx_seg(TxSeg* seg) {
         segs_.push_back(seg);
     }
 
 private:
-    KcpSess(uint32_t conv)
-        : ufd_(INVALID_SOCKET)
-        , time_ms_(0)
-        , last_ms_(0)
-        , addr_({ 0,{0}})
-        , addrlen_(sizeof(addr_))
-        , kcp_(new Kcp(conv, this))  {
-    }
-#ifndef WIN32
     void _sendmsg() {
         size_t n = segs_.size();
-        iovec* iovs = new iovec[n], * iov;
-        TxSeg* seg;
+
+        if (n == 0) {
+            return;
+        }
+
+        iovec *iovs = new iovec[n], *iov;
+        TxSeg *seg;
 
         msghdr msg;
         ::memset(&msg, 0, sizeof(msg));
@@ -177,32 +158,17 @@ private:
 
         if (::sendmsg(ufd_, &msg, 0) < 0) {
             //TODO: ...
+            printf("sendmsg failed: %d\n", error());
         }
 
         delete[] iovs;
 
-        for (auto seg : segs_) {
+        for (auto seg: segs_) {
             TxSeg::pool()->put(seg);
         }
 
         segs_.clear();
     }
-#else
-    void _sendmsg() {
-        TxSeg* seg;
-        int n;
-        for (size_t i = 0, n = segs_.size(); i < n; i++) {
-            seg = segs_[i];
-            n = ::sendto(ufd_, (const char *)seg->data, seg->len, 0, &addr_, addrlen_);
-            if (n < 0) {
-                // TODO: ...
-            }
-            TxSeg::pool()->put(seg);
-        }
-
-        segs_.clear();
-    }
-#endif // !WIN32
 
     bool _addr_changed(const sockaddr* addr, socklen_t addrlen) {
         bool res = false;
@@ -223,14 +189,18 @@ private:
     }
 
     SOCKET ufd_;
+
     int64_t time_ms_;
     int64_t last_ms_;
+    size_t qidx_;
     sockaddr addr_;
     socklen_t addrlen_;
 
     Kcp* kcp_;
 
     std::vector<TxSeg*> segs_;
+
+    std::string remote_;
 
     std::mutex kmtx_;
     std::mutex tmtx_;
