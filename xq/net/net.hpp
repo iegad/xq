@@ -65,17 +65,27 @@ constexpr int      IO_MSG_SIZE = 256;
 
 class KcpSess;
 
+/// <summary>
+/// RxSeg IO读取结构, 用于IO 读取数据
+/// </summary>
 struct RxSeg {
     static xq::tools::ObjectPool<RxSeg>* pool() {
         return xq::tools::ObjectPool<RxSeg>::Instance();
     }
 
-    int len;
-    socklen_t addrlen;
-    sockaddr addr;
-    uint8_t data[IO_BLOCK_SIZE][KCP_MTU];
+    int len;            // 消息总长度
+    socklen_t addrlen;  // 地址长度
+    sockaddr addr;      // 地址
+#ifndef WIN32
+    uint8_t data[IO_BLOCK_SIZE][KCP_MTU];   // 数据块
+#else
+    uint8_t data[1][KCP_MTU];               // 数据块
+#endif // !WIN32
     KcpSess *sess;
 
+    /// <summary>
+    /// 构造函数
+    /// </summary>
     explicit RxSeg()
         : len(KCP_MTU* IO_BLOCK_SIZE)
         , addrlen(sizeof(addr))
@@ -84,14 +94,20 @@ struct RxSeg {
     }
 }; // struct RxSeg;
 
+/// <summary>
+/// TxSeg IO发送结构, 用于IO 发送数据
+/// </summary>
 struct TxSeg {
     static xq::tools::ObjectPool<TxSeg>* pool() {
         return xq::tools::ObjectPool<TxSeg>::Instance();
     }
 
-    int len;
-    uint8_t data[KCP_MTU];
+    int len;                // 消息长度
+    uint8_t data[KCP_MTU];  // 数据块
 
+    /// <summary>
+    /// 构造函数
+    /// </summary>
     explicit TxSeg()
         : len(KCP_MTU) {
         assert(data);
@@ -101,6 +117,9 @@ struct TxSeg {
 typedef moodycamel::BlockingConcurrentQueue<RxSeg*> RxQueue;
 typedef moodycamel::BlockingConcurrentQueue<TxSeg*> TxQueue;
 
+/// <summary>
+/// 错误类型
+/// </summary>
 enum class ErrType {
     ET_ListenerRead = 0,
     ET_ListenerWrite,
@@ -273,7 +292,16 @@ SOCKET udp_socket(const char* local, const char* remote, sockaddr *addr = nullpt
     return fd;
 }
 
+/// <summary>
+/// 将sockaddr 转换成相应的字符串形式
+/// </summary>
+/// <param name="addr">sockaddr 结构</param>
+/// <returns>sockaddr 字符串表示</returns>
 std::string addr2str(const sockaddr *addr) {
+    if (!addr) {
+        return "";
+    }
+
     std::string rzt;
     char buf[38] = { 0 };
 
@@ -290,6 +318,9 @@ std::string addr2str(const sockaddr *addr) {
         assert(::inet_ntop(AF_INET6, &ra->sin6_addr, buf, sizeof(buf)) && "inet_ntop failed");
         rzt = std::string(buf) + ":" + std::to_string(ntohs(ra->sin6_port));
     } break;
+
+    default:
+        return "";
     } // switch (addr_.sa_family);
 
     return rzt;

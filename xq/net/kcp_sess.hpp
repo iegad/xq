@@ -78,12 +78,7 @@ public:
 
     int input(const uint8_t* data, long size) {
         std::lock_guard<std::mutex> lk(kmtx_);
-        int rzt = kcp_->input(data, size);
-        if (rzt == 0) {
-            kcp_->flush();
-            _sendmsg();
-        }
-            return rzt;
+        return kcp_->input(data, size);
     }
 
     int recv(uint8_t* buf, int len) {

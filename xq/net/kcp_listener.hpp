@@ -40,19 +40,20 @@ public:
     void run() {
         state_ = State::Running;
 
-        // 开启工作线程
+        // Step 1: 开启工作线程
         for (size_t i = 0, n = std::thread::hardware_concurrency(); i < n; i++) {
             RxQueue* q = new RxQueue(2048);
             rques_.push_back(q);
             kp_thread_pool_.emplace_back(std::thread(std::bind(&KcpListener::_kcp_proc, this, q)));
         }
 
-        // 开启 kcp update线程
+        // Step 2: 开启 kcp update线程
         update_thread_ = std::thread(std::bind(&KcpListener::_update, this));
 
-        // 开启 io read 线程
+        // Step 3 :开启 io read 线程
         rx_thread_ = std::thread(std::bind(&KcpListener::_rx, this));
 
+        // Step 4: 等待所有线程关闭
         rx_thread_.join();
         update_thread_.join();
 
@@ -60,7 +61,7 @@ public:
             t.join();
         }
 
-        // 请空队列
+        // Step 5: 清空RxSeg队列
         RxSeg* item[IO_BLOCK_SIZE];
         for (auto& que : rques_) {
             while (que->try_dequeue_bulk(item, IO_BLOCK_SIZE));
@@ -70,6 +71,9 @@ public:
         state_ = State::Stopped;
     }
 
+    /// <summary>
+    /// 停止服务
+    /// </summary>
     void stop() {
         state_ = State::Stopping;
     }
@@ -90,6 +94,15 @@ private:
         assert(MAX_CONN > 0 && "max_conn is invalid");
     }
 
+    /// <summary>
+    /// kcp output 回调.
+    /// 将需要发送的数据投递到KcpSess的发送缓冲区.
+    /// </summary>
+    /// <param name="raw"></param>
+    /// <param name="len"></param>
+    /// <param name=""></param>
+    /// <param name="user"></param>
+    /// <returns></returns>
     static int output(const char* raw, int len, IKCPCB*, void* user) {
         KcpSess* sess = (KcpSess*)user;
         TxSeg* seg = TxSeg::pool()->get();
@@ -101,24 +114,27 @@ private:
         return 0;
     }
 
-#ifdef WIN32 // WINDOWS平台 io 工作线程
+#ifdef WIN32
 
+    /// <summary>
+    /// windows 平台 IO 读线程
+    /// </summary>
     void _rx() {
         // Step 1: 创建 udp 监听套接字
         ufd_ = udp_socket(host_.c_str(), nullptr);
         assert(ufd_ != INVALID_SOCKET && "ufd create failed");
 
-        sockaddr addr;
-        socklen_t addrlen = sizeof(addr);
-        char raw[KCP_MTU];
         int rawlen;
 
         const size_t QUE_SIZE = rques_.size();
         RxSeg *seg;
 
         while (state_ == State::Running) {
-            // Step 1: 获取数据
-            rawlen = ::recvfrom(ufd_, raw, KCP_MTU, 0, &addr, &addrlen);
+            // Step 2: 获取数据
+            seg = RxSeg::pool()->get();
+            seg->addrlen = sizeof(sockaddr);
+
+            rawlen = ::recvfrom(ufd_, (char *)seg->data[0], KCP_MTU, 0, &seg->addr, &seg->addrlen);
             if (rawlen < 0) {
                 printf("recvfrom error: %d\n", error());
                 continue;
@@ -128,27 +144,24 @@ private:
                 continue;
             }
 
-            // Step 2: 构建对象
-            seg = RxSeg::pool()->get();
-            seg->len = rawlen;
-            seg->addrlen = addrlen;
-            ::memcpy(seg->data, raw, rawlen);
-            ::memcpy(&seg->addr, &addr, addrlen);
-
-            std::string remote = addr2str(&addr);
+            // Step 3: 构建对象
+            std::string remote = addr2str(&seg->addr);
             auto itr = sessions_.find(remote);
             if (itr == sessions_.end()) {
                 KcpSess* sess = KcpSess::pool()->get();
-                sess->set(Kcp::get_conv(raw), ufd_, &addr, addrlen, remote, conns_++, KcpListener::output);
+                sess->set(Kcp::get_conv(seg->data[0]), ufd_, &seg->addr, seg->addrlen, remote, conns_++, KcpListener::output);
                 itr = sessions_.insert(remote, sess).first;
             }
 
-            // Step 3: 投递消息
+            // Step 4: 投递消息
             assert(rques_[itr->second->get_que_idx()]->enqueue(seg));
         }
     }
 
-#else // 类UNIX平台 io 工作线程
+#else
+    /// <summary>
+    /// 类Unix 平台 IO 读线程
+    /// </summary>
     void _rx() {
         const size_t QUE_SIZE = rques_.size();
 
@@ -166,12 +179,12 @@ private:
 
         int i, j, n = IO_MSG_SIZE;
 
-        std::vector<RxSeg*> segs;
         RxSeg *seg;
+        RxSeg *segs[IO_MSG_SIZE] = {nullptr};
 
         while(state_ == State::Running) {
             for (i = 0; i < n; i++) {
-                seg = RxSeg::pool()->get();
+                segs[i] = seg = RxSeg::pool()->get();
                 msgs[i].msg_hdr.msg_name = &seg->addr;
                 msgs[i].msg_hdr.msg_namelen = sizeof(sockaddr);
                 msgs[i].msg_hdr.msg_iov = iovecs[i];
@@ -181,43 +194,55 @@ private:
                     iovecs[i][j].iov_base = seg->data[j];
                     iovecs[i][j].iov_len = KCP_MTU;
                 }
-
-                segs.push_back(seg);
             }
 
+            // Step 2: 获取消息
             n = ::recvmmsg(ufd_, msgs, IO_MSG_SIZE, MSG_WAITFORONE, nullptr);
             for (i = 0; i < n; i++) {
                 msg = &msgs[i];
+                seg = segs[i];
+                segs[i] = nullptr;
                 rawlen = msg->msg_len;
                 if (rawlen < KCP_HEAD_SIZE) {
                     continue;
                 }
 
-                seg = segs[i];
                 seg->addrlen = msg->msg_hdr.msg_namelen;
                 seg->len = rawlen;
 
+                // Step 3: 获取会话
                 std::string remote = addr2str(&seg->addr);
                 auto itr = sessions_.find(remote);
                 if (itr == sessions_.end()) {
+                    // 新连接: 创建新的KcpSess 并加入会话集
                     KcpSess* sess = KcpSess::pool()->get();
                     sess->set(Kcp::get_conv(seg->data), ufd_, &seg->addr, seg->addrlen, remote, conns_++ % QUE_SIZE, KcpListener::output);
                     itr = sessions_.insert(remote, sess).first;
                 }
 
                 seg->sess = itr->second;
+
+                // Step 4: 投递队列
                 assert(rques_[itr->second->get_que_idx()]->enqueue(seg));
             } // for (i = 0; i < n; i++);
+        }
 
-            segs.clear();
+        for (i = 0; i < IO_MSG_SIZE; i++) {
+            seg = segs[i];
+            if (seg) {
+                RxSeg::pool()->put(seg);
+            }
         }
     }
 #endif // WIN32
 
+    /// <summary>
+    /// kcp update 线程
+    /// </summary>
     void _update() {
         constexpr std::chrono::milliseconds INTVAL = std::chrono::milliseconds(KCP_UPDATE_MS);
 
-        int64_t now_ms = 0;
+        int64_t now_ms;
 
         auto updater = [&](const std::string &, KcpSess* &sess) {
             if (!sess->update(now_ms)) {
@@ -236,6 +261,10 @@ private:
         }
     }
 
+    /// <summary>
+    /// kcp 工作线程
+    /// </summary>
+    /// <param name="que">RxSeg队列</param>
     void _kcp_proc(RxQueue *que) {
         int nrecv;
         uint32_t conv;
@@ -251,7 +280,7 @@ private:
             raw = seg->data[0];
 
             do {
-                // Step 1: 获取对应的KcpSession
+                // Step 1: 获取KcpSess
                 conv = Kcp::get_conv(raw);
                 if (conv == 0 || conv > MAX_CONN) {
                     break;

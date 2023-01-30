@@ -14,8 +14,8 @@ class Kcp final {
 public:
     struct Head {
         uint32_t conv;
-        uint8_t cmd;
-        uint8_t frg;
+        uint8_t  cmd;
+        uint8_t  frg;
         uint16_t wnd;
         uint32_t ts;
         uint32_t sn;
