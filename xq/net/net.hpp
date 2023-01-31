@@ -47,15 +47,15 @@
 namespace xq {
 namespace net {
 
-constexpr size_t   KCP_WND = 512;
-constexpr size_t   KCP_MTU = 1418;
-constexpr size_t   KCP_MAX_DATA_SIZE = 1418 * 128;
-constexpr size_t   KCP_HEAD_SIZE = 24;
-constexpr uint32_t KCP_DEFAULT_TIMEOUT = 60000;
-constexpr int64_t  KCP_UPDATE_MS = 100;
+constexpr size_t   KCP_WND = 512;                   // KCP 默认读/写窗口
+constexpr size_t   KCP_MTU = 1418;                  // KCP 最大传输单元
+constexpr size_t   KCP_MAX_DATA_SIZE = 1418 * 128;  // KCP 单包最大字节
+constexpr size_t   KCP_HEAD_SIZE = 24;              // KCP 消息头长度
+constexpr uint32_t KCP_DEFAULT_TIMEOUT = 60000;     // KCP 默认超时(毫秒)
+constexpr int64_t  KCP_UPDATE_MS = 100;             // KCP UPDATE 间隔(毫秒)
 
-constexpr int      IO_BLOCK_SIZE = 16;
-constexpr int      IO_MSG_SIZE = 256;
+constexpr int      IO_BLOCK_SIZE = 128;             // sendmsg/recvmsg msghdr.msg_iovlen 大小
+constexpr int      IO_MSG_SIZE = 256;               // recvmmsg mmsghdr 大小
 
 #ifdef _WIN32
     typedef SOCKET SOCKET;
@@ -74,6 +74,7 @@ struct RxSeg {
     }
 
     int len;            // 消息总长度
+    KcpSess* sess;      // 消息来源
     socklen_t addrlen;  // 地址长度
     sockaddr addr;      // 地址
 #ifndef WIN32
@@ -81,41 +82,20 @@ struct RxSeg {
 #else
     uint8_t data[1][KCP_MTU];               // 数据块
 #endif // !WIN32
-    KcpSess *sess;
 
     /// <summary>
     /// 构造函数
     /// </summary>
     explicit RxSeg()
-        : len(KCP_MTU* IO_BLOCK_SIZE)
+        : len(KCP_MTU * IO_BLOCK_SIZE)
+        , sess(nullptr)
         , addrlen(sizeof(addr))
         , addr({ 0,{0} }) {
         assert(data);
     }
 }; // struct RxSeg;
 
-/// <summary>
-/// TxSeg IO发送结构, 用于IO 发送数据
-/// </summary>
-struct TxSeg {
-    static xq::tools::ObjectPool<TxSeg>* pool() {
-        return xq::tools::ObjectPool<TxSeg>::Instance();
-    }
-
-    int len;                // 消息长度
-    uint8_t data[KCP_MTU];  // 数据块
-
-    /// <summary>
-    /// 构造函数
-    /// </summary>
-    explicit TxSeg()
-        : len(KCP_MTU) {
-        assert(data);
-    }
-}; // struct TxSeg
-
 typedef moodycamel::BlockingConcurrentQueue<RxSeg*> RxQueue;
-typedef moodycamel::BlockingConcurrentQueue<TxSeg*> TxQueue;
 
 /// <summary>
 /// 错误类型
@@ -168,8 +148,8 @@ SOCKET udp_socket(const char* local, const char* remote, sockaddr *addr = nullpt
     // 本端地址用于udp 套接字绑定
     if (local) {
         std::string tmp = std::string(local);
-        int pos = (int)tmp.rfind(':');
-        if (pos == -1)
+        size_t pos = tmp.rfind(':');
+        if (pos == std::string::npos)
             return INVALID_SOCKET;
 
         std::string ip = tmp.substr(0, pos);
@@ -224,8 +204,8 @@ SOCKET udp_socket(const char* local, const char* remote, sockaddr *addr = nullpt
     // 对端地址用于连接
     if (remote) {
         std::string tmp = std::string(remote);
-        int pos = (int)tmp.rfind(':');
-        if (pos == -1) {
+        size_t pos = tmp.rfind(':');
+        if (pos == std::string::npos) {
             close(fd);
             return INVALID_SOCKET;
         }

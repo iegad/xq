@@ -23,7 +23,7 @@ public:
         uint32_t len;
     };
 
-    Kcp(uint32_t conv, void* user)
+    explicit Kcp(uint32_t conv, void* user)
         : kcp_(::ikcp_create(conv, user)) {
         ::ikcp_setmtu(kcp_, KCP_MTU);
         ::ikcp_wndsize(kcp_, KCP_WND, KCP_WND);
@@ -80,10 +80,6 @@ public:
         return ::ikcp_nodelay(kcp_, nodelay, interval, resend, nc);
     }
 
-    size_t nrcv_que() const {
-        return kcp_->nrcv_que;
-    }
-
     static void decode_head(const uint8_t* raw, Head *head) {
         const uint8_t*p = raw;
         head->conv = *(uint32_t*)p;
@@ -126,7 +122,7 @@ public:
             ::free(seg);
         }
 
-        kcp_->conv = 0xFFFFFFFF;
+        kcp_->conv = ~0;
         kcp_->snd_una = 0;
         kcp_->snd_nxt = 0;
         kcp_->rcv_nxt = 0;

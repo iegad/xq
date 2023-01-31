@@ -19,24 +19,33 @@ public:
         return m_;
     }
 
-    explicit KcpSess(uint32_t conv = ~(0))
+    explicit KcpSess(uint32_t conv = ~0)
         : ufd_(INVALID_SOCKET)
+        , qidx_(0)
         , time_ms_(0)
         , last_ms_(0)
         , addr_({ 0,{0}})
         , addrlen_(sizeof(addr_))
+        , kcp_(new Kcp(conv, this)) {
 #ifndef WIN32
-        , tx_iovs_(new iovec[IO_BLOCK_SIZE])
+        ::memset(&msg_, 0, sizeof(msg_));
+        iovec* tmp = new iovec[IO_BLOCK_SIZE];
+        msg_.msg_iov = tmp;
+        for (size_t i = 0; i < IO_BLOCK_SIZE; i++) {
+            tmp[i].iov_base = new uint8_t[KCP_MTU];
+            tmp[i].iov_len = KCP_MTU;
+        }
 #endif // !WIN32
-        , kcp_(new Kcp(conv, this))  {
+
         kcp_->nodelay(1, KCP_UPDATE_MS, 2, 0);
     }
 
     ~KcpSess() {
 #ifndef WIN32
-        if (tx_iovs_) {
-            delete[] tx_iovs_;
-    }
+        for (size_t i = 0; i < IO_BLOCK_SIZE; i++) {
+            delete[] (uint8_t*)msg_.msg_iov[i].iov_base;
+        }
+        delete[] msg_.msg_iov;
 #endif // !WIN32
 
         if (kcp_) {
@@ -61,6 +70,12 @@ public:
         addrlen_ = addrlen;
         remote_ = remote;
         qidx_ = qidx;
+
+#ifndef WIN32
+        msg_.msg_iovlen = 0;
+        msg_.msg_name = &addr_;
+        msg_.msg_namelen = addrlen_;
+#endif // !WIN32
     }
 
     uint32_t get_conv() const {
@@ -131,84 +146,48 @@ public:
         last_ms_ = now_ms;
     }
 
-    void push_tx_seg(TxSeg* seg) {
-        segs_.push_back(seg);
+    void append_data(uint8_t *data, size_t len) {
+#ifndef WIN32
+        iovec* iov = &msg_.msg_iov[msg_.msg_iovlen++];
+        ::memcpy((uint8_t*)iov->iov_base, data, len);
+        iov->iov_len = len;
+
+        if (msg_.msg_iovlen == IO_BLOCK_SIZE >> 1) {
+            _sendmsg();
+        }
+#else
+        if (::sendto(ufd_, (const char*)data, len, 0, &addr_, addrlen_)) {
+            printf("sendto failed: %d\n", error());
+            // TODO: ...
+        }
+#endif // !WIN32
     }
 
 private:
-#ifndef WIN32
     void _sendmsg() {
-        size_t n = segs_.size();
-
-        if (n == 0) {
-            return;
-        }
-
-        iovec *iov;
-        TxSeg* seg;
-
-        msghdr msg;
-        ::memset(&msg, 0, sizeof(msg));
-
-        msg.msg_name = &addr_;
-        msg.msg_namelen = addrlen_;
-
-        msg.msg_iov = tx_iovs_;
-        msg.msg_iovlen = n;
-
-        for (size_t i = 0; i < n; i++) {
-            seg = segs_[i];
-            iov = &tx_iovs_[i];
-            iov->iov_base = seg->data;
-            iov->iov_len = seg->len;
-        }
-
-        if (::sendmsg(ufd_, &msg, 0) < 0) {
+#ifndef WIN32
+        if (::sendmsg(ufd_, &msg_, 0) < 0) {
             //TODO: ...
             printf("sendmsg failed: %d\n", error());
         }
-
-        for (auto seg : segs_) {
-            TxSeg::pool()->put(seg);
-        }
-
-        segs_.clear();
-    }
-#else
-    void _sendmsg() {
-        size_t n = segs_.size();
-
-        if (n == 0) {
-            return;
-        }
-
-        for (auto& seg : segs_) {
-            if (::sendto(ufd_, (const char*)seg->data, seg->len, 0, &addr_, addrlen_)) {
-                printf("sendto failed: %d\n", error());
-                break;
-            }
-        }
-
-        segs_.clear();
-    }
+        msg_.msg_iovlen = 0;
 #endif // !WIN32
+    }
+
 
     SOCKET ufd_;
 
+    uint32_t qidx_;
     int64_t time_ms_;
     int64_t last_ms_;
-    size_t qidx_;
     sockaddr addr_;
     socklen_t addrlen_;
 
 #ifndef WIN32
-    iovec* tx_iovs_;
+    msghdr msg_;
 #endif // !WIN32
 
     Kcp* kcp_;
-
-    std::vector<TxSeg*> segs_;
-
     std::string remote_;
 
     std::mutex kmtx_;

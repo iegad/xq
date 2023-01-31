@@ -105,12 +105,7 @@ private:
     /// <returns></returns>
     static int output(const char* raw, int len, IKCPCB*, void* user) {
         KcpSess* sess = (KcpSess*)user;
-        TxSeg* seg = TxSeg::pool()->get();
-
-        seg->len = len;
-        ::memcpy(seg->data, raw, len);
-
-        sess->push_tx_seg(seg);
+        sess->append_data((uint8_t *)raw, len);
         return 0;
     }
 
@@ -120,13 +115,14 @@ private:
     /// windows 平台 IO 读线程
     /// </summary>
     void _rx() {
+        static const size_t QUE_SIZE = std::thread::hardware_concurrency();
+
         // Step 1: 创建 udp 监听套接字
         ufd_ = udp_socket(host_.c_str(), nullptr);
         assert(ufd_ != INVALID_SOCKET && "ufd create failed");
 
         int rawlen;
 
-        const size_t QUE_SIZE = rques_.size();
         RxSeg *seg;
 
         while (state_ == State::Running) {
@@ -149,7 +145,7 @@ private:
             auto itr = sessions_.find(remote);
             if (itr == sessions_.end()) {
                 KcpSess* sess = KcpSess::pool()->get();
-                sess->set(Kcp::get_conv(seg->data[0]), ufd_, &seg->addr, seg->addrlen, remote, conns_++, KcpListener::output);
+                sess->set(Kcp::get_conv(seg->data[0]), ufd_, &seg->addr, seg->addrlen, remote, conns_++ % QUE_SIZE, KcpListener::output);
                 itr = sessions_.insert(remote, sess).first;
             }
 
@@ -163,7 +159,7 @@ private:
     /// 类Unix 平台 IO 读线程
     /// </summary>
     void _rx() {
-        const size_t QUE_SIZE = rques_.size();
+        static const size_t QUE_SIZE = std::thread::hardware_concurrency();
 
         // Step 1: 构建udp socket
         ufd_ = udp_socket(host_.c_str(), nullptr);
@@ -185,10 +181,11 @@ private:
         while(state_ == State::Running) {
             for (i = 0; i < n; i++) {
                 segs[i] = seg = RxSeg::pool()->get();
-                msgs[i].msg_hdr.msg_name = &seg->addr;
-                msgs[i].msg_hdr.msg_namelen = sizeof(sockaddr);
-                msgs[i].msg_hdr.msg_iov = iovecs[i];
-                msgs[i].msg_hdr.msg_iovlen = IO_BLOCK_SIZE;
+                msg = &msgs[i];
+                msg->msg_hdr.msg_name = &seg->addr;
+                msg->msg_hdr.msg_namelen = sizeof(sockaddr);
+                msg->msg_hdr.msg_iov = iovecs[i];
+                msg->msg_hdr.msg_iovlen = IO_BLOCK_SIZE;
 
                 for (j = 0; j < IO_BLOCK_SIZE; j++) {
                     iovecs[i][j].iov_base = seg->data[j];
@@ -274,6 +271,7 @@ private:
 
         RxSeg* seg;
         KcpSess* sess;
+        size_t n = 0;
 
         while (state_ == State::Running) {
             que->wait_dequeue(seg);
@@ -291,7 +289,7 @@ private:
                 size_t nleft = seg->len, i = 0 ;
 
                 while (nleft > 0) {
-                    int n = nleft > KCP_MTU ? KCP_MTU : nleft;
+                    n = nleft > KCP_MTU ? KCP_MTU : nleft;
                     raw = seg->data[i++];
                     if (sess->input(raw, n) < 0) {
                         // TODO:
