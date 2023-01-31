@@ -10,16 +10,7 @@ namespace net {
 
 class KcpSess final {
 public:
-    static xq::tools::ObjectPool<KcpSess>* pool() {
-        return xq::tools::ObjectPool<KcpSess>::Instance();
-    }
-
-    static xq::tools::Map<std::string, KcpSess*>& sessions() {
-        static xq::tools::Map<std::string, KcpSess*> m_;
-        return m_;
-    }
-
-    explicit KcpSess(uint32_t conv = ~0)
+    explicit KcpSess(uint32_t conv)
         : ufd_(INVALID_SOCKET)
         , qidx_(0)
         , time_ms_(0)
@@ -36,8 +27,6 @@ public:
             tmp[i].iov_len = KCP_MTU;
         }
 #endif // !WIN32
-
-        kcp_->nodelay(1, KCP_UPDATE_MS, 2, 0);
     }
 
     ~KcpSess() {
@@ -57,25 +46,37 @@ public:
         return std::make_pair(&addr_, addrlen_);
     }
 
-    void set(uint32_t conv, SOCKET ufd, sockaddr *addr, socklen_t addrlen, const std::string &remote, size_t qidx, int (*output)(const char* buf, int len, ikcpcb* kcp, void* user)) {
-        kcp_->reset();
-        kcp_->set_conv(conv);
+    void set_output(int (*output)(const char* buf, int len, ikcpcb* kcp, void* user)) {
         kcp_->set_output(output);
-        last_ms_ = time_ms_ = xq::tools::now_milli();
+    }
+
+    void set_que_idx(uint32_t qidx) {
+        qidx_ = qidx;
+    }
+
+    bool check(SOCKET ufd, sockaddr *addr, socklen_t addrlen) {
         if (ufd != ufd_) {
             ufd_ = ufd;
         }
 
-        ::memcpy(&addr_, addr, addrlen);
-        addrlen_ = addrlen;
-        remote_ = remote;
-        qidx_ = qidx;
+        if (addrlen != addrlen_ || ::memcmp(addr, &addr_, addrlen)) {
+            ::memcpy(&addr_, addr, addrlen);
+            addrlen_ = addrlen;
+            remote_ = xq::net::addr2str(&addr_);
+
+            kcp_->reset();
+            last_ms_ = time_ms_ = xq::tools::now_milli();
 
 #ifndef WIN32
-        msg_.msg_iovlen = 0;
-        msg_.msg_name = &addr_;
-        msg_.msg_namelen = addrlen_;
+            msg_.msg_iovlen = 0;
+            msg_.msg_name = &addr_;
+            msg_.msg_namelen = addrlen_;
 #endif // !WIN32
+
+            return true;
+        }
+
+        return false;
     }
 
     uint32_t get_conv() const {
@@ -86,8 +87,7 @@ public:
         return qidx_;
     }
 
-    void nodelay(int nodelay, int interval, int resend, int nc) {
-        std::lock_guard<std::mutex> lk(kmtx_);
+    void set_nodelay(int nodelay, int interval, int resend, int nc) {
         kcp_->nodelay(nodelay, interval, resend, nc);
     }
 
@@ -123,7 +123,7 @@ public:
         {
             std::lock_guard<std::mutex> lk(tmtx_);
             if (ufd_ == INVALID_SOCKET || last_ms_ == 0) {
-                return true;
+                return false;
             }
 
             if (now_ms - last_ms_ > KCP_DEFAULT_TIMEOUT) {
@@ -166,6 +166,10 @@ public:
 private:
     void _sendmsg() {
 #ifndef WIN32
+        if (msg_.msg_iovlen == 0) {
+            return;
+        }
+
         if (::sendmsg(ufd_, &msg_, 0) < 0) {
             //TODO: ...
             printf("sendmsg failed: %d\n", error());

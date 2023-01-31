@@ -25,6 +25,7 @@
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="net\kcp.hpp" />
+    <ClInclude Include="net\kcp_conn.hpp" />
     <ClInclude Include="net\kcp_listener.hpp" />
     <ClInclude Include="net\kcp_sess.hpp" />
     <ClInclude Include="net\net.hpp" />

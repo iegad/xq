@@ -14,7 +14,8 @@
 #include <memory>
 #include <mutex>
 #include <string>
-#include <unordered_map>
+#include <unordered_set>
+#include <list>
 
 #include "third/concurrentqueue.h"
 
@@ -284,37 +285,44 @@ int hex2bin(const std::string& hex, uint8_t *data, size_t *data_len) {
     return (int)n;
 }
 
-// ---------------------------------------------------------------------------- safe map ----------------------------------------------------------------------------
-
-template<typename TKey, typename TValue>
-class Map final {
+// ---------------------------------------------------------------------------- safe list ----------------------------------------------------------------------------
+template <typename T>
+class Set {
 public:
-    typedef typename std::unordered_map<TKey, TValue>::iterator iterator;
-    typedef typename std::unordered_map<TKey, TValue>::size_type size_type;
+    explicit Set() = default;
+    ~Set() = default;
 
-public:
-    explicit Map() {};
-    Map(const Map&) = delete;
-    Map& operator=(const Map&) = delete;
+    Set(const Set&) = delete;
+    Set& operator=(const Set&) = delete;
 
-    std::pair<iterator, bool> insert(const TKey& k, const TValue& v) {
+    auto insert(const T& v) {
         std::lock_guard<std::mutex> lk(mtx_);
-        return m_.insert(std::make_pair(k, v));
+        return m_.insert(v);
     }
 
-    size_type erase(const TKey& k) {
+    auto erase(const T& v) {
         std::lock_guard<std::mutex> lk(mtx_);
-        return m_.erase(k);
+        return m_.erase(v);
     }
 
-    iterator erase(iterator itr) {
+    auto count(const T& v) {
         std::lock_guard<std::mutex> lk(mtx_);
-        return m_.erase(itr);
+        return m_.count(v);
     }
 
-    TValue& operator[](const TKey& k) {
+    auto size() {
         std::lock_guard<std::mutex> lk(mtx_);
-        return m_[k];
+        return m_.size();
+    }
+
+    auto begin() {
+        std::lock_guard<std::mutex> lk(mtx_);
+        return m_.begin();
+    }
+
+    auto end() {
+        std::lock_guard<std::mutex> lk(mtx_);
+        return m_.end();
     }
 
     bool empty() {
@@ -322,56 +330,24 @@ public:
         return m_.empty();
     }
 
-    void clear() {
+    std::list<T> as_list() {
+        std::list<T> list;
         std::lock_guard<std::mutex> lk(mtx_);
-        m_.clear();
-    }
-
-    iterator find(const TKey& k) {
-        std::lock_guard<std::mutex> lk(mtx_);
-        return m_.find(k);
-    }
-
-    size_type count(const TKey& k) {
-        std::lock_guard<std::mutex> lk(mtx_);
-        return m_.count(k);
-    }
-
-    size_type size() {
-        std::lock_guard<std::mutex> lk(mtx_);
-        return m_.size();
-    }
-
-    iterator begin() {
-        std::lock_guard<std::mutex> lk(mtx_);
-        return m_.begin();
-    }
-
-    iterator end() {
-        std::lock_guard<std::mutex> lk(mtx_);
-        return m_.end();
-    }
-
-    template<typename TFunc>
-    void range(TFunc func) {
-        std::vector<TKey> rmv;
-
-        std::lock_guard<std::mutex> lk(mtx_);
-        for (auto &itr: m_) {
-            if (!func(itr.first, itr.second)) {
-                rmv.push_back(itr.first);
-            }
+        for (auto& v : m_) {
+            list.push_back(v);
         }
+        return list;
+    }
 
-        for (auto &k: rmv) {
-            m_.erase(k);
-        }
+    auto find(const T& v) {
+        std::lock_guard<std::mutex> lk(mtx_);
+        return m_.find(v);
     }
 
 private:
     std::mutex mtx_;
-    std::unordered_map<TKey, TValue> m_;
-}; // class Map;
+    std::unordered_set<T> m_;
+}; // class List;
 
 // ---------------------------------------------------------------------------- safe object pool  ----------------------------------------------------------------------------
 template <typename T>

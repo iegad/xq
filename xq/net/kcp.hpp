@@ -44,10 +44,6 @@ public:
         kcp_->output = output;
     }
 
-    void set_conv(uint32_t conv) {
-        kcp_->conv = conv;
-    }
-
     uint32_t get_conv() const {
         return kcp_->conv;
     }
@@ -122,7 +118,6 @@ public:
             ::free(seg);
         }
 
-        kcp_->conv = ~0;
         kcp_->snd_una = 0;
         kcp_->snd_nxt = 0;
         kcp_->rcv_nxt = 0;

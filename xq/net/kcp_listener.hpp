@@ -10,14 +10,20 @@
 namespace xq {
 namespace net {
 
+/// <summary>
+/// KcpListener: Kcp 服务端
+/// </summary>
 class KcpListener {
 public:
     typedef std::shared_ptr<KcpListener> Ptr;
 
+    /// <summary>
+    /// State: KCP 服务器状态
+    /// </summary>
     enum class State {
-        Stopped,
-        Stopping,
-        Running
+        Stopped,    // 停止
+        Stopping,   // 停止中
+        Running     // 运行
     };
 
     /// <summary>
@@ -31,7 +37,9 @@ public:
     }
 
     ~KcpListener() {
-        close(ufd_);
+        for (auto& itr : sessions_) {
+            delete itr.second;
+        }
     }
 
     /// <summary>
@@ -88,10 +96,15 @@ private:
         : MAX_CONN(max_conn)
         , state_(State::Stopped)
         , ufd_(INVALID_SOCKET)
-        , host_(host)
-        , sessions_(KcpSess::sessions()) {
-
+        , host_(host) {
         assert(MAX_CONN > 0 && "max_conn is invalid");
+
+        for (size_t i = 1; i <= MAX_CONN; i++) {
+            KcpSess* sess = new KcpSess(i);
+            sess->set_output(&KcpListener::output);
+            sess->set_nodelay(1, KCP_UPDATE_MS, 4, 0);
+            sessions_.insert(std::make_pair(i, sess));
+        }
     }
 
     /// <summary>
@@ -122,8 +135,9 @@ private:
         assert(ufd_ != INVALID_SOCKET && "ufd create failed");
 
         int rawlen;
-
+        uint32_t conv;
         RxSeg *seg;
+        KcpSess* sess;
 
         while (state_ == State::Running) {
             // Step 2: 获取数据
@@ -141,17 +155,18 @@ private:
             }
 
             // Step 3: 构建对象
-            std::string remote = addr2str(&seg->addr);
-            auto itr = sessions_.find(remote);
-            if (itr == sessions_.end()) {
-                KcpSess* sess = KcpSess::pool()->get();
-                sess->set(Kcp::get_conv(seg->data[0]), ufd_, &seg->addr, seg->addrlen, remote, conns_++ % QUE_SIZE, KcpListener::output);
-                itr = sessions_.insert(remote, sess).first;
+            conv = Kcp::get_conv(seg->data[0]);
+            sess = sessions_[conv];
+            if (active_convs_.count(conv)) {
+                sess->set(ufd_, &seg->addr, seg->addrlen, conns_++ % QUE_SIZE);
+                active_convs_.insert(conv);
             }
 
             // Step 4: 投递消息
-            assert(rques_[itr->second->get_que_idx()]->enqueue(seg));
+            assert(rques_[sess->get_que_idx()]->enqueue(seg));
         }
+
+        close(ufd_);
     }
 
 #else
@@ -170,6 +185,10 @@ private:
 
         size_t rawlen;
         mmsghdr *msg;
+        msghdr *hdr;
+
+        uint32_t conv;
+        KcpSess *sess;
 
         iovec iovecs[IO_MSG_SIZE][IO_BLOCK_SIZE];
 
@@ -181,11 +200,11 @@ private:
         while(state_ == State::Running) {
             for (i = 0; i < n; i++) {
                 segs[i] = seg = RxSeg::pool()->get();
-                msg = &msgs[i];
-                msg->msg_hdr.msg_name = &seg->addr;
-                msg->msg_hdr.msg_namelen = sizeof(sockaddr);
-                msg->msg_hdr.msg_iov = iovecs[i];
-                msg->msg_hdr.msg_iovlen = IO_BLOCK_SIZE;
+                hdr = &msgs[i].msg_hdr;
+                hdr->msg_name = &seg->addr;
+                hdr->msg_namelen = sizeof(sockaddr);
+                hdr->msg_iov = iovecs[i];
+                hdr->msg_iovlen = IO_BLOCK_SIZE;
 
                 for (j = 0; j < IO_BLOCK_SIZE; j++) {
                     iovecs[i][j].iov_base = seg->data[j];
@@ -208,19 +227,20 @@ private:
                 seg->len = rawlen;
 
                 // Step 3: 获取会话
-                std::string remote = addr2str(&seg->addr);
-                auto itr = sessions_.find(remote);
-                if (itr == sessions_.end()) {
-                    // 新连接: 创建新的KcpSess 并加入会话集
-                    KcpSess* sess = KcpSess::pool()->get();
-                    sess->set(Kcp::get_conv(seg->data), ufd_, &seg->addr, seg->addrlen, remote, conns_++ % QUE_SIZE, KcpListener::output);
-                    itr = sessions_.insert(remote, sess).first;
+                conv = Kcp::get_conv(seg->data[0]);
+                if (conv == 0 || conv > MAX_CONN) {
+                    continue;
                 }
 
-                seg->sess = itr->second;
+                sess = sessions_[conv];
+                if (sess->check(ufd_, &seg->addr, seg->addrlen)) {
+                    sess->set_que_idx(conns_++ % QUE_SIZE);
+                    active_convs_.insert(conv);
+                }
+                seg->sess = sess;
 
                 // Step 4: 投递队列
-                assert(rques_[itr->second->get_que_idx()]->enqueue(seg));
+                assert(rques_[sess->get_que_idx()]->enqueue(seg));
             } // for (i = 0; i < n; i++);
         }
 
@@ -240,21 +260,18 @@ private:
         constexpr std::chrono::milliseconds INTVAL = std::chrono::milliseconds(KCP_UPDATE_MS);
 
         int64_t now_ms;
-
-        auto updater = [&](const std::string &, KcpSess* &sess) {
-            if (!sess->update(now_ms)) {
-                KcpSess::pool()->put(sess);
-                conns_--;
-                return false;
-            }
-
-            return true;
-        };
-
         while (state_ == State::Running) {
             now_ms = xq::tools::now_milli();
             std::this_thread::sleep_for(INTVAL);
-            sessions_.range(updater);
+            
+            std::list<uint32_t> convs = active_convs_.as_list();
+            for (auto& conv : convs) {
+                if (!sessions_[conv]->update(now_ms)) {
+                    active_convs_.erase(conv);
+                    conns_--;
+                    std::printf("sess[%u] timeout\n", sessions_[conv]->get_conv());
+                }
+            }
         }
     }
 
@@ -264,7 +281,6 @@ private:
     /// <param name="que">RxSeg队列</param>
     void _kcp_proc(RxQueue *que) {
         int nrecv;
-        uint32_t conv;
 
         uint8_t* raw;
         uint8_t* rbuf = new uint8_t[KCP_MAX_DATA_SIZE];
@@ -275,18 +291,13 @@ private:
 
         while (state_ == State::Running) {
             que->wait_dequeue(seg);
-            raw = seg->data[0];
 
             do {
                 // Step 1: 获取KcpSess
-                conv = Kcp::get_conv(raw);
-                if (conv == 0 || conv > MAX_CONN) {
-                    break;
-                }
                 sess = seg->sess;
 
                 // Step 2: 获取KCP消息包
-                size_t nleft = seg->len, i = 0 ;
+                size_t nleft = seg->len, i = 0;
 
                 while (nleft > 0) {
                     n = nleft > KCP_MTU ? KCP_MTU : nleft;
@@ -331,7 +342,8 @@ private:
 
     std::vector<RxQueue*> rques_;               // read data queue
 
-    xq::tools::Map<std::string, KcpSess*> &sessions_; // 会话集
+    xq::tools::Set<uint32_t> active_convs_;
+    std::unordered_map<uint32_t, KcpSess*> sessions_; // 会话
 }; // class KcpListener;
 
 } // namespace net;
