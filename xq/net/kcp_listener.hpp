@@ -156,9 +156,13 @@ private:
 
             // Step 3: 构建对象
             conv = Kcp::get_conv(seg->data[0]);
+            if (conv == 0 || conv > MAX_CONN) {
+                continue;
+            }
+
             sess = sessions_[conv];
-            if (active_convs_.count(conv)) {
-                sess->set(ufd_, &seg->addr, seg->addrlen, conns_++ % QUE_SIZE);
+            if (sess->check(ufd_, &seg->addr, seg->addrlen)) {
+                sess->set_que_idx(conns_++ % QUE_SIZE);
                 active_convs_.insert(conv);
             }
 
@@ -259,13 +263,18 @@ private:
     void _update() {
         constexpr std::chrono::milliseconds INTVAL = std::chrono::milliseconds(KCP_UPDATE_MS);
 
+        uint32_t conv;
         int64_t now_ms;
+        std::vector<uint32_t> convs(MAX_CONN);
+        size_t i, n;
+
         while (state_ == State::Running) {
             now_ms = xq::tools::now_milli();
             std::this_thread::sleep_for(INTVAL);
             
-            std::list<uint32_t> convs = active_convs_.as_list();
-            for (auto& conv : convs) {
+            n = active_convs_.as_vec(convs);
+            for (i = 0; i < n; i++) {
+                conv = convs[i];
                 if (!sessions_[conv]->update(now_ms)) {
                     active_convs_.erase(conv);
                     conns_--;

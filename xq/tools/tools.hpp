@@ -15,7 +15,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_set>
-#include <list>
+#include <vector>
 
 #include "third/concurrentqueue.h"
 
@@ -285,7 +285,7 @@ int hex2bin(const std::string& hex, uint8_t *data, size_t *data_len) {
     return (int)n;
 }
 
-// ---------------------------------------------------------------------------- safe list ----------------------------------------------------------------------------
+// ---------------------------------------------------------------------------- safe hash set ----------------------------------------------------------------------------
 template <typename T>
 class Set {
 public:
@@ -325,18 +325,17 @@ public:
         return m_.end();
     }
 
-    bool empty() {
+    size_t as_vec(std::vector<T> &vec) {
+        size_t i = 0;
         std::lock_guard<std::mutex> lk(mtx_);
-        return m_.empty();
-    }
 
-    std::list<T> as_list() {
-        std::list<T> list;
-        std::lock_guard<std::mutex> lk(mtx_);
-        for (auto& v : m_) {
-            list.push_back(v);
+        if (!m_.empty()) {
+            for (auto& v : m_) {
+                vec[i++] = v;
+            }
         }
-        return list;
+
+        return i;
     }
 
     auto find(const T& v) {
