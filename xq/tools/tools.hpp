@@ -285,7 +285,24 @@ int hex2bin(const std::string& hex, uint8_t *data, size_t *data_len) {
     return (int)n;
 }
 
-// ---------------------------------------------------------------------------- safe hash set ----------------------------------------------------------------------------
+// ---------------------------------------------------------------------------- spin lock  ----------------------------------------------------------------------------
+class SpinLock {
+public:
+    void lock() {
+        while (m_.test_and_set(std::memory_order_relaxed)) {
+            std::this_thread::yield();
+        }
+    }
+
+    void unlock() {
+        m_.clear(std::memory_order_relaxed);
+    }
+
+private:
+    std::atomic_flag m_;
+}; // class SpinLock
+
+// ---------------------------------------------------------------------------- safe btree set ----------------------------------------------------------------------------
 template <typename T>
 class Set {
 public:
@@ -346,7 +363,7 @@ public:
 private:
     std::mutex mtx_;
     std::unordered_set<T> m_;
-}; // class List;
+}; // class Set;
 
 // ---------------------------------------------------------------------------- safe object pool  ----------------------------------------------------------------------------
 template <typename T>

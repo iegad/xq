@@ -40,41 +40,59 @@ public:
         for (auto& itr : sessions_) {
             delete itr.second;
         }
+
+        for (auto q : rques_) {
+            delete q;
+        }
     }
 
     /// <summary>
     /// 启动服务
     /// </summary>
     void run() {
+        // Step 1: 创建 udp 监听套接字
+        ufd_ = udp_socket(host_.c_str(), nullptr);
+        assert(ufd_ != INVALID_SOCKET && "ufd create failed");
+#ifdef WIN32
+        constexpr int TIMEOUT = 5000;
+        assert(!::setsockopt(ufd_, SOL_SOCKET, SO_RCVTIMEO, (const char *)&TIMEOUT, sizeof(TIMEOUT)));
+#endif // WIN32
+
         state_ = State::Running;
 
-        // Step 1: 开启工作线程
-        for (size_t i = 0, n = std::thread::hardware_concurrency(); i < n; i++) {
-            RxQueue* q = new RxQueue(2048);
-            rques_.push_back(q);
-            kp_thread_pool_.emplace_back(std::thread(std::bind(&KcpListener::_kcp_proc, this, q)));
+        // Step 2: 开启工作线程
+        for (xq::net::RxQueue *q : rques_) {
+            kp_thread_pool_.emplace_back(std::bind(&KcpListener::_kcp_proc, this, q));
         }
 
-        // Step 2: 开启 kcp update线程
+        // Step 3: 开启 kcp update线程
         update_thread_ = std::thread(std::bind(&KcpListener::_update, this));
 
-        // Step 3 :开启 io read 线程
+        // Step 4 :开启 io read 线程
         rx_thread_ = std::thread(std::bind(&KcpListener::_rx, this));
 
-        // Step 4: 等待所有线程关闭
+        // Step 5: 等待IO线程
         rx_thread_.join();
+
+        // Step 6: 等待update线程
         update_thread_.join();
 
+        // Step 7: 等待工作线程
         for (auto &t : kp_thread_pool_) {
             t.join();
         }
+        // Step 8: 清理工作线程
+        kp_thread_pool_.clear();
 
-        // Step 5: 清空RxSeg队列
+        // Step 9: 清空RxSeg队列
         RxSeg* item[IO_BLOCK_SIZE];
         for (auto& que : rques_) {
             while (que->try_dequeue_bulk(item, IO_BLOCK_SIZE));
-            delete que;
         }
+
+        // Step 10: 关闭UDP监听
+        close(ufd_);
+        ufd_ = INVALID_SOCKET;
 
         state_ = State::Stopped;
     }
@@ -105,6 +123,10 @@ private:
             sess->set_nodelay(1, KCP_UPDATE_MS, 4, 0);
             sessions_.insert(std::make_pair(i, sess));
         }
+
+        for (size_t i = 0, n = std::thread::hardware_concurrency(); i < n; i++) {
+            rques_.push_back(new RxQueue(2048));
+        }
     }
 
     /// <summary>
@@ -130,10 +152,6 @@ private:
     void _rx() {
         static const size_t QUE_SIZE = std::thread::hardware_concurrency();
 
-        // Step 1: 创建 udp 监听套接字
-        ufd_ = udp_socket(host_.c_str(), nullptr);
-        assert(ufd_ != INVALID_SOCKET && "ufd create failed");
-
         int rawlen;
         uint32_t conv;
         RxSeg *seg;
@@ -145,7 +163,7 @@ private:
             seg->addrlen = sizeof(sockaddr);
 
             rawlen = ::recvfrom(ufd_, (char *)seg->data[0], KCP_MTU, 0, &seg->addr, &seg->addrlen);
-            if (rawlen < 0) {
+            if (rawlen < 0 && error() != 10060) {
                 printf("recvfrom error: %d\n", error());
                 continue;
             }
@@ -169,8 +187,6 @@ private:
             // Step 4: 投递消息
             assert(rques_[sess->get_que_idx()]->enqueue(seg));
         }
-
-        close(ufd_);
     }
 
 #else
@@ -179,10 +195,7 @@ private:
     /// </summary>
     void _rx() {
         static const size_t QUE_SIZE = std::thread::hardware_concurrency();
-
-        // Step 1: 构建udp socket
-        ufd_ = udp_socket(host_.c_str(), nullptr);
-        assert(ufd_ != INVALID_SOCKET && "ufd create failed");
+        static timespec TIMEOUT = {.tv_sec = 5, .tv_nsec = 0};
 
         mmsghdr msgs[IO_MSG_SIZE];
         ::memset(msgs, 0, sizeof(msgs));
@@ -217,7 +230,7 @@ private:
             }
 
             // Step 2: 获取消息
-            n = ::recvmmsg(ufd_, msgs, IO_MSG_SIZE, MSG_WAITFORONE, nullptr);
+            n = ::recvmmsg(ufd_, msgs, IO_MSG_SIZE, MSG_WAITFORONE, &TIMEOUT);
             for (i = 0; i < n; i++) {
                 msg = &msgs[i];
                 seg = segs[i];
@@ -289,51 +302,53 @@ private:
     /// </summary>
     /// <param name="que">RxSeg队列</param>
     void _kcp_proc(RxQueue *que) {
+        constexpr std::chrono::duration TIMEOUT = std::chrono::seconds(5);
+
         int nrecv;
 
-        uint8_t* raw;
-        uint8_t* rbuf = new uint8_t[KCP_MAX_DATA_SIZE];
+        uint8_t* rbuf = new uint8_t[KCP_MAX_DATA_SIZE], *raw;
 
         RxSeg* seg;
         KcpSess* sess;
-        size_t n = 0;
+        size_t n, nleft, i;
 
         while (state_ == State::Running) {
-            que->wait_dequeue(seg);
+            if (que->wait_dequeue_timed(seg, TIMEOUT)) {
+                do {
+                    // Step 1: 获取KcpSess
+                    sess = seg->sess;
 
-            do {
-                // Step 1: 获取KcpSess
-                sess = seg->sess;
+                    // Step 2: 获取KCP消息包
+                    nleft = seg->len;
+                    i = 0;
 
-                // Step 2: 获取KCP消息包
-                size_t nleft = seg->len, i = 0;
-
-                while (nleft > 0) {
-                    n = nleft > KCP_MTU ? KCP_MTU : nleft;
-                    raw = seg->data[i++];
-                    if (sess->input(raw, n) < 0) {
-                        // TODO:
-                        break;
-                    }
-                    nleft -=  n;
-                }
-
-                while (true) {
-                    // Step 3: 获取消息包
-                    nrecv = sess->recv(rbuf, KCP_MAX_DATA_SIZE);
-                    if (nrecv < 0) {
-                        break;
+                    while (nleft > 0) {
+                        n = nleft > KCP_MTU ? KCP_MTU : nleft;
+                        raw = seg->data[i++];
+                        if (sess->input(raw, n) < 0) {
+                            // TODO:
+                            break;
+                        }
+                        nleft -= n;
                     }
 
-                    assert(sess->remote() == addr2str(&seg->addr));
-                    if (sess->send(rbuf, nrecv) < 0) {
-                        // TODO
-                    }
-                }
-            } while (0);
+                    while (true) {
+                        // Step 3: 获取消息包
+                        nrecv = sess->recv(rbuf, KCP_MAX_DATA_SIZE);
+                        if (nrecv < 0) {
+                            break;
+                        }
 
-            RxSeg::pool()->put(seg);
-        }
+                        assert(sess->remote() == addr2str(&seg->addr));
+                        if (sess->send(rbuf, nrecv) < 0) {
+                            // TODO
+                        }
+                    }
+                } while (0);
+
+                RxSeg::pool()->put(seg);
+            }
+        } // while (state_ == State::Running);
 
         delete[] rbuf;
     }

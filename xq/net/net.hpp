@@ -40,10 +40,6 @@
 #include "third/blockingconcurrentqueue.h"
 #include "tools/tools.hpp"
 
-#ifndef INVALID_SOCKET
-#define INVALID_SOCKET (SOCKET)(~0)
-#endif // !INVALID_SOCKET
-
 namespace xq {
 namespace net {
 
@@ -62,6 +58,10 @@ constexpr int      IO_MSG_SIZE = 256;               // recvmmsg mmsghdr 大小
 #else
     typedef int SOCKET;
 #endif
+
+#ifndef INVALID_SOCKET
+#define INVALID_SOCKET ((SOCKET)(~0))
+#endif // !INVALID_SOCKET
 
 class KcpSess;
 
