@@ -8,13 +8,57 @@
 namespace xq {
 namespace net {
 
-class KcpSess final {
-private:
+class KcpSess {
+public:
     friend class KcpListener;
 
+    ~KcpSess() {
+#ifndef WIN32
+        for (size_t i = 0; i < IO_BLOCK_SIZE; i++) {
+            delete[](uint8_t*)msg_.msg_iov[i].iov_base;
+        }
+        delete[] msg_.msg_iov;
+#endif // !WIN32
+
+        if (kcp_) {
+            delete kcp_;
+        }
+    }
+
+    std::string get_remote() const {
+        return remote_;
+    }
+
+    SOCKET get_ufd() const {
+        return ufd_;
+    }
+
+    uint32_t get_conv() const {
+        return kcp_->get_conv();
+    }
+
+    uint32_t get_que_num() const {
+        return que_num_;
+    }
+
+    int64_t get_last_time() const {
+        return last_ms_;
+    }
+
+    int send(const uint8_t* buf, int len) {
+        std::lock_guard<xq::tools::SpinLock> lk(kcp_mtx_);
+        int rzt = kcp_->send(buf, len);
+        if (rzt == 0) {
+            kcp_->flush();
+            _sendmsg();
+        }
+        return rzt;
+    }
+
+private:
     explicit KcpSess(uint32_t conv)
         : ufd_(INVALID_SOCKET)
-        , qidx_(0)
+        , que_num_(~0)
         , time_ms_(0)
         , last_ms_(0)
         , raddr_({ 0,{0}})
@@ -31,29 +75,24 @@ private:
 #endif // !WIN32
     }
 
-    ~KcpSess() {
-#ifndef WIN32
-        for (size_t i = 0; i < IO_BLOCK_SIZE; i++) {
-            delete[] (uint8_t*)msg_.msg_iov[i].iov_base;
-        }
-        delete[] msg_.msg_iov;
-#endif // !WIN32
-
-        if (kcp_) {
-            delete kcp_;
-        }
-    }
-
-    void set_output(int (*output)(const char* buf, int len, ikcpcb* kcp, void* user)) {
+    void _set_output(int (*output)(const char* buf, int len, ikcpcb* kcp, void* user)) {
         kcp_->set_output(output);
     }
 
-    void set_que_idx(uint32_t qidx) {
-        qidx_ = qidx;
+    void _set_que_num(uint32_t qidx) {
+        que_num_ = qidx;
     }
 
-    bool check(SOCKET ufd, sockaddr *addr, socklen_t addrlen) {
-        bool res = false;
+    /// <summary>
+    /// 检查该会话地址是否改变.
+    /// </summary>
+    /// <param name="ufd"></param>
+    /// <param name="addr"></param>
+    /// <param name="addrlen"></param>
+    /// <returns>返回 0 时, 未改变; 返回 1 时, 新连接; 返回 2 时, 重新连接</returns>
+    int _check(SOCKET ufd, sockaddr *addr, socklen_t addrlen) {
+        int res = 0;
+        bool changed = false;
 
         if (ufd != ufd_) {
             ufd_ = ufd;
@@ -61,8 +100,8 @@ private:
 
         {
             std::lock_guard<xq::tools::SpinLock> lk(addr_mtx_);
-            res = addrlen != raddrlen_ || ::memcmp(addr, &raddr_, addrlen);
-            if (res) {
+            changed = ::memcmp(addr, &raddr_, addrlen) || addrlen != raddrlen_;
+            if (changed) {
                 ::memcpy(&raddr_, addr, addrlen);
                 raddrlen_ = addrlen;
                 remote_ = xq::net::addr2str(&raddr_);
@@ -72,10 +111,12 @@ private:
                 msg_.msg_name = &raddr_;
                 msg_.msg_namelen = raddrlen_;
         #endif // !WIN32
+
+                res++;
             }
         }
 
-        if (res) {
+        if (changed) {
             {
                 std::lock_guard<xq::tools::SpinLock> lk(kcp_mtx_);
                 kcp_->reset();
@@ -83,54 +124,31 @@ private:
 
             {
                 std::lock_guard<xq::tools::SpinLock> lk(time_mtx_);
-                last_ms_ = time_ms_ = xq::tools::now_milli();
+                if (last_ms_ > 0) {
+                    res++;
+                }
+                time_ms_ = xq::tools::now_milli();
             }
         }
 
         return res;
     }
 
-    uint32_t get_conv() const {
-        return kcp_->get_conv();
-    }
-
-    uint32_t get_que_idx() const {
-        return qidx_;
-    }
-
-    void set_nodelay(int nodelay, int interval, int resend, int nc) {
+    void _set_nodelay(int nodelay, int interval, int resend, int nc) {
         kcp_->nodelay(nodelay, interval, resend, nc);
     }
 
-    int input(const uint8_t* data, long size) {
+    int _input(const uint8_t* data, long size) {
         std::lock_guard<xq::tools::SpinLock> lk(kcp_mtx_);
         return kcp_->input(data, size);
     }
 
-    int recv(uint8_t* buf, int len) {
+    int _recv(uint8_t* buf, int len) {
         std::lock_guard<xq::tools::SpinLock> lk(kcp_mtx_);
         return kcp_->recv(buf, len);
     }
 
-    int send(const uint8_t* buf, int len) {
-        std::lock_guard<xq::tools::SpinLock> lk(kcp_mtx_);
-        int rzt = kcp_->send(buf, len);
-        if (rzt == 0) {
-            kcp_->flush();
-            _sendmsg();
-        }
-        return rzt;
-    }
-
-    std::string remote() const {
-        return remote_;
-    }
-
-    SOCKET ufd() const {
-        return ufd_;
-    }
-
-    bool update(int64_t now_ms) {
+    bool _update(int64_t now_ms) {
         {
             std::lock_guard<xq::tools::SpinLock> lk(time_mtx_);
             if (ufd_ == INVALID_SOCKET || last_ms_ == 0) {
@@ -138,7 +156,8 @@ private:
             }
 
             if (now_ms - last_ms_ > KCP_DEFAULT_TIMEOUT) {
-                last_ms_ = 0;
+                time_ms_ = last_ms_ = 0;
+                que_num_ = ~0;
                 return false;
             }
         }
@@ -152,12 +171,12 @@ private:
         return true;
     }
 
-    void set_last_ms(int64_t now_ms) {
+    void _set_last_ms(int64_t now_ms) {
         std::lock_guard<xq::tools::SpinLock> lk(time_mtx_);
         last_ms_ = now_ms;
     }
 
-    void append_data(uint8_t *data, size_t len) {
+    void _append_data(uint8_t *data, size_t len) {
 #ifndef WIN32
         iovec* iov = &msg_.msg_iov[msg_.msg_iovlen++];
         ::memcpy((uint8_t*)iov->iov_base, data, len);
@@ -193,10 +212,9 @@ private:
 #endif // !WIN32
     }
 
-
     SOCKET ufd_;
 
-    uint32_t qidx_;
+    uint32_t que_num_;
     int64_t time_ms_;
     int64_t last_ms_;
     sockaddr raddr_;

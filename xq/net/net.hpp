@@ -77,6 +77,7 @@ struct RxSeg {
     KcpSess* sess;      // 消息来源
     socklen_t addrlen;  // 地址长度
     sockaddr addr;      // 地址
+    int64_t time_ms;    // 消息包时间
 #ifndef WIN32
     uint8_t data[IO_BLOCK_SIZE][KCP_MTU];   // 数据块
 #else

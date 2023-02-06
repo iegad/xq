@@ -3,6 +3,13 @@
 #include <jemalloc/jemalloc.h>
 #endif
 
+class EchoEvent : public xq::net::IEvent {
+public:
+	virtual int on_message(xq::net::KcpSess* sess, const uint8_t* data, size_t datalen) override {
+		return sess->send(data, datalen);
+	}
+};
+
 constexpr char HOST[] = ":6688";
 
 int
@@ -13,7 +20,9 @@ main(int, char **) {
 		exit(1);
 #endif // _WIN32
 
-	xq::net::KcpListener::Ptr listener = xq::net::KcpListener::create(HOST, 1000);
+	EchoEvent ev;
+
+	xq::net::KcpListener::Ptr listener = xq::net::KcpListener::create(&ev, HOST, 1000);
 	listener->run();
 
 #ifdef _WIN32
