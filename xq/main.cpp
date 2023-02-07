@@ -3,7 +3,7 @@
 #include <jemalloc/jemalloc.h>
 #endif
 
-class EchoEvent : public xq::net::IEvent {
+class EchoEvent : public xq::net::KcpListener::IEvent {
 public:
 	virtual int on_message(xq::net::KcpSess* sess, const uint8_t* data, size_t datalen) override {
 		return sess->send(data, datalen);

@@ -10,19 +10,6 @@
 namespace xq {
 namespace net {
 
-class IEvent {
-public:
-    IEvent() = default;
-    IEvent(const IEvent&) = delete;
-    IEvent& operator=(const IEvent&) = delete;
-
-    virtual int on_connected(KcpSess*) { return 0; }
-    virtual int on_reconnected(KcpSess*) { return 0; }
-    virtual void on_disconnected(KcpSess*) {}
-    virtual int on_message(KcpSess*, const uint8_t*, size_t) = 0;
-    virtual int on_error(int, KcpSess*) { return 0; }
-}; // class IEvent;
-
 /// <summary>
 /// KcpListener: Kcp 服务端
 /// </summary>
@@ -30,14 +17,18 @@ class KcpListener {
 public:
     typedef std::shared_ptr<KcpListener> Ptr;
 
-    /// <summary>
-    /// State: KCP 服务器状态
-    /// </summary>
-    enum class State {
-        Stopped,    // 停止
-        Stopping,   // 停止中
-        Running     // 运行
-    };
+    class IEvent {
+    public:
+        IEvent() = default;
+        IEvent(const IEvent&) = delete;
+        IEvent& operator=(const IEvent&) = delete;
+
+        virtual int on_connected(KcpSess*) { return 0; }
+        virtual int on_reconnected(KcpSess*) { return 0; }
+        virtual void on_disconnected(KcpSess*) {}
+        virtual int on_message(KcpSess*, const uint8_t*, size_t) = 0;
+        virtual int on_error(int, KcpSess*) { return 0; }
+    }; // class IEvent;
 
     /// <summary>
     /// 创建KcpListener
@@ -340,9 +331,9 @@ private:
         KcpSess* sess;
 
         while (state_ == State::Running) {
-            now_ms = xq::tools::now_milli();
             std::this_thread::sleep_for(INTVAL);
-            
+
+            now_ms = xq::tools::now_milli();
             n = active_convs_.as_vec(convs);
             for (i = 0; i < n; i++) {
                 conv = convs[i];

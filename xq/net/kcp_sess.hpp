@@ -165,8 +165,9 @@ private:
         {
             std::lock_guard<xq::tools::SpinLock> lk(kcp_mtx_);
             kcp_->update((uint32_t)(now_ms - time_ms_));
-            _sendmsg();
         }
+
+        _sendmsg();
 
         return true;
     }

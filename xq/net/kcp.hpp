@@ -10,6 +10,15 @@
 namespace xq {
 namespace net {
 
+/// <summary>
+/// State: KCP 服务器状态
+/// </summary>
+enum class State {
+    Stopped,    // 停止
+    Stopping,   // 停止中
+    Running     // 运行
+};
+
 class Kcp final {
 public:
     struct Head {
