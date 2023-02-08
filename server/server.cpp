@@ -1,39 +1,31 @@
-#include "xq/net.hpp"
-#include "xq/tools.hpp"
+#include "xq/tools/tools.hpp"
+#include "xq/net//kcp_listener.hpp"
 
-constexpr char HOST[] = "0.0.0.0:6688";
 
-class EchoEvent : public virtual xq::net::IEvent {
+class EchoEvent : public xq::net::KcpListener::IEvent {
 public:
-	typedef std::shared_ptr<EchoEvent> Ptr;
-
-	virtual int on_message(xq::net::KcpConn* conn, const char* data, size_t data_len) override {
-		printf("%d -> %s\n", conn->conv(), std::string(data, data_len).c_str());
-		return conn->send(data, data_len);
-	}
-
-	virtual int on_connected(xq::net::KcpConn* conn) override {
-		printf("%d has connected\n", conn->conv());
-		return 0;
-	}
-
-	virtual void on_disconnected(xq::net::KcpConn* conn) override {
-		printf("%d has disconnected\n", conn->conv());
+	virtual int on_message(xq::net::KcpSess* sess, const uint8_t* data, size_t datalen) override {
+		return sess->send(data, datalen);
 	}
 };
 
+constexpr char HOST[] = ":6688";
+
 int
-main(int argc, char** argv) {
+main(int, char**) {
 #ifdef _WIN32
-	WSADATA wdata;
-	if (WSAStartup(0x0202, &wdata) || wdata.wHighVersion != 0x0202)
-		exit(EXIT_FAILURE);
+	WSAData wdata;
+	if (WSAStartup(0x0202, &wdata) || wdata.wVersion != 0x0202)
+		exit(1);
 #endif // _WIN32
 
-	auto listener = xq::net::KcpListener::create(2);
-	listener->run(xq::net::IEvent::Ptr(new EchoEvent), HOST);
+	EchoEvent ev;
+
+	xq::net::KcpListener::Ptr listener = xq::net::KcpListener::create(&ev, HOST, 1000);
+	listener->run();
 
 #ifdef _WIN32
 	WSACleanup();
 #endif // _WIN32
+	exit(0);
 }

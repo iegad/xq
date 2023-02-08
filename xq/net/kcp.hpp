@@ -1,8 +1,8 @@
 #ifndef __NET_KCP__
 #define __NET_KCP__
 
-#include "third/ikcp.h"
-#include "net/net.hpp"
+#include "xq/third/ikcp.h"
+#include "xq/net/net.hpp"
 #include <memory>
 #include <mutex>
 #include <unordered_map>

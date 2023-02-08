@@ -6,10 +6,10 @@
 #include <unordered_set>
 
 
-#include "tools/tools.hpp"
-#include "net/net.hpp"
-#include "net/kcp.hpp"
-#include "third/blockingconcurrentqueue.h"
+#include "xq/tools/tools.hpp"
+#include "xq/net/net.hpp"
+#include "xq/net/kcp.hpp"
+#include "xq/third/blockingconcurrentqueue.h"
 
 
 namespace xq {
@@ -43,11 +43,14 @@ public:
             : len(KCP_MTU* IO_BLOCK_SIZE)
             , sess(nullptr)
             , addrlen(sizeof(addr))
-            , addr({ 0,{0} }) {
+            , addr({ 0,{0} })
+            , time_ms(0) {
             assert(data);
         }
     }; // struct RxSeg;
 
+    typedef xq::tools::SpinLock LockType;
+    //typedef std::mutex LockType;
     friend class KcpListener;
 
     ~KcpSess() {
@@ -84,7 +87,7 @@ public:
     }
 
     int send(const uint8_t* buf, int len) {
-        std::lock_guard<xq::tools::SpinLock> lk(kcp_mtx_);
+        std::lock_guard<LockType> lk(kcp_mtx_);
         int rzt = kcp_->send(buf, len);
         if (rzt == 0) {
             kcp_->flush();
@@ -137,7 +140,7 @@ private:
         }
 
         {
-            std::lock_guard<xq::tools::SpinLock> lk(addr_mtx_);
+            std::lock_guard<LockType> lk(addr_mtx_);
             changed = ::memcmp(addr, &raddr_, addrlen) || addrlen != raddrlen_;
             if (changed) {
                 ::memcpy(&raddr_, addr, addrlen);
@@ -156,12 +159,12 @@ private:
 
         if (changed) {
             {
-                std::lock_guard<xq::tools::SpinLock> lk(kcp_mtx_);
+                std::lock_guard<LockType> lk(kcp_mtx_);
                 kcp_->reset();
             }
 
             {
-                std::lock_guard<xq::tools::SpinLock> lk(time_mtx_);
+                std::lock_guard<LockType> lk(time_mtx_);
                 if (last_ms_ > 0) {
                     res++;
                 }
@@ -177,18 +180,18 @@ private:
     }
 
     int _input(const uint8_t* data, long size) {
-        std::lock_guard<xq::tools::SpinLock> lk(kcp_mtx_);
+        std::lock_guard<LockType> lk(kcp_mtx_);
         return kcp_->input(data, size);
     }
 
     int _recv(uint8_t* buf, int len) {
-        std::lock_guard<xq::tools::SpinLock> lk(kcp_mtx_);
+        std::lock_guard<LockType> lk(kcp_mtx_);
         return kcp_->recv(buf, len);
     }
 
     bool _update(int64_t now_ms) {
         {
-            std::lock_guard<xq::tools::SpinLock> lk(time_mtx_);
+            std::lock_guard<LockType> lk(time_mtx_);
             if (ufd_ == INVALID_SOCKET || last_ms_ == 0) {
                 return false;
             }
@@ -201,7 +204,7 @@ private:
         }
 
         {
-            std::lock_guard<xq::tools::SpinLock> lk(kcp_mtx_);
+            std::lock_guard<LockType> lk(kcp_mtx_);
             kcp_->update((uint32_t)(now_ms - time_ms_));
         }
 
@@ -211,12 +214,13 @@ private:
     }
 
     void _set_last_ms(int64_t now_ms) {
-        std::lock_guard<xq::tools::SpinLock> lk(time_mtx_);
+        std::lock_guard<LockType> lk(time_mtx_);
         last_ms_ = now_ms;
     }
 
-    void _append_data(uint8_t *data, size_t len) {
 #ifndef WIN32
+    void _append_data(uint8_t *data, size_t len) {
+
         iovec* iov = &msg_.msg_iov[msg_.msg_iovlen++];
         ::memcpy((uint8_t*)iov->iov_base, data, len);
         iov->iov_len = len;
@@ -224,14 +228,8 @@ private:
         if (msg_.msg_iovlen == IO_BLOCK_SIZE >> 1) {
             _sendmsg();
         }
-#else
-        std::lock_guard<xq::tools::SpinLock> lk(addr_mtx_);
-        if (::sendto(ufd_, (const char*)data, len, 0, &raddr_, raddrlen_)) {
-            printf("sendto failed: %d\n", error());
-            // TODO: ...
-        }
-#endif // !WIN32
     }
+#endif // !WIN32
 
     void _sendmsg() {
 #ifndef WIN32
@@ -240,7 +238,7 @@ private:
         }
 
         {
-            std::lock_guard<xq::tools::SpinLock> lk(addr_mtx_);
+            std::lock_guard<LockType> lk(addr_mtx_);
             if (::sendmsg(ufd_, &msg_, 0) < 0) {
                 //TODO: ...
                 printf("sendmsg failed: %d\n", error());
@@ -266,9 +264,9 @@ private:
     Kcp* kcp_;
     std::string remote_;
 
-    xq::tools::SpinLock kcp_mtx_;
-    xq::tools::SpinLock time_mtx_;
-    xq::tools::SpinLock addr_mtx_;
+    LockType kcp_mtx_;
+    LockType time_mtx_;
+    LockType addr_mtx_;
 
     KcpSess(const KcpSess&) = delete;
     KcpSess& operator=(const KcpSess&) = delete;
@@ -410,7 +408,15 @@ private:
     /// <returns></returns>
     static int output(const char* raw, int len, IKCPCB*, void* user) {
         KcpSess* sess = (KcpSess*)user;
-        sess->_append_data((uint8_t *)raw, len);
+#ifndef WIN32
+        sess->_append_data((uint8_t*)raw, len);
+#else
+        int n = ::sendto(sess->ufd_, raw, len, 0, &sess->raddr_, sess->raddrlen_);
+        if (n < 0) {
+            std::printf("::sendto failed: %d\n", error());
+        }
+#endif // !WIN32
+
         return 0;
     }
 
@@ -452,7 +458,7 @@ private:
                 continue;
             }
 
-            sess = sessions_[conv];
+            seg->sess = sess = sessions_[conv];
             n = sess->_check(ufd_, &seg->addr, seg->addrlen);
             switch(n) {
             // 新连接
@@ -544,7 +550,7 @@ private:
                         continue;
                     }
 
-                    sess = sessions_[conv];
+                    seg->sess = sess = sessions_[conv];
                     nc = sess->_check(ufd_, &seg->addr, seg->addrlen);
                     switch(nc) {
                     // 新连接
@@ -565,7 +571,6 @@ private:
                     } break;
 
                     } // switch(n);
-                    seg->sess = sess;
                     seg->time_ms = now_ms;
 
                     // Step 4: 投递队列
@@ -619,7 +624,7 @@ private:
     /// </summary>
     /// <param name="que">RxSeg队列</param>
     void _kcp_proc(KcpSess::Seg::Queue *que) {
-        constexpr std::chrono::duration TIMEOUT = std::chrono::seconds(5);
+        constexpr std::chrono::seconds TIMEOUT = std::chrono::seconds(5);
 
         int nrecv;
 
@@ -681,7 +686,7 @@ private:
     std::thread                            update_thread_;  // kcp update thread
     std::vector<std::thread>               kp_thread_pool_; // 工作线程池 kcp procedure thread pool
 
-    std::vector<KcpSess::Seg::Queue*>                  rques_;          // read data queue
+    std::vector<KcpSess::Seg::Queue*>      rques_;          // read data queue
 
     xq::tools::Set<uint32_t>               active_convs_;   // 当前在线程kcp客户端
     std::unordered_map<uint32_t, KcpSess*> sessions_;       // 会话

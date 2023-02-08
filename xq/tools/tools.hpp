@@ -17,7 +17,7 @@
 #include <unordered_set>
 #include <vector>
 
-#include "third/concurrentqueue.h"
+#include "xq/third/concurrentqueue.h"
 
 namespace xq {
 namespace tools {
