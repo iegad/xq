@@ -135,140 +135,69 @@ inline int error() {
 #endif
 }
 
-/// <summary>
-/// 创建UDP套接字
-/// </summary>
-/// <param name="local">本地Endpoint</param>
-/// <param name="remote">远端Endpoint</param>
-/// <returns>成功返回 套接字描述符, 否则返回 INVALID_SOCKET</returns>
-SOCKET udp_socket(const char* local, const char* remote, sockaddr *addr = nullptr, socklen_t *addrlen = nullptr) {
+SOCKET udp_bind(const std::string &local, sockaddr* addr = nullptr, socklen_t* addrlen = nullptr) {
     static constexpr int ON = 1;
 
     SOCKET fd = INVALID_SOCKET;
 
     // 本端地址用于udp 套接字绑定
-    if (local) {
-        std::string tmp = std::string(local);
-        size_t pos = tmp.rfind(':');
-        if (pos == std::string::npos)
-            return INVALID_SOCKET;
-
-        std::string ip = tmp.substr(0, pos);
-        if (ip.empty())
-            ip = "0.0.0.0";
-
-        std::string port = tmp.substr(pos + 1);
-
-        addrinfo hints;
-        addrinfo* result = nullptr, * rp = nullptr;
-
-        ::memset(&hints, 0, sizeof(addrinfo));
-        hints.ai_family = AF_UNSPEC;
-        hints.ai_socktype = SOCK_DGRAM;
-        hints.ai_flags = AI_PASSIVE;
-
-        if (::getaddrinfo(ip.c_str(), port.c_str(), &hints, &result))
-            return INVALID_SOCKET;
-
-        for (rp = result; rp != nullptr; rp = rp->ai_next) {
-            fd = ::socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-            if (fd == INVALID_SOCKET)
-                continue;
-
-            if (::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char*)&ON, sizeof(int))) {
-                close(fd);
-                return INVALID_SOCKET;
-            }
-
-#ifndef _WIN32
-            if (::setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &ON, sizeof(int))) {
-                close(fd);
-                return INVALID_SOCKET;
-            }
-#endif
-
-            if (!::bind(fd, rp->ai_addr, (int)rp->ai_addrlen))
-                break;
-
-            close(fd);
-            fd = INVALID_SOCKET;
-        }
-
-        assert(rp);
-
-        ::freeaddrinfo(result);
-
-        if (fd == INVALID_SOCKET)
-            return INVALID_SOCKET;
+    size_t pos = local.rfind(':');
+    if (pos == std::string::npos) {
+        return INVALID_SOCKET;
     }
 
-    // 对端地址用于连接
-    if (remote) {
-        std::string tmp = std::string(remote);
-        size_t pos = tmp.rfind(':');
-        if (pos == std::string::npos) {
+    std::string ip = local.substr(0, pos);
+    if (ip.empty()) {
+        ip = "0.0.0.0";
+    }
+
+    std::string port = local.substr(pos + 1);
+
+    addrinfo hints;
+    addrinfo* result = nullptr, * rp = nullptr;
+
+    ::memset(&hints, 0, sizeof(addrinfo));
+    hints.ai_family = AF_UNSPEC;
+    hints.ai_socktype = SOCK_DGRAM;
+    hints.ai_flags = AI_PASSIVE;
+
+    if (::getaddrinfo(ip.c_str(), port.c_str(), &hints, &result)) {
+        return INVALID_SOCKET;
+    }
+
+    for (rp = result; rp != nullptr; rp = rp->ai_next) {
+        fd = ::socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
+        if (fd == INVALID_SOCKET) {
+            continue;
+        }
+
+        if (::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char*)&ON, sizeof(int))) {
             close(fd);
             return INVALID_SOCKET;
         }
 
-        std::string ip = tmp.substr(0, pos);
-        if (ip.empty()) {
+#ifndef WIN32
+        if (::setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &ON, sizeof(int))) {
             close(fd);
             return INVALID_SOCKET;
         }
-
-        std::string port = tmp.substr(pos + 1);
-
-        addrinfo hints;
-        addrinfo* result = nullptr, * rp = nullptr;
-
-        ::memset(&hints, 0, sizeof(addrinfo));
-        hints.ai_family = AF_UNSPEC;
-        hints.ai_socktype = SOCK_DGRAM;
-        hints.ai_flags = AI_PASSIVE;
-
-        if (::getaddrinfo(ip.c_str(), port.c_str(), &hints, &result)) {
-            close(fd);
-            return INVALID_SOCKET;
-        }
-
-        for (rp = result; rp != nullptr; rp = rp->ai_next) {
-            if (fd == INVALID_SOCKET) {
-                fd = ::socket(rp->ai_family, rp->ai_socktype, rp->ai_protocol);
-                if (fd == INVALID_SOCKET)
-                    continue;
-
-                if (::setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char*)&ON, sizeof(int))) {
-                    close(fd);
-                    return INVALID_SOCKET;
-                }
-
-#ifndef _WIN32
-                if (::setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &ON, sizeof(int))) {
-                    close(fd);
-                    return INVALID_SOCKET;
-                }
 #endif
-            }
 
-            if (!::connect(fd, rp->ai_addr, rp->ai_addrlen)) {
-                assert(addr && addrlen);
+        if (!::bind(fd, rp->ai_addr, (int)rp->ai_addrlen)) {
+            if (addr && addrlen) {
                 *addrlen = rp->ai_addrlen;
-                ::memcpy(addr, rp->ai_addr, rp->ai_addrlen);
-                break;
+                ::memcpy(addr, rp->ai_addr, *addrlen);
             }
-
-            close(fd);
-            fd = INVALID_SOCKET;
+            break;
         }
 
-        assert(rp);
-
-        ::freeaddrinfo(result);
-
-        if (fd == INVALID_SOCKET)
-            return INVALID_SOCKET;
+        close(fd);
+        fd = INVALID_SOCKET;
     }
+
+    assert(rp);
+
+    ::freeaddrinfo(result);
 
     return fd;
 }
