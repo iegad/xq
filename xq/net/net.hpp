@@ -1,6 +1,7 @@
 #ifndef __NET_HPP__
 #define __NET_HPP__
 
+
 //! --------------------------------------------------------------------------------------------------------------------
 //! xq 网络框架, 目前只支持KCP版本.
 //!
@@ -33,12 +34,10 @@
 #include <functional>
 #include <memory>
 #include <mutex>
+#include <regex>
 #include <thread>
-#include <unordered_map>
 #include <vector>
 
-#include "third/blockingconcurrentqueue.h"
-#include "tools/tools.hpp"
 
 namespace xq {
 namespace net {
@@ -63,49 +62,9 @@ constexpr int      IO_MSG_SIZE = 256;               // recvmmsg mmsghdr 大小
 #define INVALID_SOCKET ((SOCKET)(~0))
 #endif // !INVALID_SOCKET
 
-class KcpSess;
+const std::regex REG_IPv4("^((25[0-5]|(2[0-4]|1\\d|[1-9]|)\\d)\\.?\\b){4}$");
+const std::regex REG_IPv6("(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))");
 
-/// <summary>
-/// RxSeg IO读取结构, 用于IO 读取数据
-/// </summary>
-struct RxSeg {
-    static xq::tools::ObjectPool<RxSeg>* pool() {
-        return xq::tools::ObjectPool<RxSeg>::Instance();
-    }
-
-    int len;            // 消息总长度
-    KcpSess* sess;      // 消息来源
-    socklen_t addrlen;  // 地址长度
-    sockaddr addr;      // 地址
-    int64_t time_ms;    // 消息包时间
-#ifndef WIN32
-    uint8_t data[IO_BLOCK_SIZE][KCP_MTU];   // 数据块
-#else
-    uint8_t data[1][KCP_MTU];               // 数据块
-#endif // !WIN32
-
-    /// <summary>
-    /// 构造函数
-    /// </summary>
-    explicit RxSeg()
-        : len(KCP_MTU * IO_BLOCK_SIZE)
-        , sess(nullptr)
-        , addrlen(sizeof(addr))
-        , addr({ 0,{0} }) {
-        assert(data);
-    }
-}; // struct RxSeg;
-
-typedef moodycamel::BlockingConcurrentQueue<RxSeg*> RxQueue;
-
-/// <summary>
-/// 错误类型
-/// </summary>
-enum class ErrType {
-    ET_ListenerRead = 0,
-    ET_ListenerWrite,
-    ET_SessRead,
-};
 
 /// <summary>
 /// 关闭套接字
@@ -154,7 +113,7 @@ SOCKET udp_bind(const std::string &local, sockaddr* addr = nullptr, socklen_t* a
     std::string port = local.substr(pos + 1);
 
     addrinfo hints;
-    addrinfo* result = nullptr, * rp = nullptr;
+    addrinfo *result = nullptr, *rp = nullptr;
 
     ::memset(&hints, 0, sizeof(addrinfo));
     hints.ai_family = AF_UNSPEC;
@@ -234,6 +193,53 @@ std::string addr2str(const sockaddr *addr) {
     } // switch (addr_.sa_family);
 
     return rzt;
+}
+
+bool str2addr(const std::string& str, sockaddr *addr, socklen_t *addrlen) {
+    if (!addr || !addrlen) {
+        return false;
+    }
+
+    bool has_port = false;
+    int32_t port = 0;
+    std::string ip = str, sport;
+    size_t pos = str.rfind(':');
+    if (pos != std::string::npos) {
+        ip = str.substr(0, pos);
+        sport = str.substr(pos + 1);
+    }
+
+    if (has_port) {
+        port = std::stol(sport);
+        if (port > 65535 || port < 0) {
+            return false;
+        }
+    }
+
+    if (std::regex_match(str, REG_IPv4)) {
+        sockaddr_in* a4 = (sockaddr_in*)addr;
+        a4->sin_family = AF_INET;
+        if (::inet_pton(AF_INET, ip.c_str(), &a4->sin_addr) != 1) {
+            return false;
+        }
+
+        a4->sin_port = ntohs((uint16_t)port);
+        *addrlen = sizeof(sockaddr_in);
+        return true;
+    }
+    else if (std::regex_match(str, REG_IPv6)) {
+        sockaddr_in6 *a6 = (sockaddr_in6*)addr;
+        a6->sin6_family = AF_INET6;
+        if (::inet_pton(AF_INET6, ip.c_str(), &a6->sin6_addr) != 1) {
+            return false;
+        }
+
+        a6->sin6_port = ntohs(port);
+        *addrlen = sizeof(sockaddr_in6);
+        return true;
+    }
+
+    return false;
 }
 
 } // namespace net

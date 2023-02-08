@@ -6,6 +6,7 @@
 #include <unordered_set>
 
 
+#include "tools/tools.hpp"
 #include "net/net.hpp"
 #include "net/kcp.hpp"
 #include "third/blockingconcurrentqueue.h"
@@ -17,6 +18,36 @@ namespace net {
 
 class KcpSess final {
 public:
+    struct Seg {
+        typedef moodycamel::BlockingConcurrentQueue<Seg*> Queue;
+
+        static xq::tools::ObjectPool<Seg>* pool() {
+            return xq::tools::ObjectPool<Seg>::Instance();
+        }
+
+        int len;            // 消息总长度
+        KcpSess* sess;      // 消息来源
+        socklen_t addrlen;  // 地址长度
+        sockaddr addr;      // 地址
+        int64_t time_ms;    // 消息包时间
+#ifndef WIN32
+        uint8_t data[IO_BLOCK_SIZE][KCP_MTU];   // 数据块
+#else
+        uint8_t data[1][KCP_MTU];               // 数据块
+#endif // !WIN32
+
+/// <summary>
+/// 构造函数
+/// </summary>
+        explicit Seg()
+            : len(KCP_MTU* IO_BLOCK_SIZE)
+            , sess(nullptr)
+            , addrlen(sizeof(addr))
+            , addr({ 0,{0} }) {
+            assert(data);
+        }
+    }; // struct RxSeg;
+
     friend class KcpListener;
 
     ~KcpSess() {
@@ -299,7 +330,7 @@ public:
         state_ = State::Running;
 
         // Step 2: 开启工作线程
-        for (xq::net::RxQueue *q : rques_) {
+        for (xq::net::KcpSess::Seg::Queue *q : rques_) {
             kp_thread_pool_.emplace_back(std::bind(&KcpListener::_kcp_proc, this, q));
         }
 
@@ -323,7 +354,7 @@ public:
         kp_thread_pool_.clear();
 
         // Step 9: 清空RxSeg队列
-        RxSeg* item[IO_BLOCK_SIZE];
+        KcpSess::Seg* item[IO_BLOCK_SIZE];
         for (auto& que : rques_) {
             while (que->try_dequeue_bulk(item, IO_BLOCK_SIZE));
         }
@@ -364,7 +395,7 @@ private:
         }
 
         for (size_t i = 0, n = std::thread::hardware_concurrency(); i < n; i++) {
-            rques_.push_back(new RxQueue(2048));
+            rques_.push_back(new KcpSess::Seg::Queue(2048));
         }
     }
 
@@ -393,13 +424,13 @@ private:
 
         int rawlen, n;
         uint32_t conv;
-        RxSeg *seg;
+        KcpSess::Seg *seg;
         KcpSess* sess;
         int64_t now_ms;
 
         while (state_ == State::Running) {
             // Step 2: 获取数据
-            seg = RxSeg::pool()->get();
+            seg = KcpSess::Seg::pool()->get();
             seg->addrlen = sizeof(sockaddr);
 
             rawlen = ::recvfrom(ufd_, (char *)seg->data[0], KCP_MTU, 0, &seg->addr, &seg->addrlen);
@@ -470,14 +501,14 @@ private:
 
         int i, j, n = IO_MSG_SIZE, nc;
 
-        RxSeg *seg;
-        RxSeg *segs[IO_MSG_SIZE] = {nullptr};
+        KcpSess::Seg *seg;
+        KcpSess::Seg *segs[IO_MSG_SIZE] = {nullptr};
 
         int64_t now_ms;
 
         while(state_ == State::Running) {
             for (i = 0; i < n; i++) {
-                segs[i] = seg = RxSeg::pool()->get();
+                segs[i] = seg = KcpSess::Seg::pool()->get();
                 hdr = &msgs[i].msg_hdr;
                 hdr->msg_name = &seg->addr;
                 hdr->msg_namelen = sizeof(sockaddr);
@@ -546,7 +577,7 @@ private:
         for (i = 0; i < IO_MSG_SIZE; i++) {
             seg = segs[i];
             if (seg) {
-                RxSeg::pool()->put(seg);
+                KcpSess::Seg::pool()->put(seg);
             }
         }
     }
@@ -587,14 +618,14 @@ private:
     /// kcp 工作线程
     /// </summary>
     /// <param name="que">RxSeg队列</param>
-    void _kcp_proc(RxQueue *que) {
+    void _kcp_proc(KcpSess::Seg::Queue *que) {
         constexpr std::chrono::duration TIMEOUT = std::chrono::seconds(5);
 
         int nrecv;
 
         uint8_t* rbuf = new uint8_t[KCP_MAX_DATA_SIZE], *raw;
 
-        RxSeg* seg;
+        KcpSess::Seg* seg;
         KcpSess* sess;
         size_t n, nleft, i;
 
@@ -632,7 +663,7 @@ private:
                     }
                 } while (0);
 
-                RxSeg::pool()->put(seg);
+                KcpSess::Seg::pool()->put(seg);
             }
         } // while (state_ == State::Running);
 
@@ -650,7 +681,7 @@ private:
     std::thread                            update_thread_;  // kcp update thread
     std::vector<std::thread>               kp_thread_pool_; // 工作线程池 kcp procedure thread pool
 
-    std::vector<RxQueue*>                  rques_;          // read data queue
+    std::vector<KcpSess::Seg::Queue*>                  rques_;          // read data queue
 
     xq::tools::Set<uint32_t>               active_convs_;   // 当前在线程kcp客户端
     std::unordered_map<uint32_t, KcpSess*> sessions_;       // 会话
