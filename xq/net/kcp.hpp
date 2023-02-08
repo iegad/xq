@@ -1,26 +1,27 @@
 #ifndef __NET_KCP__
 #define __NET_KCP__
 
-#include "xq/third/ikcp.h"
-#include "xq/net/net.hpp"
+
 #include <memory>
 #include <mutex>
 #include <unordered_map>
 
+#include "xq/net/net.hpp"
+#include "xq/third/ikcp.h"
+
+
 namespace xq {
 namespace net {
 
-/// <summary>
-/// State: KCP 服务器状态
-/// </summary>
-enum class State {
-    Stopped,    // 停止
-    Stopping,   // 停止中
-    Running     // 运行
-};
 
+// ------------------------------------------------------------------------ Kcp ------------------------------------------------------------------------
+
+/// @brief KCP协议 C++封装
 class Kcp final {
 public:
+
+
+    /// @brief KCP 消息头
     struct Head {
         uint32_t conv;
         uint8_t  cmd;
@@ -32,6 +33,10 @@ public:
         uint32_t len;
     };
 
+
+    /// @brief 构建函数
+    /// @param conv kcp conv
+    /// @param user 附加参数, 该框架中为: KcpSess / KcpHost
     explicit Kcp(uint32_t conv, void* user)
         : kcp_(::ikcp_create(conv, user)) {
         ::ikcp_setmtu(kcp_, KCP_MTU);
@@ -39,9 +44,6 @@ public:
         kcp_->updated = 1;
     }
 
-    static uint32_t get_conv(const void *raw) {
-        return ::ikcp_getconv(raw);
-    }
 
     ~Kcp() {
         if (kcp_) {
@@ -49,42 +51,18 @@ public:
         }
     }
 
-    void set_output(int (*output)(const char* buf, int len, ikcpcb* kcp, void* user)) {
-        kcp_->output = output;
+
+    /// @brief 从原始IO流中获取conv
+    /// @param raw 原始IO数据
+    /// @return 返回原始IO数据中的 conv
+    static uint32_t get_conv(const void *raw) {
+        return ::ikcp_getconv(raw);
     }
 
-    uint32_t get_conv() const {
-        return kcp_->conv;
-    }
 
-    int recv(uint8_t* buf, int len) {
-        return ::ikcp_recv(kcp_, (char *)buf, len);
-    }
-
-    int send(const uint8_t* buf, int len) {
-        return ::ikcp_send(kcp_, (const char *)buf, len);
-    }
-
-    void update(uint32_t current) {
-        ::ikcp_update(kcp_, current);
-    }
-
-    int input(const uint8_t* data, long size) {
-        return ::ikcp_input(kcp_, (const char *)data, size);
-    }
-
-    bool state() {
-        return kcp_->state == 0;
-    }
-
-    void flush() {
-        ::ikcp_flush(kcp_);
-    }
-
-    int nodelay(int nodelay, int interval, int resend, int nc) {
-        return ::ikcp_nodelay(kcp_, nodelay, interval, resend, nc);
-    }
-
+    /// @brief  解码消息头
+    /// @param raw  原始IO流
+    /// @param head OUT KCP消息头
     static void decode_head(const uint8_t* raw, Head *head) {
         const uint8_t*p = raw;
         head->conv = *(uint32_t*)p;
@@ -104,6 +82,72 @@ public:
         head->len = *(uint32_t*)p;
     }
 
+
+    /// @brief 设置output回调
+    /// @param output 有效的回调函数
+    void set_output(int (*output)(const char* buf, int len, ikcpcb* kcp, void* user)) {
+        kcp_->output = output;
+    }
+
+
+    /// @brief 获取当前Kcp conv
+    uint32_t get_conv() const {
+        return kcp_->conv;
+    }
+
+
+    /// @brief 从kcp rcv_que 中接收数据
+    /// @param buf  OUT数据缓冲区
+    /// @param len  数据缓冲区长度
+    /// @return 成功返回0, 否则返回!0
+    int recv(uint8_t* buf, int len) {
+        return ::ikcp_recv(kcp_, (char *)buf, len);
+    }
+
+
+    /// @brief 发送数据, 该发送仅把数据放入kcp发送队列
+    /// @param buf 
+    /// @param len 
+    /// @return 成功返回0, 否则返回!0
+    int send(const uint8_t* buf, int len) {
+        return ::ikcp_send(kcp_, (const char *)buf, len);
+    }
+
+
+    /// @brief kcp update
+    /// @param current 当前kcp时间(毫秒)
+    void update(uint32_t current) {
+        ::ikcp_update(kcp_, current);
+    }
+
+
+    /// @brief 将原始IO流转换为kcp数据
+    /// @param data 原始IO数据
+    /// @param size 原始数据长度
+    /// @return 成功返回0, 否则返回!0
+    int input(const uint8_t* data, long size) {
+        return ::ikcp_input(kcp_, (const char *)data, size);
+    }
+
+
+    /// @brief 将发送缓冲区的数据给 回调函数(output)处理
+    void flush() {
+        ::ikcp_flush(kcp_);
+    }
+
+
+    /// @brief 设置KCP参数
+    /// @param nodelay  是否延迟发送
+    /// @param interval 发送频率
+    /// @param resend   跨越重传
+    /// @param nc       是否开启拥塞控制
+    /// @return 
+    int nodelay(int nodelay, int interval, int resend, int nc) {
+        return ::ikcp_nodelay(kcp_, nodelay, interval, resend, nc);
+    }
+
+
+    /// @brief 重置KCP
     void reset() {
         IKCPSEG* seg;
         while (!IQUEUE_IS_EMPTY(&kcp_->snd_buf)) {
@@ -157,12 +201,14 @@ public:
         kcp_->xmit = 0;
     }
 
+
 private:
     IKCPCB* kcp_;
 
     Kcp(const Kcp&) = delete;
     Kcp& operator=(const Kcp&) = delete;
 }; // class Kcp
+
 
 } // namespace net
 } // namespace xq
