@@ -34,15 +34,15 @@ public:
             return xq::tools::ObjectPool<Seg>::Instance();
         }
 
-        int len;            // 消息总长度
-        KcpSess* sess;      // 消息来源
-        socklen_t addrlen;  // 地址长度
-        sockaddr addr;      // 地址
-        int64_t time_ms;    // 消息包时间
+        int       len;                          // 消息总长度
+        KcpSess*  sess;                         // 消息来源
+        socklen_t addrlen;                      // 地址长度
+        sockaddr  addr;                         // 地址
+        int64_t   time_ms;                      // 消息包时间
 #ifndef WIN32
-        uint8_t data[IO_BLOCK_SIZE][KCP_MTU];   // 数据块
+        uint8_t   data[IO_BLOCK_SIZE][KCP_MTU]; // 数据块
 #else
-        uint8_t data[1][KCP_MTU];               // 数据块
+        uint8_t   data[1][KCP_MTU];             // 数据块
 #endif // !WIN32
 
         /// @brief Seg 构造函数
@@ -105,12 +105,16 @@ public:
     /// @brief  发送数据
     /// @return 成功返回0, 否则返回!0.
     int send(const uint8_t* buf, int len) {
-        std::lock_guard<LockType> lk(kcp_mtx_);
-        int rzt = kcp_->send(buf, len);
+        int rzt;
+        {
+            std::lock_guard<LockType> lk(kcp_mtx_);
+            rzt = kcp_->send(buf, len);
+        }
+        
         if (rzt == 0) {
-            kcp_->flush();
             _sendmsg();
         }
+
         return rzt;
     }
 
@@ -139,12 +143,6 @@ private:
     }
 
 
-    /// @brief 设置output回调
-    void _set_output(int (*output)(const char* buf, int len, ikcpcb* kcp, void* user)) {
-        kcp_->set_output(output);
-    }
-
-
     /// @brief 设置 kcp sess工作队列号
     void _set_que_num(uint32_t que_num) {
         que_num_ = que_num;
@@ -154,8 +152,8 @@ private:
     /// @brief 检查该会话地址是否改变
     /// @return 返回 0 时, 未改变; 返回 1 时, 新连接; 返回 2 时, 重新连接.
     /// @note  通过检查ufd 和对端地址, 来确认该kcp sess是否产生新的连接, 如果产生新的连接重置 kcp
-    int _check(SOCKET ufd, sockaddr *addr, socklen_t addrlen) {
-        int res = 0;
+    int _check(SOCKET ufd, sockaddr *addr, socklen_t addrlen, int64_t now_ms) {
+        int  res     = 0;
         bool changed = false;
 
         if (ufd != ufd_) {
@@ -165,11 +163,10 @@ private:
         {
             std::lock_guard<LockType> lk(addr_mtx_);
             changed = ::memcmp(addr, &raddr_, addrlen) || addrlen != raddrlen_;
-            if (changed) {
+            if (changed) {                
                 ::memcpy(&raddr_, addr, addrlen);
                 raddrlen_ = addrlen;
                 remote_ = xq::net::addr2str(&raddr_);
-
         #ifndef WIN32
                 msg_.msg_iovlen = 0;
                 msg_.msg_name = &raddr_;
@@ -188,10 +185,10 @@ private:
 
             {
                 std::lock_guard<LockType> lk(time_mtx_);
-                if (last_ms_ > 0) {
+                if (now_ms - last_ms_  < KCP_TIMEOUT) {
                     res++;
                 }
-                time_ms_ = xq::tools::now_milli();
+                last_ms_ = time_ms_ = now_ms;
             }
         }
 
@@ -225,7 +222,7 @@ private:
             }
 
             // 该kcp sess超时
-            if (now_ms - last_ms_ > KCP_DEFAULT_TIMEOUT) {
+            if (now_ms - last_ms_ > KCP_TIMEOUT) {
                 time_ms_ = last_ms_ = 0;
                 que_num_ = ~0;
                 return false;
@@ -252,7 +249,9 @@ private:
 
 
 #ifndef WIN32
-    /// @brief 追回数据
+
+
+    /// @brief 追加数据
     void _append_data(uint8_t *data, size_t len) {
 
         iovec* iov = &msg_.msg_iov[msg_.msg_iovlen++];
@@ -263,6 +262,8 @@ private:
             _sendmsg();
         }
     }
+
+
 #endif // !WIN32
 
 
@@ -324,11 +325,11 @@ public:
         IEvent(const IEvent&) = delete;
         IEvent& operator=(const IEvent&) = delete;
 
-        virtual int on_connected(KcpSess*) { return 0; }
-        virtual int on_reconnected(KcpSess*) { return 0; }
+        virtual int  on_connected(KcpSess*) { return 0; }
+        virtual int  on_reconnected(KcpSess*) { return 0; }
         virtual void on_disconnected(KcpSess*) {}
-        virtual int on_message(KcpSess*, const uint8_t*, size_t) = 0;
-        virtual int on_error(int, KcpSess*) { return 0; }
+        virtual int  on_message(KcpSess*, const uint8_t*, size_t) = 0;
+        virtual void on_error(int, KcpSess*) {}
     }; // class IEvent;
     // ----------------------------------- END IEvent -------------------------------------
 
@@ -338,6 +339,9 @@ public:
     /// @param host 监听地址
     /// @param max_conn 最大连接数
     static Ptr create(IEvent *ev, const std::string& host, uint32_t max_conn) {
+        assert(ev && "IEvent is invalid");
+        assert(host.size() > 0 && "host is invalid");
+        assert(max_conn > 0 && "max_conn is invalid");
         return Ptr(new KcpListener(ev, host, max_conn));
     }
 
@@ -454,11 +458,11 @@ private:
     void _rx() {
         static const size_t QUE_SIZE = std::thread::hardware_concurrency();
 
-        int rawlen, n;
-        uint32_t conv;
-        KcpSess::Seg *seg;
-        KcpSess* sess;
-        int64_t now_ms;
+        int           rawlen, n;
+        uint32_t      conv;
+        KcpSess::Seg* seg;
+        KcpSess*      sess;
+        int64_t       now_ms;
 
         while (state_ == State::Running) {
             // Step 2: 获取数据
@@ -466,16 +470,18 @@ private:
             seg->addrlen = sizeof(sockaddr);
 
             rawlen = ::recvfrom(ufd_, (char *)seg->data[0], KCP_MTU, 0, &seg->addr, &seg->addrlen);
-            if (rawlen < 0 && error() != 10060) {
-                if (event_ && event_->on_error(error(), nullptr) < 0) {
-                    continue;
+            if (rawlen < 0) {
+                if (error() != 10060) {
+                    event_->on_error(error(), nullptr);
                 }
+                continue;
             }
 
             if (rawlen < KCP_HEAD_SIZE) {
                 continue;
             }
 
+            now_ms = xq::tools::now_milli();
             // Step 3: 构建对象
             conv = Kcp::get_conv(seg->data[0]);
             if (conv == 0 || conv > MAX_CONN) {
@@ -483,11 +489,11 @@ private:
             }
 
             seg->sess = sess = sessions_[conv];
-            n = sess->_check(ufd_, &seg->addr, seg->addrlen);
+            n = sess->_check(ufd_, &seg->addr, seg->addrlen, now_ms);
             switch(n) {
             // 新连接
             case 1: {
-                if (event_ && event_->on_connected(sess) < 0) {
+                if (event_->on_connected(sess) < 0) {
                     continue;
                 }
 
@@ -497,14 +503,13 @@ private:
             
             // 重连
             case 2: {
-                if (event_ && event_->on_reconnected(sess) < 0) {
+                if (event_->on_reconnected(sess) < 0) {
                     continue;
                 }
             } break;
-
             } // switch(n);
 
-            seg->time_ms = xq::tools::now_milli();
+            seg->time_ms = now_ms;
             // Step 4: 投递消息
             assert(rques_[sess->get_que_num()]->enqueue(seg));
         }
@@ -516,27 +521,22 @@ private:
 
     /// @brief IO 工作线程
     void _rx() {
-        static const size_t QUE_SIZE = std::thread::hardware_concurrency();
-        static timespec TIMEOUT = {.tv_sec = 5, .tv_nsec = 0};
+        const  size_t   QUE_SIZE = std::thread::hardware_concurrency();
+        static timespec TIMEOUT  = {.tv_sec = IO_TIMEOUT / 1000, .tv_nsec = 0};
 
         mmsghdr msgs[IO_MSG_SIZE];
         ::memset(msgs, 0, sizeof(msgs));
 
-        size_t rawlen;
-        mmsghdr *msg;
-        msghdr *hdr;
-
-        uint32_t conv;
-        KcpSess *sess;
-
-        iovec iovecs[IO_MSG_SIZE][IO_BLOCK_SIZE];
-
-        int i, j, n = IO_MSG_SIZE, nc;
-
-        KcpSess::Seg *seg;
-        KcpSess::Seg *segs[IO_MSG_SIZE] = {nullptr};
-
-        int64_t now_ms;
+        size_t        rawlen;
+        mmsghdr*      msg;
+        msghdr*       hdr;
+        uint32_t      conv;
+        KcpSess*      sess;
+        iovec         iovecs[IO_MSG_SIZE][IO_BLOCK_SIZE];
+        int           i, j, n = IO_MSG_SIZE, nc;
+        KcpSess::Seg* seg;
+        KcpSess::Seg* segs[IO_MSG_SIZE] = {nullptr};
+        int64_t       now_ms;
 
         while(state_ == State::Running) {
             for (i = 0; i < n; i++) {
@@ -577,11 +577,11 @@ private:
                     }
 
                     seg->sess = sess = sessions_[conv];
-                    nc = sess->_check(ufd_, &seg->addr, seg->addrlen);
+                    nc = sess->_check(ufd_, &seg->addr, seg->addrlen, now_ms);
                     switch(nc) {
                     // 新连接
                     case 1: {
-                        if (event_ && event_->on_connected(sess) < 0) {
+                        if (event_->on_connected(sess) < 0) {
                             continue;
                         }
 
@@ -591,7 +591,7 @@ private:
 
                     // 重连
                     case 2: {
-                        if (event_ && event_->on_reconnected(sess) < 0) {
+                        if (event_->on_reconnected(sess) < 0) {
                             continue;
                         }
                     } break;
@@ -621,11 +621,11 @@ private:
     void _update() {
         constexpr std::chrono::milliseconds INTVAL = std::chrono::milliseconds(KCP_UPDATE_MS);
 
-        uint32_t conv;
-        int64_t now_ms;
+        uint32_t              conv;
+        int64_t               now_ms;
         std::vector<uint32_t> convs(MAX_CONN);
-        size_t i, n;
-        KcpSess* sess;
+        size_t                i, n;
+        KcpSess*              sess;
 
         while (state_ == State::Running) {
             std::this_thread::sleep_for(INTVAL);
@@ -651,13 +651,11 @@ private:
     void _kcp_proc(KcpSess::Seg::Queue *que) {
         constexpr std::chrono::milliseconds TIMEOUT = std::chrono::milliseconds(IO_TIMEOUT);
 
-        int nrecv;
-
-        uint8_t* rbuf = new uint8_t[KCP_MAX_DATA_SIZE], *raw;
-
+        int           nrecv;
+        uint8_t*      rbuf = new uint8_t[KCP_MAX_DATA_SIZE], *raw;
         KcpSess::Seg* seg;
-        KcpSess* sess;
-        size_t n, nleft, i;
+        KcpSess*      sess;
+        size_t        n, nleft, i;
 
         while (state_ == State::Running) {
             if (que->wait_dequeue_timed(seg, TIMEOUT)) {
@@ -687,8 +685,8 @@ private:
                         }
 
                         assert(sess->get_remote() == addr2str(&seg->addr));
-                        if (event_->on_message(sess, rbuf, nrecv) == 0) {
-                            sess->_set_last_ms(seg->time_ms);
+                        if (event_->on_message(sess, rbuf, nrecv) < 0) {
+                            sess->_set_last_ms(0);
                         }
                     }
                 } while (0);

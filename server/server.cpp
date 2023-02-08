@@ -7,6 +7,20 @@ public:
 	virtual int on_message(xq::net::KcpSess* sess, const uint8_t* data, size_t datalen) override {
 		return sess->send(data, datalen);
 	}
+
+	virtual int on_connected(xq::net::KcpSess* sess) override  {
+		std::printf("+++ %u has connected\n", sess->get_conv());
+		return 0;
+	}
+
+	virtual int on_reconnected(xq::net::KcpSess* sess) override {
+		std::printf("### %u has reconnected\n", sess->get_conv());
+		return 0;
+	}
+
+	virtual void on_disconnected(xq::net::KcpSess* sess) override {
+		std::printf("--- %u has disconnected\n", sess->get_conv());
+	}
 };
 
 constexpr char HOST[] = ":6688";

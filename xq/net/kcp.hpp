@@ -110,7 +110,11 @@ public:
     /// @param len 
     /// @return 成功返回0, 否则返回!0
     int send(const uint8_t* buf, int len) {
-        return ::ikcp_send(kcp_, (const char *)buf, len);
+        int ret = ::ikcp_send(kcp_, (const char *)buf, len);
+        if (ret == 0) {
+            ikcp_flush(kcp_);
+        }
+        return ret;
     }
 
 
