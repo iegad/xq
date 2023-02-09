@@ -18,6 +18,9 @@ namespace net {
 
 // ------------------------------------------------------------------------ KcpSess ------------------------------------------------------------------------
 
+
+class KcpListener;
+
 /// @brief Kcp 会话
 class KcpSess final {
 public:
@@ -34,20 +37,20 @@ public:
             return xq::tools::ObjectPool<Seg>::Instance();
         }
 
-        int       len;                          // 消息总长度
-        KcpSess*  sess;                         // 消息来源
-        socklen_t addrlen;                      // 地址长度
-        sockaddr  addr;                         // 地址
-        int64_t   time_ms;                      // 消息包时间
+        int       len;                               // 消息总长度
+        KcpSess*  sess;                              // 消息来源
+        socklen_t addrlen;                           // 地址长度
+        sockaddr  addr;                              // 地址
+        int64_t   time_ms;                           // 消息包时间
 #ifndef WIN32
-        uint8_t   data[IO_BLOCK_SIZE][KCP_MTU]; // 数据块
+        uint8_t   data[IO_BLOCK_SIZE][IO_RBUF_SIZE]; // 数据块
 #else
-        uint8_t   data[1][KCP_MTU];             // 数据块
+        uint8_t   data[1][IO_RBUF_SIZE];             // 数据块
 #endif // !WIN32
 
         /// @brief Seg 构造函数
         explicit Seg()
-            : len(KCP_MTU* IO_BLOCK_SIZE)
+            : len(0)
             , sess(nullptr)
             , addrlen(sizeof(addr))
             , addr({ 0,{0} })
@@ -123,21 +126,22 @@ private:
 
 
     /// @brief 构造函数
-    explicit KcpSess(uint32_t conv)
+    explicit KcpSess(uint32_t conv, KcpListener *listener)
         : ufd_(INVALID_SOCKET)
         , que_num_(~0)
         , time_ms_(0)
         , last_ms_(0)
         , raddr_({ 0,{0}})
         , raddrlen_(sizeof(raddr_))
+        , listener_(listener)
         , kcp_(new Kcp(conv, this)) {
 #ifndef WIN32
         ::memset(&msg_, 0, sizeof(msg_));
         iovec* tmp = new iovec[IO_BLOCK_SIZE];
         msg_.msg_iov = tmp;
         for (size_t i = 0; i < IO_BLOCK_SIZE; i++) {
-            tmp[i].iov_base = new uint8_t[KCP_MTU];
-            tmp[i].iov_len = KCP_MTU;
+            tmp[i].iov_base = new uint8_t[IO_RBUF_SIZE];
+            tmp[i].iov_len = IO_RBUF_SIZE;
         }
 #endif // !WIN32
     }
@@ -297,12 +301,14 @@ private:
     msghdr msg_;         // sendmsg 入参
 #endif // !WIN32
 
-    Kcp*        kcp_;      // KCP实例
-    std::string remote_;   // 对端址地表达式
+    KcpListener* listener_;
+    Kcp*         kcp_;      // KCP实例
+    std::string  remote_;   // 对端址地表达式
 
-    LockType    kcp_mtx_;
-    LockType    time_mtx_;
-    LockType    addr_mtx_;
+    LockType     kcp_mtx_;  // kcp锁
+    LockType     time_mtx_; // last_ms_, time_ms_锁
+    LockType     addr_mtx_; // addr锁
+   
 
     KcpSess(const KcpSess&) = delete;
     KcpSess& operator=(const KcpSess&) = delete;
@@ -330,6 +336,8 @@ public:
         virtual void on_disconnected(KcpSess*) {}
         virtual int  on_message(KcpSess*, const uint8_t*, size_t) = 0;
         virtual void on_error(int, KcpSess*) {}
+        virtual void on_send(KcpSess*, const uint8_t*, size_t) {}
+        virtual void on_recv(KcpSess*, KcpSess::Seg*) {}
     }; // class IEvent;
     // ----------------------------------- END IEvent -------------------------------------
 
@@ -424,9 +432,9 @@ private:
         assert(MAX_CONN > 0 && "max_conn is invalid");
 
         for (size_t i = 1; i <= MAX_CONN; i++) {
-            KcpSess* sess = new KcpSess(i);
+            KcpSess* sess = new KcpSess(i, this);
             sess->kcp_->set_output(&KcpListener::output);
-            sess->kcp_->nodelay(1, KCP_UPDATE_MS, 4, 0);
+            sess->kcp_->nodelay(1, KCP_UPDATE_MS, 3, 1);
             sessions_.insert(std::make_pair(i, sess));
         }
 
@@ -441,11 +449,15 @@ private:
         KcpSess* sess = (KcpSess*)user;
 #ifndef WIN32
         sess->_append_data((uint8_t*)raw, len);
+        sess->listener_->event_->on_send(sess, (const uint8_t *)raw, len);
 #else
         int n = ::sendto(sess->ufd_, raw, len, 0, &sess->raddr_, sess->raddrlen_);
         if (n < 0) {
-            std::printf("::sendto failed: %d\n", error());
+            sess->listener_->event_->on_error(error(), sess);
+            return -1;
         }
+
+        sess->listener_->event_->on_send(sess, (const uint8_t *)raw, len);
 #endif // !WIN32
         return 0;
     }
@@ -469,7 +481,7 @@ private:
             seg = KcpSess::Seg::pool()->get();
             seg->addrlen = sizeof(sockaddr);
 
-            rawlen = ::recvfrom(ufd_, (char *)seg->data[0], KCP_MTU, 0, &seg->addr, &seg->addrlen);
+            rawlen = ::recvfrom(ufd_, (char *)seg->data[0], IO_RBUF_SIZE, 0, &seg->addr, &seg->addrlen);
             if (rawlen < 0) {
                 if (error() != 10060) {
                     event_->on_error(error(), nullptr);
@@ -510,6 +522,7 @@ private:
             } // switch(n);
 
             seg->time_ms = now_ms;
+            event_->on_recv(sess, seg);
             // Step 4: 投递消息
             assert(rques_[sess->get_que_num()]->enqueue(seg));
         }
@@ -549,7 +562,7 @@ private:
 
                 for (j = 0; j < IO_BLOCK_SIZE; j++) {
                     iovecs[i][j].iov_base = seg->data[j];
-                    iovecs[i][j].iov_len = KCP_MTU;
+                    iovecs[i][j].iov_len = IO_RBUF_SIZE;
                 }
             }
 
@@ -599,6 +612,7 @@ private:
                     } // switch(n);
 
                     seg->time_ms = now_ms;
+                    event_->on_recv(sess, seg);
                     // Step 4: 投递队列
                     assert(rques_[sess->get_que_num()]->enqueue(seg));
                 } // for (i = 0; i < n; i++);
@@ -638,9 +652,7 @@ private:
                 if (!sess->_update(now_ms)) {
                     active_convs_.erase(conv);
                     conns_--;
-                    if (event_) {
-                        event_->on_disconnected(sess);
-                    }
+                    event_->on_disconnected(sess);
                 }
             }
         }
@@ -668,7 +680,7 @@ private:
                     i = 0;
 
                     while (nleft > 0) {
-                        n = nleft > KCP_MTU ? KCP_MTU : nleft;
+                        n = nleft > IO_RBUF_SIZE ? IO_RBUF_SIZE : nleft;
                         raw = seg->data[i++];
                         if (sess->_input(raw, n) < 0) {
                             // TODO:

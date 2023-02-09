@@ -27,9 +27,9 @@ public:
         sockaddr addr;      // 地址
         int64_t time_ms;    // 消息包时间
 #ifndef WIN32
-        uint8_t data[IO_BLOCK_SIZE][KCP_MTU];   // 数据块
+        uint8_t data[IO_BLOCK_SIZE][IO_RBUF_SIZE];   // 数据块
 #else
-        uint8_t data[1][KCP_MTU];               // 数据块
+        uint8_t data[1][IO_RBUF_SIZE];               // 数据块
 #endif // !WIN32
 
 /// <summary>
@@ -148,9 +148,12 @@ public:
         ufd_ = udp_bind(local_);
         assert(ufd_ != INVALID_SOCKET && "udp socket build failed");
 #ifdef WIN32
-        constexpr int TIMEOUT = 5000;
-        assert(!::setsockopt(ufd_, SOL_SOCKET, SO_RCVTIMEO, (const char *)&TIMEOUT, sizeof(TIMEOUT)));
+        assert(!::setsockopt(ufd_, SOL_SOCKET, SO_RCVTIMEO, (const char *)&IO_TIMEOUT, sizeof(IO_TIMEOUT)));
 #endif // WIN32
+
+        for (auto &host : kcp_hosts_) {
+            host.second->ufd_ = ufd_;
+        }
 
         state_ = State::Running;
 
@@ -178,6 +181,15 @@ public:
         state_ = State::Stopping;
     }
 
+    int send(const std::string& host, const uint8_t* data, size_t datalen) {
+        auto itr = kcp_hosts_.find(host);
+        if (itr == kcp_hosts_.end()) {
+            return -5;
+        }
+
+        return itr->second->_send(data, datalen);
+    }
+
 private:
     KcpConn(uint32_t conv, const std::string &local, const std::vector<std::string> &hosts, size_t nthread)
         : state_(State::Stopped)
@@ -192,8 +204,10 @@ private:
         }
 
         for (i = 0; i < n; i++) {
-            KcpHost* kh = new KcpHost(conv_, hosts[i], i % nthread);
-            kcp_hosts_.insert(std::make_pair(kh->get_host(), kh));
+            KcpHost* host = new KcpHost(conv_, hosts[i], i % nthread);
+            host->kcp_->set_output(&KcpConn::output);
+            host->kcp_->nodelay(1, 10, 3, 1);
+            kcp_hosts_.insert(std::make_pair(host->get_host(), host));
         }
     }
 
@@ -219,9 +233,11 @@ private:
             seg = KcpHost::Seg::pool()->get();
             seg->addrlen = sizeof(sockaddr);
 
-            rawlen = ::recvfrom(ufd_, (char*)seg->data[0], KCP_MTU, 0, &seg->addr, &seg->addrlen);
-            if (rawlen < 0 && error() != 10060) {
-                // TODO: ...
+            rawlen = ::recvfrom(ufd_, (char*)seg->data[0], IO_RBUF_SIZE, 0, &seg->addr, &seg->addrlen);
+            if (rawlen < 0) {
+                if (error() != 10060) {
+                    std::printf("recv failed: %d\n", error());
+                }
                 continue;
             }
 
@@ -253,7 +269,7 @@ private:
     }
 
     void _kcp_proc(KcpHost::Seg::Queue *que) {
-        constexpr std::chrono::duration TIMEOUT = std::chrono::seconds(5);
+        constexpr std::chrono::milliseconds TIMEOUT = std::chrono::milliseconds(IO_TIMEOUT);
 
         KcpHost::Seg* seg;
         KcpHost* host;
@@ -287,7 +303,7 @@ private:
                         }
 
                         assert(host->host_ == addr2str(&seg->addr));
-                        // TODO: event:
+                        std::printf("%s\n", std::string((char *)rbuf, n).c_str());
                     }
 
                 } while (0);
