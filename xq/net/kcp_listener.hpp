@@ -61,7 +61,7 @@ public:
     // ---------------------------------- END Seg --------------------------------------
 
 
-    typedef xq::tools::SpinLock LockType;
+    typedef std::mutex LockType;
     friend class KcpListener;
 
 
@@ -92,19 +92,6 @@ public:
     }
 
 
-    /// @brief  获取kcp 工作队列号
-    uint32_t get_que_num() const {
-        return que_num_;
-    }
-
-
-    /// @brief 获取最后接收数据时间
-    int64_t get_last_time() {
-        std::lock_guard<LockType> lk(time_mtx_);
-        return last_ms_;
-    }
-
-
     /// @brief  发送数据
     /// @return 成功返回0, 否则返回!0.
     int send(const uint8_t* buf, int len) {
@@ -114,9 +101,9 @@ public:
             rzt = kcp_->send(buf, len);
         }
         
-        if (rzt == 0) {
-            _sendmsg();
-        }
+        // if (rzt == 0) {
+        //     _sendmsg();
+        // }
 
         return rzt;
     }
@@ -147,22 +134,12 @@ private:
     }
 
 
-    /// @brief 设置 kcp sess工作队列号
-    void _set_que_num(uint32_t que_num) {
-        que_num_ = que_num;
-    }
-
-
     /// @brief 检查该会话地址是否改变
-    /// @return 返回 0 时, 未改变; 返回 1 时, 新连接; 返回 2 时, 重新连接.
+    /// @return 返回 0 时, 未改变; 返回 1 时, 新连接; 返回 2 时, 重新连接; 返回 -1 时: sess超时
     /// @note  通过检查ufd 和对端地址, 来确认该kcp sess是否产生新的连接, 如果产生新的连接重置 kcp
-    int _check(SOCKET ufd, sockaddr *addr, socklen_t addrlen, int64_t now_ms) {
+    int _check(sockaddr *addr, socklen_t addrlen, int64_t now_ms) {
         int  res     = 0;
         bool changed = false;
-
-        if (ufd != ufd_) {
-            ufd_ = ufd;
-        }
 
         {
             std::lock_guard<LockType> lk(addr_mtx_);
@@ -194,6 +171,10 @@ private:
                 }
                 last_ms_ = time_ms_ = now_ms;
             }
+        } else {
+            if (now_ms - last_ms_ > KCP_TIMEOUT) {
+                res = -1;
+            }
         }
 
         return res;
@@ -220,15 +201,9 @@ private:
     bool _update(int64_t now_ms) {
         {
             std::lock_guard<LockType> lk(time_mtx_);
-            // 该kcp sess未激活
-            if (ufd_ == INVALID_SOCKET || last_ms_ == 0) {
-                return false;
-            }
-
             // 该kcp sess超时
             if (now_ms - last_ms_ > KCP_TIMEOUT) {
                 time_ms_ = last_ms_ = 0;
-                que_num_ = ~0;
                 return false;
             }
         }
@@ -241,14 +216,6 @@ private:
         _sendmsg();
 
         return true;
-    }
-
-
-    /// @brief 设置最后数据读取时间
-    /// @param now_ms 当前时间戳毫秒
-    void _set_last_ms(int64_t now_ms) {
-        std::lock_guard<LockType> lk(time_mtx_);
-        last_ms_ = now_ms;
     }
 
 
@@ -293,7 +260,7 @@ private:
     SOCKET    ufd_;      // UDP
     uint32_t  que_num_;  // 当前工作队列号
     int64_t   time_ms_;  // 激活时间
-    int64_t   last_ms_;  // 最后读取数据时间
+    std::atomic<int64_t>   last_ms_;  // 最后读取数据时间
     sockaddr  raddr_;    // 对端地址
     socklen_t raddrlen_;
 
@@ -372,6 +339,9 @@ public:
 #ifdef WIN32
         assert(!::setsockopt(ufd_, SOL_SOCKET, SO_RCVTIMEO, (const char *)&IO_TIMEOUT, sizeof(IO_TIMEOUT)));
 #endif // WIN32
+        for (auto& itr : sessions_) {
+            itr.second->ufd_ = ufd_;
+        }
 
         state_ = State::Running;
 
@@ -469,62 +439,70 @@ private:
     /// @brief IO 工作线程
     void _rx() {
         static const size_t QUE_SIZE = std::thread::hardware_concurrency();
+        using SegPool = xq::tools::ObjectPool<KcpSess::Seg>;
 
+        SegPool*      segpool = KcpSess::Seg::pool();
         int           rawlen, n;
         uint32_t      conv;
-        KcpSess::Seg* seg;
+        KcpSess::Seg* seg = nullptr;
         KcpSess*      sess;
         int64_t       now_ms;
 
         while (state_ == State::Running) {
             // Step 2: 获取数据
-            seg = KcpSess::Seg::pool()->get();
-            seg->addrlen = sizeof(sockaddr);
+            if (!seg) {
+                seg = segpool->get();
+                assert(seg);
+                seg->addrlen = sizeof(sockaddr);
+            }
 
             rawlen = ::recvfrom(ufd_, (char *)seg->data[0], IO_RBUF_SIZE, 0, &seg->addr, &seg->addrlen);
-            if (rawlen < 0) {
-                if (error() != 10060) {
-                    event_->on_error(error(), nullptr);
-                }
-                continue;
-            }
 
-            if (rawlen < KCP_HEAD_SIZE) {
-                continue;
-            }
-
-            now_ms = xq::tools::now_milli();
-            // Step 3: 构建对象
-            conv = Kcp::get_conv(seg->data[0]);
-            if (conv == 0 || conv > MAX_CONN) {
-                continue;
-            }
-
-            seg->sess = sess = sessions_[conv];
-            n = sess->_check(ufd_, &seg->addr, seg->addrlen, now_ms);
-            switch(n) {
-            // 新连接
-            case 1: {
-                if (event_->on_connected(sess) < 0) {
-                    continue;
+            do {
+                if (rawlen < 0) {
+                    if (error() != 10060) {
+                        event_->on_error(error(), nullptr);
+                    }
+                    break;
                 }
 
-                sess->_set_que_num(conns_++ % QUE_SIZE);
-                active_convs_.insert(conv);
-            } break;
-            
-            // 重连
-            case 2: {
-                if (event_->on_reconnected(sess) < 0) {
-                    continue;
+                if (rawlen < KCP_HEAD_SIZE) {
+                    break;
                 }
-            } break;
-            } // switch(n);
 
-            seg->time_ms = now_ms;
-            event_->on_recv(sess, seg);
-            // Step 4: 投递消息
-            assert(rques_[sess->get_que_num()]->enqueue(seg));
+                // Step 3: 构建对象
+                conv = Kcp::get_conv(seg->data[0]);
+                if (conv == 0 || conv > MAX_CONN) {
+                    break;
+                }
+
+                now_ms = xq::tools::now_milli();
+                seg->sess = sess = sessions_[conv];
+                n = sess->_check(&seg->addr, seg->addrlen, now_ms);
+
+                if (n == -1) {
+                    // 超时
+                    break;
+                } else if (n == 1) {
+                    // 新连接
+                    if (event_->on_connected(sess) < 0) {
+                        break;
+                    }
+                    sess->que_num_ = (conns_++ % QUE_SIZE);
+                    active_convs_.insert(conv);
+                } else if (n == 2) {
+                    // 重连
+                    if (event_->on_reconnected(sess) < 0) {
+                        break;
+                    }
+                }
+
+                seg->time_ms = now_ms;
+                event_->on_recv(sess, seg);
+                // Step 4: 投递消息
+                assert(rques_[sess->que_num_]->enqueue(seg));
+                seg = nullptr;
+            } while (0);
         }
     }
 
@@ -553,7 +531,11 @@ private:
 
         while(state_ == State::Running) {
             for (i = 0; i < n; i++) {
-                segs[i] = seg = KcpSess::Seg::pool()->get();
+                seg = segs[i];
+                if (!seg) {
+                    segs[i] = seg = KcpSess::Seg::pool()->get();
+                }
+
                 hdr = &msgs[i].msg_hdr;
                 hdr->msg_name = &seg->addr;
                 hdr->msg_namelen = sizeof(sockaddr);
@@ -569,12 +551,21 @@ private:
             // Step 2: 获取消息
             n = ::recvmmsg(ufd_, msgs, IO_MSG_SIZE, MSG_WAITFORONE, &TIMEOUT);
 
-            if (n > 0) {
+            do {
+                if (n < 0) {
+                    // TODO: error
+                    break;
+                }
+
+                if (n == 0) {
+                    break;
+                }
+
                 now_ms = xq::tools::now_milli();
+
                 for (i = 0; i < n; i++) {
                     msg = &msgs[i];
                     seg = segs[i];
-                    segs[i] = nullptr;
                     rawlen = msg->msg_len;
                     if (rawlen < KCP_HEAD_SIZE) {
                         continue;
@@ -590,15 +581,18 @@ private:
                     }
 
                     seg->sess = sess = sessions_[conv];
-                    nc = sess->_check(ufd_, &seg->addr, seg->addrlen, now_ms);
+                    nc = sess->_check(&seg->addr, seg->addrlen, now_ms);
                     switch(nc) {
+                    // 超时
+                    case -1: continue; break;
+
                     // 新连接
                     case 1: {
                         if (event_->on_connected(sess) < 0) {
                             continue;
                         }
 
-                        sess->_set_que_num(conns_++ % QUE_SIZE);
+                        sess->que_num_ = conns_++ % QUE_SIZE;
                         active_convs_.insert(conv);
                     } break;
 
@@ -614,9 +608,11 @@ private:
                     seg->time_ms = now_ms;
                     event_->on_recv(sess, seg);
                     // Step 4: 投递队列
-                    assert(rques_[sess->get_que_num()]->enqueue(seg));
+                    assert(rques_[sess->que_num_]->enqueue(seg));
+                    segs[i] = nullptr;
                 } // for (i = 0; i < n; i++);
-            }
+
+            } while(0);
         }
 
         for (i = 0; i < IO_MSG_SIZE; i++) {
@@ -697,9 +693,7 @@ private:
                         }
 
                         assert(sess->get_remote() == addr2str(&seg->addr));
-                        if (event_->on_message(sess, rbuf, nrecv) < 0) {
-                            sess->_set_last_ms(0);
-                        }
+                        sess->last_ms_ = event_->on_message(sess, rbuf, nrecv) == 0 ? seg->time_ms : 0;
                     }
                 } while (0);
 
