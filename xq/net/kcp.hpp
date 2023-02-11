@@ -39,6 +39,7 @@ public:
     /// @param user 附加参数, 该框架中为: KcpSess / KcpHost
     explicit Kcp(uint32_t conv, void* user)
         : kcp_(::ikcp_create(conv, user)) {
+        ::ikcp_nodelay(kcp_, 1, 5, 3, 1);
         ::ikcp_setmtu(kcp_, KCP_MTU);
         ::ikcp_wndsize(kcp_, KCP_WND, KCP_WND);
         kcp_->updated = 1;
@@ -152,7 +153,7 @@ public:
 
 
     /// @brief 重置KCP
-    void reset() {
+    void reset(uint32_t conv) {
         IKCPSEG* seg;
         while (!IQUEUE_IS_EMPTY(&kcp_->snd_buf)) {
             seg = IQUEUE_ENTRY(kcp_->snd_buf.next, IKCPSEG, node);
@@ -175,6 +176,7 @@ public:
             ::free(seg);
         }
 
+        kcp_->conv = conv;
         kcp_->snd_una = 0;
         kcp_->snd_nxt = 0;
         kcp_->rcv_nxt = 0;

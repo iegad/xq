@@ -15,6 +15,7 @@
 #include <mutex>
 #include <string>
 #include <unordered_set>
+#include <unordered_map>
 #include <vector>
 
 #include "xq/third/concurrentqueue.h"
@@ -365,6 +366,58 @@ private:
     std::unordered_set<T> m_;
 }; // class Set;
 
+// ---------------------------------------------------------------------------- safe map ----------------------------------------------------------------------------
+
+template <typename TKey, typename TVal, typename TLock = std::mutex>
+class Map {
+public:
+    Map() = default;
+    ~Map() = default;
+    Map(const Map&) = delete;
+    Map& operator=(const Map&) = delete;
+
+    size_t get_all_vals(std::vector<TVal> &keys) {
+        size_t i = 0;
+        std::lock_guard<TLock> lk(mtx_);
+        for (auto &itr: m_) {
+            keys[i++] = itr.second;
+        }
+        return i;
+    }
+
+    auto insert(const TKey& k, const TVal& v) {
+        std::lock_guard<TLock> lk(mtx_);
+        return m_.insert(std::make_pair(k, v));
+    }
+
+    bool get(const TKey& k, TVal &v) {
+        std::lock_guard<TLock> lk(mtx_);
+        auto itr = m_.find(k);
+        if (itr == m_.end()) {
+            return false;
+        }
+
+        v = itr->second;
+        return true;
+    }
+
+    void clear() {
+        std::lock_guard<TLock> lk(mtx_);
+        m_.clear();
+    }
+
+    auto erase(std::vector<TKey> keys, size_t n) {
+        std::lock_guard<TLock> lk(mtx_);
+        for (auto &k: keys) {
+            m_.erase(k);
+        }
+    }
+
+private:
+    TLock mtx_;
+    std::unordered_map<TKey, TVal> m_;
+};
+
 // ---------------------------------------------------------------------------- safe object pool  ----------------------------------------------------------------------------
 template <typename T>
 class ObjectPool {
@@ -380,7 +433,7 @@ public:
     }
 
     static ObjectPool*
-    Instance() {
+    instance() {
         static ObjectPool instance_;
         return &instance_;
     }

@@ -35,7 +35,7 @@ main(int, char**) {
 
 	EchoEvent ev;
 
-	xq::net::KcpListener::Ptr listener = xq::net::KcpListener::create(&ev, HOST, 1000);
+	xq::net::KcpListener::Ptr listener = xq::net::KcpListener::create(&ev, HOST, 2000);
 	listener->run();
 
 #ifdef _WIN32

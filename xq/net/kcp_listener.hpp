@@ -16,15 +16,21 @@ namespace xq {
 namespace net {
 
 
+typedef std::mutex LockType;
+
+
 // ------------------------------------------------------------------------ KcpSess ------------------------------------------------------------------------
 
-
 class KcpListener;
+
 
 /// @brief Kcp 会话
 class KcpSess final {
 public:
+    typedef KcpSess* ptr;
 
+
+    friend class KcpListener;
 
     // ------------------------------------ BEGIN Seg ------------------------------------
     struct Seg {
@@ -34,7 +40,7 @@ public:
 
         /// @brief Seg 对象池
         static xq::tools::ObjectPool<Seg>* pool() {
-            return xq::tools::ObjectPool<Seg>::Instance();
+            return xq::tools::ObjectPool<Seg>::instance();
         }
 
         int       len;                               // 消息总长度
@@ -61,8 +67,38 @@ public:
     // ---------------------------------- END Seg --------------------------------------
 
 
-    typedef std::mutex LockType;
-    friend class KcpListener;
+    static xq::tools::ObjectPool<KcpSess>* pool() {
+        return xq::tools::ObjectPool<KcpSess>::instance();
+    }
+
+
+    /// @brief 构造函数
+    explicit KcpSess()
+        : ufd_(INVALID_SOCKET)
+        , que_num_(~0)
+        , time_ms_(0)
+        , last_ms_(0)
+    #ifdef WIN32
+        , raddr_({ 0,{0} })
+        , raddrlen_(sizeof(raddr_))
+    #endif
+        , listener_(nullptr)
+        , kcp_(nullptr) {
+#ifndef WIN32
+        ::memset(&msg_, 0, sizeof(msg_));
+        msg_.msg_control = nullptr;
+        msg_.msg_controllen = 0;
+        msg_.msg_flags = 0;
+        msg_.msg_name = ::malloc(sizeof(sockaddr));
+        msg_.msg_namelen = sizeof(sockaddr);
+        iovec* tmp = new iovec[IO_BLOCK_SIZE];
+        msg_.msg_iov = tmp;
+        for (size_t i = 0; i < IO_BLOCK_SIZE; i++) {
+            tmp[i].iov_base = new uint8_t[IO_RBUF_SIZE];
+            tmp[i].iov_len = IO_RBUF_SIZE;
+        }
+#endif // !WIN32
+    }
 
 
     ~KcpSess() {
@@ -112,75 +148,45 @@ public:
 private:
 
 
-    /// @brief 构造函数
-    explicit KcpSess(uint32_t conv, KcpListener *listener)
-        : ufd_(INVALID_SOCKET)
-        , que_num_(~0)
-        , time_ms_(0)
-        , last_ms_(0)
-        , raddr_({ 0,{0}})
-        , raddrlen_(sizeof(raddr_))
-        , listener_(listener)
-        , kcp_(new Kcp(conv, this)) {
-#ifndef WIN32
-        ::memset(&msg_, 0, sizeof(msg_));
-        iovec* tmp = new iovec[IO_BLOCK_SIZE];
-        msg_.msg_iov = tmp;
-        for (size_t i = 0; i < IO_BLOCK_SIZE; i++) {
-            tmp[i].iov_base = new uint8_t[IO_RBUF_SIZE];
-            tmp[i].iov_len = IO_RBUF_SIZE;
-        }
-#endif // !WIN32
-    }
+    void _set(
+        SOCKET ufd, 
+        uint32_t conv, 
+        KcpListener *listener, 
+        sockaddr *addr, 
+        socklen_t addrlen, 
+        const std::string& remote, 
+        int64_t now_ms, 
+        uint32_t que_num, 
+        int (*output)(const char* buf, int len, ikcpcb* kcp, void* user)) {
 
-
-    /// @brief 检查该会话地址是否改变
-    /// @return 返回 0 时, 未改变; 返回 1 时, 新连接; 返回 2 时, 重新连接; 返回 -1 时: sess超时
-    /// @note  通过检查ufd 和对端地址, 来确认该kcp sess是否产生新的连接, 如果产生新的连接重置 kcp
-    int _check(sockaddr *addr, socklen_t addrlen, int64_t now_ms) {
-        int  res     = 0;
-        bool changed = false;
-
-        {
-            std::lock_guard<LockType> lk(addr_mtx_);
-            changed = ::memcmp(addr, &raddr_, addrlen) || addrlen != raddrlen_;
-            if (changed) {                
-                ::memcpy(&raddr_, addr, addrlen);
-                raddrlen_ = addrlen;
-                remote_ = xq::net::addr2str(&raddr_);
-        #ifndef WIN32
-                msg_.msg_iovlen = 0;
-                msg_.msg_name = &raddr_;
-                msg_.msg_namelen = raddrlen_;
-        #endif // !WIN32
-
-                res++;
-            }
+        if (ufd_ != ufd) {
+            ufd_ = ufd;
         }
 
-        if (changed) {
-            {
-                std::lock_guard<LockType> lk(kcp_mtx_);
-                kcp_->reset();
-            }
-
-            {
-                std::lock_guard<LockType> lk(time_mtx_);
-                if (now_ms - last_ms_  < KCP_TIMEOUT) {
-                    res++;
-                }
-                last_ms_ = time_ms_ = now_ms;
-            }
+        if (!kcp_) {
+            kcp_ = new Kcp(conv, this);
+            kcp_->set_output(output);
         } else {
-            if (now_ms - last_ms_ > KCP_TIMEOUT) {
-                res = -1;
-            }
+            kcp_->reset(conv);
         }
 
-        return res;
+        if (!listener_) {
+            listener_ = listener;
+        }
+
+#ifdef WIN32
+        ::memcpy(&raddr_, addr, addrlen);
+        raddrlen_ = addrlen;
+#else
+        ::memcpy(msg_.msg_name, addr, addrlen);
+        msg_.msg_namelen = addrlen;
+#endif
+        remote_ = remote;
+        que_num_ = que_num;
+        time_ms_ = last_ms_ = now_ms;
     }
  
-    
+
     /// @brief kcp input
     int _input(const uint8_t* data, long size) {
         std::lock_guard<LockType> lk(kcp_mtx_);
@@ -198,13 +204,12 @@ private:
     /// @brief kcp update
     /// @param now_ms 当前时间戳毫秒
     /// @return 成功UPDATE返回true, 否则返回false
-    bool _update(int64_t now_ms) {
+    int _update(int64_t now_ms) {
         {
-            std::lock_guard<LockType> lk(time_mtx_);
             // 该kcp sess超时
             if (now_ms - last_ms_ > KCP_TIMEOUT) {
                 time_ms_ = last_ms_ = 0;
-                return false;
+                return -1;
             }
         }
 
@@ -215,7 +220,7 @@ private:
 
         _sendmsg();
 
-        return true;
+        return 0;
     }
 
 
@@ -246,7 +251,6 @@ private:
         }
 
         {
-            std::lock_guard<LockType> lk(addr_mtx_);
             if (::sendmsg(ufd_, &msg_, 0) < 0) {
                 //TODO: ...
                 printf("sendmsg failed: %d\n", error());
@@ -261,11 +265,12 @@ private:
     uint32_t  que_num_;  // 当前工作队列号
     int64_t   time_ms_;  // 激活时间
     std::atomic<int64_t>   last_ms_;  // 最后读取数据时间
-    sockaddr  raddr_;    // 对端地址
-    socklen_t raddrlen_;
 
 #ifndef WIN32
     msghdr msg_;         // sendmsg 入参
+#else
+    sockaddr  raddr_;    // 对端地址
+    socklen_t raddrlen_;
 #endif // !WIN32
 
     KcpListener* listener_;
@@ -273,9 +278,6 @@ private:
     std::string  remote_;   // 对端址地表达式
 
     LockType     kcp_mtx_;  // kcp锁
-    LockType     time_mtx_; // last_ms_, time_ms_锁
-    LockType     addr_mtx_; // addr锁
-   
 
     KcpSess(const KcpSess&) = delete;
     KcpSess& operator=(const KcpSess&) = delete;
@@ -321,10 +323,6 @@ public:
     }
 
     ~KcpListener() {
-        for (auto& itr : sessions_) {
-            delete itr.second;
-        }
-
         for (auto q : rques_) {
             delete q;
         }
@@ -339,9 +337,6 @@ public:
 #ifdef WIN32
         assert(!::setsockopt(ufd_, SOL_SOCKET, SO_RCVTIMEO, (const char *)&IO_TIMEOUT, sizeof(IO_TIMEOUT)));
 #endif // WIN32
-        for (auto& itr : sessions_) {
-            itr.second->ufd_ = ufd_;
-        }
 
         state_ = State::Running;
 
@@ -394,19 +389,12 @@ private:
 
     /// @brief 构造函数
     KcpListener(IEvent *ev, const std::string& host, uint32_t max_conn)
-        : MAX_CONN(max_conn)
+        : MAX_CONV(max_conn)
         , state_(State::Stopped)
         , ufd_(INVALID_SOCKET)
         , host_(host)
         , event_(ev) {
-        assert(MAX_CONN > 0 && "max_conn is invalid");
-
-        for (size_t i = 1; i <= MAX_CONN; i++) {
-            KcpSess* sess = new KcpSess(i, this);
-            sess->kcp_->set_output(&KcpListener::output);
-            sess->kcp_->nodelay(1, KCP_UPDATE_MS, 3, 1);
-            sessions_.insert(std::make_pair(i, sess));
-        }
+        assert(MAX_CONV > 0 && "max_conn is invalid");
 
         for (size_t i = 0, n = std::thread::hardware_concurrency(); i < n; i++) {
             rques_.push_back(new KcpSess::Seg::Queue(2048));
@@ -439,6 +427,7 @@ private:
     /// @brief IO 工作线程
     void _rx() {
         static const size_t QUE_SIZE = std::thread::hardware_concurrency();
+        static const size_t MAX_COUNT = MAX_CONV * 1.5;
         using SegPool = xq::tools::ObjectPool<KcpSess::Seg>;
 
         SegPool*      segpool = KcpSess::Seg::pool();
@@ -472,32 +461,27 @@ private:
 
                 // Step 3: 构建对象
                 conv = Kcp::get_conv(seg->data[0]);
-                if (conv == 0 || conv > MAX_CONN) {
+                if (conv == 0 || conv > MAX_CONV) {
                     break;
                 }
 
                 now_ms = xq::tools::now_milli();
-                seg->sess = sess = sessions_[conv];
-                n = sess->_check(&seg->addr, seg->addrlen, now_ms);
+                std::string remote = xq::net::addr2str(&seg->addr);
+                assert(remote.size() > 0);
 
-                if (n == -1) {
-                    // 超时
-                    break;
-                } else if (n == 1) {
-                    // 新连接
-                    if (event_->on_connected(sess) < 0) {
-                        break;
+                if (!sessions_.get(remote, sess)) {
+                    if (conns_ >= MAX_COUNT) {
+                        continue;
                     }
-                    sess->que_num_ = (conns_++ % QUE_SIZE);
-                    active_convs_.insert(conv);
-                } else if (n == 2) {
-                    // 重连
-                    if (event_->on_reconnected(sess) < 0) {
-                        break;
-                    }
+
+                    sess = KcpSess::pool()->get();
+                    sess->_set(ufd_, conv, this, &seg->addr, seg->addrlen, remote, now_ms, conns_++ % QUE_SIZE, &KcpListener::output);
+                    sessions_.insert(remote, sess);
                 }
 
+                seg->sess = sess;
                 seg->time_ms = now_ms;
+                seg->len = rawlen;
                 event_->on_recv(sess, seg);
                 // Step 4: 投递消息
                 assert(rques_[sess->que_num_]->enqueue(seg));
@@ -513,6 +497,7 @@ private:
     /// @brief IO 工作线程
     void _rx() {
         const  size_t   QUE_SIZE = std::thread::hardware_concurrency();
+        const int32_t MAX_CONN = MAX_CONV * 1.5;
         static timespec TIMEOUT  = {.tv_sec = IO_TIMEOUT / 1000, .tv_nsec = 0};
 
         mmsghdr msgs[IO_MSG_SIZE];
@@ -524,7 +509,7 @@ private:
         uint32_t      conv;
         KcpSess*      sess;
         iovec         iovecs[IO_MSG_SIZE][IO_BLOCK_SIZE];
-        int           i, j, n = IO_MSG_SIZE, nc;
+        int           i, j, n = IO_MSG_SIZE;
         KcpSess::Seg* seg;
         KcpSess::Seg* segs[IO_MSG_SIZE] = {nullptr};
         int64_t       now_ms;
@@ -571,41 +556,29 @@ private:
                         continue;
                     }
 
-                    seg->addrlen = msg->msg_hdr.msg_namelen;
-                    seg->len = rawlen;
-
                     // Step 3: 获取会话
                     conv = Kcp::get_conv(seg->data[0]);
-                    if (conv == 0 || conv > MAX_CONN) {
+                    if (conv == 0 || conv > MAX_CONV) {
                         continue;
                     }
 
-                    seg->sess = sess = sessions_[conv];
-                    nc = sess->_check(&seg->addr, seg->addrlen, now_ms);
-                    switch(nc) {
-                    // 超时
-                    case -1: continue; break;
+                    std::string remote = xq::net::addr2str(&seg->addr);
+                    assert(remote.size() > 0);
 
-                    // 新连接
-                    case 1: {
-                        if (event_->on_connected(sess) < 0) {
-                            continue;
+                    seg->addrlen = msg->msg_hdr.msg_namelen;
+                    if (!sessions_.get(remote, sess)) {
+                        if (conns_ >= MAX_CONN) {
+                            break;
                         }
 
-                        sess->que_num_ = conns_++ % QUE_SIZE;
-                        active_convs_.insert(conv);
-                    } break;
+                        sess = KcpSess::pool()->get();
+                        sess->_set(ufd_, conv, this, &seg->addr, seg->addrlen, remote, now_ms, conns_++ % QUE_SIZE, &KcpListener::output);
+                        sessions_.insert(remote, sess);
+                    }
 
-                    // 重连
-                    case 2: {
-                        if (event_->on_reconnected(sess) < 0) {
-                            continue;
-                        }
-                    } break;
-
-                    } // switch(n);
-
+                    seg->sess = sess;
                     seg->time_ms = now_ms;
+                    seg->len = rawlen;
                     event_->on_recv(sess, seg);
                     // Step 4: 投递队列
                     assert(rques_[sess->que_num_]->enqueue(seg));
@@ -629,27 +602,32 @@ private:
 
     /// @brief KCP UPDATE线程
     void _update() {
-        constexpr std::chrono::milliseconds INTVAL = std::chrono::milliseconds(KCP_UPDATE_MS);
+        constexpr std::chrono::milliseconds INTVAL = std::chrono::milliseconds(1);
 
-        uint32_t              conv;
         int64_t               now_ms;
-        std::vector<uint32_t> convs(MAX_CONN);
-        size_t                i, n;
+        std::vector<KcpSess*> convs(MAX_CONV);
+        std::vector<std::string> erase_keys(MAX_CONV);
+        std::vector<KcpSess*> erase_sess(MAX_CONV);
+        size_t                i, n, nerase;
         KcpSess*              sess;
 
         while (state_ == State::Running) {
+            nerase = 0;
             std::this_thread::sleep_for(INTVAL);
 
             now_ms = xq::tools::now_milli();
-            n = active_convs_.as_vec(convs);
+            n = sessions_.get_all_vals(convs);
             for (i = 0; i < n; i++) {
-                conv = convs[i];
-                sess = sessions_[conv];
-                if (!sess->_update(now_ms)) {
-                    active_convs_.erase(conv);
-                    conns_--;
-                    event_->on_disconnected(sess);
+                sess = convs[i];
+                if (sess->_update(now_ms) < 0) {
+                    erase_sess[nerase] = sess;
+                    erase_keys[nerase++] = sess->remote_;
                 }
+            }
+
+            sessions_.erase(erase_keys, nerase);
+            for (i = 0; i < nerase; i++) {
+                KcpSess::pool()->put(erase_sess[i]);
             }
         }
     }
@@ -670,6 +648,8 @@ private:
                 do {
                     // Step 1: 获取KcpSess
                     sess = seg->sess;
+                    std::string tmp = addr2str(&seg->addr);
+                    assert(sess->remote_ == addr2str(&seg->addr));
 
                     // Step 2: 获取KCP消息包
                     nleft = seg->len;
@@ -692,7 +672,6 @@ private:
                             break;
                         }
 
-                        assert(sess->get_remote() == addr2str(&seg->addr));
                         sess->last_ms_ = event_->on_message(sess, rbuf, nrecv) == 0 ? seg->time_ms : 0;
                     }
                 } while (0);
@@ -705,7 +684,7 @@ private:
     }
 
 
-    const uint32_t                         MAX_CONN;        // 最大连接数
+    const uint32_t                         MAX_CONV;        // 最大连接数
     State                                  state_;          // 服务端状态
 
     SOCKET                                 ufd_;            // 监听套接字
@@ -718,8 +697,7 @@ private:
 
     std::vector<KcpSess::Seg::Queue*>      rques_;          // read data queue
 
-    xq::tools::Set<uint32_t>               active_convs_;   // 当前在线程kcp客户端
-    std::unordered_map<uint32_t, KcpSess*> sessions_;       // 会话
+    xq::tools::Map<std::string, KcpSess*>  sessions_;       // 会话
 
     IEvent*                                event_;          // 事件实例
 }; // class KcpListener;
