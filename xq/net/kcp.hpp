@@ -42,7 +42,6 @@ public:
         ::ikcp_nodelay(kcp_, 1, 5, 3, 0);
         ::ikcp_setmtu(kcp_, KCP_MTU);
         ::ikcp_wndsize(kcp_, KCP_WND, KCP_WND);
-        kcp_->updated = 1;
     }
 
 

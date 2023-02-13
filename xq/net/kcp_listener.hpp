@@ -134,7 +134,7 @@ private:
         raddrlen_ = addrlen;
         remote_ = remote;
         que_num_ = que_num;
-        time_ms_ = last_ms_ = now_ms;
+        last_ms_ = time_ms_ = now_ms;
     }
  
 
@@ -156,12 +156,10 @@ private:
     /// @param now_ms 当前时间戳毫秒
     /// @return 成功UPDATE返回true, 否则返回false
     int _update(int64_t now_ms) {
-        {
-            // 该kcp sess超时
-            if (now_ms - last_ms_ > KCP_TIMEOUT) {
-                time_ms_ = last_ms_ = 0;
-                return -1;
-            }
+        int64_t last_ms = last_ms_;
+
+        if (last_ms == 0 ||  now_ms - last_ms > KCP_TIMEOUT) {
+            return -1;
         }
 
         {
@@ -363,7 +361,7 @@ private:
     /// @brief IO 工作线程
     void _rx() {
         static const size_t QUE_SIZE = std::thread::hardware_concurrency();
-        static const size_t MAX_COUNT = MAX_CONV * 5;
+        static const size_t MAX_COUNT = MAX_CONV * 1.5;
         using SegPool = xq::tools::ObjectPool<KcpSess::Seg>;
 
         SegPool*      segpool = KcpSess::Seg::pool();
@@ -430,6 +428,8 @@ private:
 #else
     /// @brief KCP output回调
     static int output(const char* raw, int len, IKCPCB*, void* user) {
+        assert(len > 0);
+
         KcpSess* sess = (KcpSess*)user;
         KcpListener *l = sess->listener_;
         size_t i = l->msgs_len_;
@@ -557,11 +557,12 @@ private:
     /// @brief KCP UPDATE线程
     void _update() {
         constexpr std::chrono::milliseconds INTVAL = std::chrono::milliseconds(1);
+        const size_t MAX_SIZE = MAX_CONV * 5;
 
         int64_t               now_ms;
-        std::vector<KcpSess*> convs(MAX_CONV);
-        std::vector<std::string> erase_keys(MAX_CONV);
-        std::vector<KcpSess*> erase_sess(MAX_CONV);
+        std::vector<KcpSess*> convs(MAX_SIZE);
+        std::vector<std::string> erase_keys(MAX_SIZE);
+        std::vector<KcpSess*> erase_sess(MAX_SIZE);
         size_t                i, n, nerase;
         KcpSess*              sess;
 
@@ -619,7 +620,9 @@ private:
                             break;
                         }
 
-                        sess->last_ms_ = event_->on_message(sess, rbuf, nrecv) == 0 ? seg->time_ms : 0;
+                        if (event_->on_message(sess, rbuf, nrecv) < 0) {
+                            sess->last_ms_ = 0;
+                        }
                     }
                 } while (0);
 
