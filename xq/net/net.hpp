@@ -52,7 +52,6 @@ constexpr size_t   KCP_HEAD_SIZE     = 24;         // KCP 消息头长度
 constexpr uint32_t KCP_TIMEOUT       = 60000;      // KCP 默认超时(毫秒)
 constexpr int64_t  KCP_UPDATE_MS     = 10;         // KCP UPDATE 间隔(毫秒)
 
-constexpr int      IO_BLOCK_SIZE     = 128;        // sendmsg/recvmsg msghdr.msg_iovlen 大小
 constexpr int      IO_RBUF_SIZE      = 1500;       // 读缓冲区大小
 constexpr int      IO_MSG_SIZE       = 256;        // recvmmsg mmsghdr 大小
 constexpr int      IO_TIMEOUT        = 5000;       // IO 读超时 5000毫秒

@@ -39,7 +39,7 @@ public:
     /// @param user 附加参数, 该框架中为: KcpSess / KcpHost
     explicit Kcp(uint32_t conv, void* user)
         : kcp_(::ikcp_create(conv, user)) {
-        ::ikcp_nodelay(kcp_, 1, 5, 3, 1);
+        ::ikcp_nodelay(kcp_, 1, 5, 3, 0);
         ::ikcp_setmtu(kcp_, KCP_MTU);
         ::ikcp_wndsize(kcp_, KCP_WND, KCP_WND);
         kcp_->updated = 1;
@@ -110,12 +110,12 @@ public:
     /// @param buf 
     /// @param len 
     /// @return 成功返回0, 否则返回!0
-    int send(const uint8_t* buf, int len) {
-        int ret = ::ikcp_send(kcp_, (const char *)buf, len);
-        if (ret == 0) {
-            ikcp_flush(kcp_);
+    int send(const uint8_t* buf, int len, bool force) {
+        int n = ::ikcp_send(kcp_, (const char *)buf, len);
+        if (n == 0 && force) {
+            ::ikcp_flush(kcp_);
         }
-        return ret;
+        return n;
     }
 
 
@@ -138,17 +138,6 @@ public:
     /// @brief 将发送缓冲区的数据给 回调函数(output)处理
     void flush() {
         ::ikcp_flush(kcp_);
-    }
-
-
-    /// @brief 设置KCP参数
-    /// @param nodelay  是否延迟发送
-    /// @param interval 发送频率
-    /// @param resend   跨越重传
-    /// @param nc       是否开启拥塞控制
-    /// @return 
-    int nodelay(int nodelay, int interval, int resend, int nc) {
-        return ::ikcp_nodelay(kcp_, nodelay, interval, resend, nc);
     }
 
 

@@ -18,7 +18,7 @@ public:
         typedef moodycamel::BlockingConcurrentQueue<Seg*> Queue;
 
         static xq::tools::ObjectPool<Seg>* pool() {
-            return xq::tools::ObjectPool<Seg>::Instance();
+            return xq::tools::ObjectPool<Seg>::instance();
         }
 
         int len;            // 消息总长度
@@ -206,7 +206,6 @@ private:
         for (i = 0; i < n; i++) {
             KcpHost* host = new KcpHost(conv_, hosts[i], i % nthread);
             host->kcp_->set_output(&KcpConn::output);
-            host->kcp_->nodelay(1, 10, 3, 1);
             kcp_hosts_.insert(std::make_pair(host->get_host(), host));
         }
     }
