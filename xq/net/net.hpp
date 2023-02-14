@@ -71,6 +71,18 @@ typedef int SOCKET;
 #endif
 
 
+enum class ErrType {
+    KL_IO_RECV,
+    KL_IO_SEND,
+    KL_INNER,
+    KS_INPUT,
+};
+
+constexpr int EK_INVALID  = -10000;
+constexpr int EK_CONV     = -10001;
+constexpr int EK_MAX_CONN = -10002;
+
+
 // ------------------------------------------------------------------------ State ------------------------------------------------------------------------
 
 

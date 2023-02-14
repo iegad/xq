@@ -1,25 +1,33 @@
 #include "xq/tools/tools.hpp"
 #include "xq/net//kcp_listener.hpp"
 
+class EchoEvent;
+typedef xq::net::KcpListener<EchoEvent> KcpListener;
+typedef xq::net::KcpSess<EchoEvent> KcpSess;
 
-class EchoEvent : public xq::net::KcpListener::IEvent {
+
+class EchoEvent {
 public:
-	virtual int on_message(xq::net::KcpSess* sess, const uint8_t* data, size_t datalen) override {
+	int on_message(KcpSess* sess, const uint8_t* data, size_t datalen) {
 		return sess->send(data, datalen);
 	}
 
-	virtual int on_connected(xq::net::KcpSess* sess) override  {
+	int on_connected(KcpSess* sess)  {
 		std::printf("+++ %u has connected\n", sess->get_conv());
 		return 0;
 	}
 
-	virtual int on_reconnected(xq::net::KcpSess* sess) override {
+	int on_reconnected(KcpSess* sess) {
 		std::printf("### %u has reconnected\n", sess->get_conv());
 		return 0;
 	}
 
-	virtual void on_disconnected(xq::net::KcpSess* sess) override {
+	void on_disconnected(KcpSess * sess) {
 		std::printf("--- %u has disconnected\n", sess->get_conv());
+	}
+
+	void on_error(xq::net::ErrType err_type, int err, void* arg) {
+
 	}
 };
 
@@ -35,7 +43,7 @@ main(int, char**) {
 
 	EchoEvent ev;
 
-	xq::net::KcpListener::Ptr listener = xq::net::KcpListener::create(&ev, HOST, 2000);
+	KcpListener::Ptr listener = KcpListener::create(HOST, 2000);
 	listener->run();
 
 #ifdef _WIN32

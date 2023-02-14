@@ -11,7 +11,7 @@ void worker() {
 	std::this_thread::sleep_for(std::chrono::seconds(1));
 
 	char buf[100] = { 0 };
-	for (int i = 0; i < 5000; i++) {
+	for (int i = 0; i < 50000; i++) {
 		sprintf(buf, "Hello world: %d", i);
 		int n = conn->send(host, (uint8_t *)buf, strlen(buf));
 		if (n < 0) {
