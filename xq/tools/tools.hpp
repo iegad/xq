@@ -376,7 +376,7 @@ public:
     Map(const Map&) = delete;
     Map& operator=(const Map&) = delete;
 
-    size_t get_all_vals(TVal* keys, size_t n) {
+    size_t get_all_vals(TVal* vals, size_t n) {
         size_t i = 0;
         std::lock_guard<TLock> lk(mtx_);
         assert(n >= m_.size());

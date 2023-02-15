@@ -1,3 +1,31 @@
+// ==================================================================================================================================================
+// KcpListener 定义
+//
+// @author: iegad
+// @time:   2023-02-15
+// @note:
+//      类: 
+//          1, KcpListener:       Kcp服务端
+//          2, KcpListener::Sess: 会话
+//          3, KcpListener::Seg:  数据段
+//
+//      实现:
+//          KcpListener服务端启动时, 会运行三类工作线程:
+//            * _rx:       IO read 线程
+//            * _update:   kcp udpate 线程
+//            * _kcp_proc: kcp 数据处理线程.
+//          其中 _rx, _update各占用一条物理线程, _kcp_proc线程数为 CPU核心数.
+//
+// ==================================================================================================================================================
+// 修改记录:
+// --------------------------------------------------------------------------------------------------------------------------------------------------
+//   @update_time    | @coder        | @comment
+// --------------------------------------------------------------------------------------------------------------------------------------------------
+//
+// ==================================================================================================================================================
+
+
+
 #ifndef __KCP_LISTENER__
 #define __KCP_LISTENER__
 
@@ -769,17 +797,17 @@ private:
     }
 
 
-    const uint32_t                     MAX_CONV;        // 最大连接数
-    State                              state_;          // 服务端状态
-    SOCKET                             ufd_;            // 监听套接字
-    std::string                        host_;           // 监听地址
-    std::atomic_int32_t                conns_;          // 当前连接数
-    std::thread                        rx_thread_;      // io read thread
-    std::thread                        update_thread_;  // kcp update thread
-    std::vector<std::thread>           kp_thread_pool_; // 工作线程池 kcp procedure thread pool
-    std::vector<Queue*>                rques_;          // read data queue
+    const uint32_t                  MAX_CONV;        // 最大连接数
+    State                           state_;          // 服务端状态
+    SOCKET                          ufd_;            // 监听套接字
+    std::string                     host_;           // 监听地址
+    std::atomic_int32_t             conns_;          // 当前连接数
+    std::thread                     rx_thread_;      // io read thread
+    std::thread                     update_thread_;  // kcp update thread
+    std::vector<std::thread>        kp_thread_pool_; // 工作线程池 kcp procedure thread pool
+    std::vector<Queue*>             rques_;          // read data queue
     xq::tools::Map<uint32_t, Sess*> sessions_;       // 会话
-    TEvent*                            event_;          // 事件实例
+    TEvent*                         event_;          // 事件实例
 
 #ifndef WIN32
     mmsghdr msgs_[IO_MSG_SIZE];
