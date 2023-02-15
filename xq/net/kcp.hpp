@@ -109,12 +109,8 @@ public:
     /// @param buf 
     /// @param len 
     /// @return 成功返回0, 否则返回!0
-    int send(const uint8_t* buf, int len, bool force) {
-        int n = ::ikcp_send(kcp_, (const char *)buf, len);
-        if (n == 0 && force) {
-            ::ikcp_flush(kcp_);
-        }
-        return n;
+    int send(const uint8_t* buf, int len) {
+        return ::ikcp_send(kcp_, (const char *)buf, len);
     }
 
 

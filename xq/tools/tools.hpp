@@ -376,9 +376,11 @@ public:
     Map(const Map&) = delete;
     Map& operator=(const Map&) = delete;
 
-    size_t get_all_vals(std::vector<TVal> &keys) {
+    size_t get_all_vals(TVal* keys, size_t n) {
         size_t i = 0;
         std::lock_guard<TLock> lk(mtx_);
+        assert(n >= m_.size());
+
         for (auto &itr: m_) {
             keys[i++] = itr.second;
         }
@@ -406,10 +408,10 @@ public:
         m_.clear();
     }
 
-    auto erase(std::vector<TKey> keys, size_t n) {
+    auto erase(const TKey *keys, size_t n) {
         std::lock_guard<TLock> lk(mtx_);
-        for (auto &k: keys) {
-            m_.erase(k);
+        for (size_t i = 0; i < n; i++) {
+            m_.erase(keys[i]);
         }
     }
 

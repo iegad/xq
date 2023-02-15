@@ -3,7 +3,7 @@
 
 class EchoEvent;
 typedef xq::net::KcpListener<EchoEvent> KcpListener;
-typedef xq::net::KcpSess<EchoEvent> KcpSess;
+typedef KcpListener::Sess KcpSess;
 
 
 class EchoEvent {
