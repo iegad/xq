@@ -2,16 +2,6 @@
 #define __NET_HPP__
 
 
-//! --------------------------------------------------------------------------------------------------------------------
-//! xq 网络框架, 目前只支持KCP版本.
-//!
-//! @author:      iegad
-//! @create at:   2022-12-06
-//! @update:
-//! --------------------------------------------------------------------------------------------------------------------
-//! |- time                |- coder                  |- content
-
-
 #ifdef _WIN32
 #pragma comment(lib, "ws2_32.lib")
 #include <WinSock2.h>
@@ -47,7 +37,7 @@ namespace net {
 
 
 constexpr size_t   KCP_WND           = 512;                             // KCP 默认读/写窗口
-constexpr size_t   KCP_MTU           = 1452;                            // KCP 最大传输单元: IP_MTU(1500) - IP(40) - UDP(8)
+constexpr size_t   KCP_MTU           = 1448;                            // KCP TODO: 目前为1448, KCP_MSS为 1448 - 24 = 1424, 未来消息头应该是: 36字节, KCP_MSS: 为1408 > 1392, 1392是因为要给一个PADDING16字节
 constexpr size_t   KCP_HEAD_SIZE     = 24;                              // KCP 消息头长度
 constexpr size_t   KCP_MAX_DATA_SIZE = (KCP_MTU - KCP_HEAD_SIZE) * 128; // KCP 单包最大字节
 constexpr uint32_t KCP_TIMEOUT       = 60000;                           // KCP 默认超时(毫秒)
@@ -75,15 +65,15 @@ typedef int SOCKET;
 
 
 enum class ErrType {
-    KCP_HEAD,
-    KCP_INPUT,
+    IO_RECV,     // IO 读失败
+    IO_SEND,     // IO 写失败
 
-    KL_IO_RECV,
-    KL_IO_SEND,
-    KL_INNER,
-    
-    KC_IO_RECV,
-    KC_IO_SEND,
+    KCP_HEAD,    // KCP 消息头错误
+    KCP_INPUT,   // KCP input 失败
+
+    KL_INVALID_CONV, // KCP conv 无效
+    KL_MAX_CONN,     // 当前超过最大连接数
+
     KC_HOST,
 };
 
@@ -278,8 +268,7 @@ bool str2addr(const std::string& str, sockaddr *addr, socklen_t *addrlen) {
         a4->sin_port = ntohs((uint16_t)port);
         *addrlen = sizeof(sockaddr_in);
         return true;
-    }
-    else if (std::regex_match(ip, REG_IPv6)) {
+    } else if (std::regex_match(ip, REG_IPv6)) {
         sockaddr_in6 *a6 = (sockaddr_in6*)addr;
         a6->sin6_family = AF_INET6;
         if (::inet_pton(AF_INET6, ip.c_str(), &a6->sin6_addr) != 1) {

@@ -25,7 +25,6 @@
 // ==================================================================================================================================================
 
 
-
 #ifndef __KCP_LISTENER__
 #define __KCP_LISTENER__
 
@@ -375,9 +374,13 @@ public:
         kp_thread_pool_.clear();
 
         // Step 9: 清空RxSeg队列
-        Seg* item[128];
+        Seg* segs[128];
+        size_t n = 0;
         for (auto& que : rques_) {
-            while (que->try_dequeue_bulk(item, 128));
+            do {
+                n = que->try_dequeue_bulk(segs, 128);
+                Seg::pool()->put(segs, n);
+            } while (n > 0);
         }
 
         // Step 10: 关闭UDP监听
@@ -420,7 +423,7 @@ private:
             iovec *iov = new iovec[1];
             iov[0].iov_base = new uint8_t[IO_RBUF_SIZE];
             iov[0].iov_len = IO_RBUF_SIZE;
-            msgs_[i].msg_hdr.msg_iov = &iov[0];
+            msgs_[i].msg_hdr.msg_iov = iov;
             msgs_[i].msg_hdr.msg_iovlen = 1;
             msgs_[i].msg_len = 0;
         }
@@ -463,7 +466,7 @@ private:
         l->event_->on_send((const uint8_t*)raw, len, &sess->raddr_, sess->raddrlen_);
         int n = ::sendto(l->ufd_, raw, len, 0, &sess->raddr_, sess->raddrlen_);
         if (n < 0) {
-            sess->listener_->event_->on_error(xq::net::ErrType::KL_IO_SEND, error(), sess);
+            sess->listener_->event_->on_error(xq::net::ErrType::IO_SEND, error(), sess);
         }
 
         return 0;
@@ -503,20 +506,20 @@ private:
                 if (rawlen < 0) {
                     err = error();
                     if (err != 10060) {
-                        event_->on_error(xq::net::ErrType::KL_IO_RECV, err, nullptr);
+                        event_->on_error(xq::net::ErrType::IO_RECV, err, nullptr);
                     }
                     break;
                 }
 
                 if (rawlen < KCP_HEAD_SIZE) {
-                    event_->on_error(xq::net::ErrType::KCP_INPUT, EK_INVALID, &seg->addr);
+                    event_->on_error(xq::net::ErrType::KCP_HEAD, EK_INVALID, &seg->addr);
                     break;
                 }
 
                 // Step 3: 获取 kcp conv
                 conv = Kcp::get_conv(seg->data);
                 if (conv == 0 || conv > MAX_CONV) {
-                    event_->on_error(xq::net::ErrType::KCP_INPUT, EK_CONV, &seg->addr);
+                    event_->on_error(xq::net::ErrType::KL_INVALID_CONV, conv, &seg->addr);
                     break;
                 }
 
@@ -538,7 +541,7 @@ private:
                     }
                 } else {
                     if (conns_ >= MAX_COUNT) {
-                        event_->on_error(xq::net::ErrType::KL_INNER, EK_MAX_CONN, this);
+                        event_->on_error(xq::net::ErrType::KL_MAX_CONN, conns_, this);
                         continue;
                     }
 
@@ -643,7 +646,7 @@ private:
 
             do {
                 if (n < 0) {
-                    event_->on_error(xq::net::ErrType::KL_IO_RECV, error(), nullptr);
+                    event_->on_error(xq::net::ErrType::IO_RECV, error(), nullptr);
                     break;
                 }
 
@@ -658,14 +661,14 @@ private:
                     seg    = segs[i];
                     rawlen = msg->msg_len;
                     if (rawlen < KCP_HEAD_SIZE) {
-                        event_->on_error(xq::net::ErrType::KCP_INPUT, EK_INVALID, &seg->addr);
+                        event_->on_error(xq::net::ErrType::KCP_HEAD, EK_INVALID, &seg->addr);
                         continue;
                     }
 
                     // Step 3: 获取 kcp conv
                     conv = Kcp::get_conv(seg->data);
                     if (conv == 0 || conv > MAX_CONV) {
-                        event_->on_error(xq::net::ErrType::KCP_INPUT, EK_CONV, &seg->addr);
+                        event_->on_error(xq::net::ErrType::KL_INVALID_CONV, conv, &seg->addr);
                         continue;
                     }
 
@@ -688,7 +691,7 @@ private:
                         }
                     } else {
                         if (conns_ >= MAX_COUNT) {
-                            event_->on_error(xq::net::ErrType::KL_INNER, EK_MAX_CONN, this);
+                            event_->on_error(xq::net::ErrType::KL_MAX_CONN, conns_, this);
                             break;
                         }
 
@@ -763,10 +766,7 @@ private:
             _sendmsgs();
 
             sessions_.erase(erase_keys, nerase);
-
-            for (i = 0; i < nerase; i++) {
-                Sess::pool()->put(erase_sess[i]);
-            }
+            Sess::pool()->put(erase_sess, nerase);
         }
 
         delete[] erase_keys;

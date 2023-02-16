@@ -20,6 +20,7 @@
     </ProjectConfiguration>
   </ItemGroup>
   <ItemGroup>
+    <ClCompile Include="third\AES.cpp" />
     <ClCompile Include="third\ikcp.c" />
   </ItemGroup>
   <ItemGroup>
@@ -27,6 +28,7 @@
     <ClInclude Include="net\kcp_conn.hpp" />
     <ClInclude Include="net\kcp_listener.hpp" />
     <ClInclude Include="net\net.hpp" />
+    <ClInclude Include="third\AES.h" />
     <ClInclude Include="third\blockingconcurrentqueue.h" />
     <ClInclude Include="third\concurrentqueue.h" />
     <ClInclude Include="third\ikcp.h" />

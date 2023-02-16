@@ -456,6 +456,12 @@ public:
         }
     }
 
+    void put(T** p, size_t n) {
+        if (p && n > 0) {
+            que_.enqueue_bulk(p, n);
+        }
+    }
+
 private:
     ObjectPool() {}
 

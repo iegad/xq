@@ -55,6 +55,8 @@ void worker() {
 	}
 }
 
+#include "xq/third/AES.h"
+
 int
 main(int argc, char** argv) {
 #ifdef _WIN32
@@ -70,6 +72,5 @@ main(int argc, char** argv) {
 #ifdef _WIN32
 	WSACleanup();
 #endif // _WIN32
-
 	exit(EXIT_SUCCESS);
 }

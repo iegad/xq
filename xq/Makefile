@@ -16,7 +16,7 @@ CC      := g++
 LIBS    :=
 LDFLAGS := -L/usr/local/lib -lpthread -ljemalloc
 DEFINES :=
-INCLUDE := -I. -I/usr/local/include
+INCLUDE := -I.. -I/usr/local/include
 CFLAGS  := -g -Wall -O3 $(DEFINES) $(INCLUDE)
 CXXFLAGS:= $(CFLAGS) --std=gnu++2a -DHAVE_CONFIG_H
   
