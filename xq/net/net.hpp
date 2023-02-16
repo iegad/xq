@@ -42,19 +42,22 @@
 namespace xq {
 namespace net {
 
+
 // ------------------------------------------------------------------------ 常量 ------------------------------------------------------------------------
 
 
-constexpr size_t   KCP_WND           = 512;        // KCP 默认读/写窗口
-constexpr size_t   KCP_MTU           = 1418;       // KCP 最大传输单元
-constexpr size_t   KCP_MAX_DATA_SIZE = 1418 * 128; // KCP 单包最大字节
-constexpr size_t   KCP_HEAD_SIZE     = 24;         // KCP 消息头长度
-constexpr uint32_t KCP_TIMEOUT       = 60000;      // KCP 默认超时(毫秒)
-constexpr int64_t  KCP_UPDATE_MS     = 10;         // KCP UPDATE 间隔(毫秒)
+constexpr size_t   KCP_WND           = 512;                             // KCP 默认读/写窗口
+constexpr size_t   KCP_MTU           = 1452;                            // KCP 最大传输单元: IP_MTU(1500) - IP(40) - UDP(8)
+constexpr size_t   KCP_HEAD_SIZE     = 24;                              // KCP 消息头长度
+constexpr size_t   KCP_MAX_DATA_SIZE = (KCP_MTU - KCP_HEAD_SIZE) * 128; // KCP 单包最大字节
+constexpr uint32_t KCP_TIMEOUT       = 60000;                           // KCP 默认超时(毫秒)
+constexpr int64_t  KCP_UPDATE_MS     = 10;                              // KCP UPDATE 间隔(毫秒)
 
-constexpr int      IO_RBUF_SIZE      = 1500;       // 读缓冲区大小
-constexpr int      IO_MSG_SIZE       = 256;        // recvmmsg mmsghdr 大小
-constexpr int      IO_TIMEOUT        = 5000;       // IO 读超时 5000毫秒
+
+constexpr int      IO_RBUF_SIZE      = 1500;                            // 读缓冲区大小
+constexpr int      IO_MSG_SIZE       = 256;                             // recvmmsg mmsghdr 大小
+constexpr int      IO_TIMEOUT        = 5000;                            // IO 读超时 5000毫秒
+
 
 const std::regex REG_IPv4("^((25[0-5]|(2[0-4]|1\\d|[1-9]|)\\d)\\.?\\b){4}$");
 const std::regex REG_IPv6("(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))");
@@ -72,15 +75,23 @@ typedef int SOCKET;
 
 
 enum class ErrType {
+    KCP_HEAD,
+    KCP_INPUT,
+
     KL_IO_RECV,
     KL_IO_SEND,
     KL_INNER,
-    KS_INPUT,
+    
+    KC_IO_RECV,
+    KC_IO_SEND,
+    KC_HOST,
 };
 
-constexpr int EK_INVALID  = -10000;
-constexpr int EK_CONV     = -10001;
-constexpr int EK_MAX_CONN = -10002;
+
+constexpr int EK_INVALID      = -10000;
+constexpr int EK_CONV         = -10001;
+constexpr int EK_MAX_CONN     = -10002;
+constexpr int EK_UNKNOWN_HOST = -10003; // 未知的服务端
 
 
 // ------------------------------------------------------------------------ State ------------------------------------------------------------------------

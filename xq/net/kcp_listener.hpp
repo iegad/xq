@@ -266,8 +266,8 @@ struct Seg {
     explicit Seg()
         : len(0)
         , sess(nullptr)
-        , addrlen(sizeof(addr))
-        , addr({ 0,{0} })
+        , addrlen(0)
+        , addr({0,{0}})
         , time_ms(0) {
         assert(data);
     }
@@ -309,6 +309,10 @@ public:
 
         for (auto q : rques_) {
             delete q;
+        }
+
+        if (event_) {
+            delete event_;
         }
     }
 
@@ -505,14 +509,14 @@ private:
                 }
 
                 if (rawlen < KCP_HEAD_SIZE) {
-                    event_->on_error(xq::net::ErrType::KS_INPUT, EK_INVALID, &seg->addr);
+                    event_->on_error(xq::net::ErrType::KCP_INPUT, EK_INVALID, &seg->addr);
                     break;
                 }
 
                 // Step 3: 获取 kcp conv
                 conv = Kcp::get_conv(seg->data);
                 if (conv == 0 || conv > MAX_CONV) {
-                    event_->on_error(xq::net::ErrType::KS_INPUT, EK_CONV, &seg->addr);
+                    event_->on_error(xq::net::ErrType::KCP_INPUT, EK_CONV, &seg->addr);
                     break;
                 }
 
@@ -654,14 +658,14 @@ private:
                     seg    = segs[i];
                     rawlen = msg->msg_len;
                     if (rawlen < KCP_HEAD_SIZE) {
-                        event_->on_error(xq::net::ErrType::KS_INPUT, EK_INVALID, &seg->addr);
+                        event_->on_error(xq::net::ErrType::KCP_INPUT, EK_INVALID, &seg->addr);
                         continue;
                     }
 
                     // Step 3: 获取 kcp conv
                     conv = Kcp::get_conv(seg->data);
                     if (conv == 0 || conv > MAX_CONV) {
-                        event_->on_error(xq::net::ErrType::KS_INPUT, EK_CONV, &seg->addr);
+                        event_->on_error(xq::net::ErrType::KCP_INPUT, EK_CONV, &seg->addr);
                         continue;
                     }
 
@@ -793,7 +797,7 @@ private:
                     // Step 2: 获取KCP消息包
                     nrecv = sess->_input(seg->data, seg->len);
                     if (nrecv < 0) {
-                        event_->on_error(xq::net::ErrType::KS_INPUT, nrecv, sess);
+                        event_->on_error(xq::net::ErrType::KCP_INPUT, nrecv, sess);
                         break;
                     }
 
