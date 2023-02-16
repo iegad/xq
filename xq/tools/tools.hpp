@@ -382,7 +382,7 @@ public:
         assert(n >= m_.size());
 
         for (auto &itr: m_) {
-            keys[i++] = itr.second;
+            vals[i++] = itr.second;
         }
         return i;
     }

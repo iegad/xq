@@ -332,7 +332,11 @@ public:
     // ========================
     // 启动服务
     // ========================
-    void run() {
+    void start() {
+        if (event_->on_start(this) < 0) {
+            return;
+        }
+
         // Step 1: 创建 udp 监听套接字
         ufd_ = udp_bind(host_);
         assert(ufd_ != INVALID_SOCKET && "ufd create failed");
@@ -377,6 +381,7 @@ public:
         ufd_ = INVALID_SOCKET;
 
         state_ = State::Stopped;
+        event_->on_stop(this);
     }
 
 
@@ -446,9 +451,12 @@ private:
     //    windows 平台下, 直接发送数据
     // ------------------------
     static int output(const char* raw, int len, IKCPCB*, void* user) {
+        assert(len > 0 && len <= KCP_MTU);
+
         Sess* sess = (Sess*)user;
         KcpListener* l = sess->listener_;
 
+        l->event_->on_send((const uint8_t*)raw, len, &sess->raddr_, sess->raddrlen_);
         int n = ::sendto(l->ufd_, raw, len, 0, &sess->raddr_, sess->raddrlen_);
         if (n < 0) {
             sess->listener_->event_->on_error(xq::net::ErrType::KL_IO_SEND, error(), sess);
@@ -508,10 +516,14 @@ private:
                     break;
                 }
 
-                now_ms = xq::tools::now_milli();
                 std::string remote = xq::net::addr2str(&seg->addr);
                 assert(remote.size() > 0);
 
+                if (event_->on_recv(seg->data, rawlen, &seg->addr, seg->addrlen) < 0) {
+                    break;
+                }
+
+                now_ms = xq::tools::now_milli();
                 // Step 4: 获取会话
                 if (sessions_.get(conv, sess)) {
                     if (remote != sess->remote_) {
@@ -556,7 +568,7 @@ private:
     //    将数据添加到mmsghdr缓冲区, 当mmsghdr缓冲区满时调用底层方法
     // ------------------------
     static int output(const char* raw, int len, IKCPCB*, void* user) {
-        assert(len > 0);
+        assert(len > 0 && (size_t)len <= KCP_MTU);
 
         Sess*        sess = (Sess*)user;
         KcpListener* lis  = sess->listener_;
@@ -567,6 +579,7 @@ private:
         msg->msg_namelen        = sess->raddrlen_;
         msg->msg_iov[0].iov_len = len;
 
+        lis->event_->on_send((const uint8_t*)raw, len, &sess->raddr_, sess->raddrlen_);
         ::memcpy(msg->msg_iov[0].iov_base, raw, len);
         
         if (++lis->msgs_len_ == IO_MSG_SIZE) {
@@ -641,20 +654,27 @@ private:
                     seg    = segs[i];
                     rawlen = msg->msg_len;
                     if (rawlen < KCP_HEAD_SIZE) {
+                        event_->on_error(xq::net::ErrType::KS_INPUT, EK_INVALID, &seg->addr);
                         continue;
                     }
 
                     // Step 3: 获取 kcp conv
                     conv = Kcp::get_conv(seg->data);
                     if (conv == 0 || conv > MAX_CONV) {
+                        event_->on_error(xq::net::ErrType::KS_INPUT, EK_CONV, &seg->addr);
+                        continue;
+                    }
+
+                    
+                    std::string remote = xq::net::addr2str(&seg->addr);
+                    assert(remote.size() > 0);
+                    seg->addrlen = msg->msg_hdr.msg_namelen;
+
+                    if (event_->on_recv(seg->data, rawlen, &seg->addr, seg->addrlen) < 0) {
                         continue;
                     }
 
                     // Step 4: 获取会话
-                    std::string remote = xq::net::addr2str(&seg->addr);
-                    assert(remote.size() > 0);
-
-                    seg->addrlen = msg->msg_hdr.msg_namelen;
                     if (sessions_.get(conv, sess)) {
                         if (remote != sess->remote_) {
                             sess->_reset(&seg->addr, seg->addrlen, remote, now_ms);
@@ -664,6 +684,7 @@ private:
                         }
                     } else {
                         if (conns_ >= MAX_COUNT) {
+                            event_->on_error(xq::net::ErrType::KL_INNER, EK_MAX_CONN, this);
                             break;
                         }
 
