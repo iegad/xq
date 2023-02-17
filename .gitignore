@@ -3,3 +3,10 @@ x64
 *.vcxproj.user
 *.vcxproj.filters
 packages
+*.sln
+*.vcxproj
+*.cmake
+CMakeCache.txt
+CMakeFiles
+Debug
+*.log
