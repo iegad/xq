@@ -6,7 +6,15 @@ set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(EXECUTABLE_OUTPUT_PATH ${main_SOURCE_DIR})
 
-INCLUDE_DIRECTORIES(${main_SOURCE_DIR}/src)
-add_compile_options(-std=c++17 -fpermissive -O3)
+set(THREADS_PREFER_PTHREAD_FLAG ON)
+find_package(Threads REQUIRED)
 
-target_link_libraries(${PROJECT_NAME} PUBLIC xq pthread)
+INCLUDE_DIRECTORIES(${main_SOURCE_DIR}/src)
+add_compile_options(-Wall -Werror -O3)
+
+target_link_libraries(${PROJECT_NAME} PUBLIC Threads::Threads xq)
+IF (CMAKE_SYSTEM_NAME MATCHES "Linux")
+    target_link_libraries(${PROJECT_NAME} PUBLIC libjemalloc.a)
+    link_directories("/usr/local/lib")
+    include_directories("/user/local/include")
+ENDIF (CMAKE_SYSTEM_NAME MATCHES "Linux")

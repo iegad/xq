@@ -1,50 +1,55 @@
 #include "xq/tools/tools.hpp"
 #include "xq/net//kcp_listener.hpp"
+#ifndef WIN32
+#include <jemalloc/jemalloc.h>
+#endif
 
 
 class EchoEvent {
 public:
-	typedef xq::net::KcpListener<EchoEvent> KcpListener;
-	typedef KcpListener::Sess KcpSess;
+    typedef xq::net::KcpListener<EchoEvent> KcpListener;
+    typedef KcpListener::Sess KcpSess;
 
-	int on_message(KcpSess* sess, const uint8_t* data, size_t datalen) {
-		return sess->send(data, datalen);
-	}
+    int on_message(KcpSess* sess, const uint8_t* data, size_t datalen) {
+        return sess->send(data, datalen);
+    }
 
-	int on_connected(KcpSess* sess)  {
-		std::printf("+++ %u has connected\n", sess->get_conv());
-		return 0;
-	}
+    int on_connected(KcpSess* sess)  {
+        std::printf("+++ %u has connected\n", sess->get_conv());
+        return 0;
+    }
 
-	int on_reconnected(KcpSess* sess) {
-		std::printf("### %u has reconnected\n", sess->get_conv());
-		return 0;
-	}
+    int on_reconnected(KcpSess* sess) {
+        std::printf("### %u has reconnected\n", sess->get_conv());
+        return 0;
+    }
 
-	void on_disconnected(KcpSess * sess) {
-		std::printf("--- %u has disconnected\n", sess->get_conv());
-	}
+    void on_disconnected(KcpSess * sess) {
+        std::printf("--- %u has disconnected\n", sess->get_conv());
+    }
 
-	void on_error(xq::net::ErrType err_type, int err, void* arg) {
+    void on_error(xq::net::ErrType err_type, int err, void* /*arg*/) {
+        std::printf("ErrType: %d, ErroCode: %d\n", (int)err_type, err);
+    }
 
-	}
+    int on_start(KcpListener* listener) {
+        std::printf("%s is running...\n", listener->host().c_str());
+        return 0;
+    }
 
-	int on_start(KcpListener* listener) {
-		return 0;
-	}
+    void on_stop(KcpListener* listener) {
+        std::printf("%s has stopped...\n", listener->host().c_str());
+    }
 
-	void on_stop(KcpListener* listener) {
+    int on_recv(uint8_t*, size_t, const sockaddr*, socklen_t) {
+        return 0;
+    }
 
-	}
+    void on_send(const uint8_t*, size_t, const sockaddr*, socklen_t) {
 
-	int on_recv(uint8_t* raw, size_t rawlen, const sockaddr* addr, socklen_t addrlen) {
-		return 0;
-	}
-
-	void on_send(const uint8_t* raw, size_t rawlen, const sockaddr* addr, socklen_t addrlen) {
-		
-	}
+    }
 };
+
 
 constexpr char HOST[] = ":6688";
 

@@ -2,7 +2,9 @@
 #include "xq/tools/tools.hpp"
 #include "xq/net/kcp_conn.hpp"
 
-
+#ifndef WIN32
+#include <jemalloc/jemalloc.h>
+#endif
 
 //const std::string host = "1.15.81.179:6688";
 const std::string host = "192.168.0.101:6688";
