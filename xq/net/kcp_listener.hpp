@@ -262,12 +262,8 @@ struct Seg {
     uint8_t   data[IO_RBUF_SIZE]; // 数据
 
 
-    explicit Seg()
-        : len(0)
-        , sess(nullptr)
-        , addrlen(0)
-        , addr({0,{0}})
-        , time_ms(0) {
+    explicit Seg() {
+        ::memset(this, 0, sizeof(*this));
         assert(data);
     }
 }; // struct RxSeg;
@@ -301,8 +297,9 @@ public:
     ~KcpListener() {
 #ifndef WIN32
         for (auto &msg: msgs_) {
-            delete [] (uint8_t *)msg.msg_hdr.msg_iov[0].iov_base;
-            delete [] msg.msg_hdr.msg_iov;
+            iovec *iov = msg.msg_hdr.msg_iov;
+            delete[] (uint8_t*)iov[0].iov_base;
+            delete[] iov;
         }
 #endif
 
@@ -329,6 +326,11 @@ public:
     // ========================
     int32_t conn() const {
         return conns_;
+    }
+
+
+    const std::string& host() const {
+        return host_;
     }
 
 
@@ -440,8 +442,9 @@ private:
     // ------------------------
     void _sendmsgs() {
 #ifndef WIN32
-        if (msgs_len_ > 0) {
-            int n = ::sendmmsg(ufd_, msgs_, msgs_len_, 0);
+        int len = msgs_len_;
+        if (len > 0) {
+            int n = ::sendmmsg(ufd_, msgs_, len, 0);
             if (n < 0) {
                 int err = error();
                 std::printf("sendmmsg: err: %d\n", err);
@@ -477,12 +480,12 @@ private:
     // ------------------------
     void _rx() {
         const size_t QUE_SIZE  = std::thread::hardware_concurrency();
-        const size_t MAX_COUNT = MAX_CONV * 5;
+        const size_t MAX_COUNT = (size_t)(MAX_CONV * 5);
 
         using SegPool = xq::tools::ObjectPool<Seg>;
         using KcpPool = xq::tools::ObjectPool<Sess>;
 
-        int      rawlen, n, err;
+        int      rawlen, err;
         uint32_t conv;
         int64_t  now_ms;
 
@@ -738,7 +741,7 @@ private:
         typedef Sess* SessPtr;
 
         constexpr std::chrono::milliseconds INTVAL    = std::chrono::milliseconds(1);
-        const     size_t                    MAX_COUNT = MAX_CONV * 5;
+        const     size_t                    MAX_COUNT = (size_t)(MAX_CONV * 5);
 
         size_t    i, n, nerase;
         int64_t   now_ms;

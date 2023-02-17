@@ -6,8 +6,14 @@ MinimumVisualStudioVersion = 10.0.40219.1
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "xq", "xq\xq.vcxproj", "{81A024F9-9882-41D6-AC13-664061EE21BD}"
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "server", "server\server.vcxproj", "{BE45D8D4-BED1-4081-9084-33E57F421481}"
+	ProjectSection(ProjectDependencies) = postProject
+		{81A024F9-9882-41D6-AC13-664061EE21BD} = {81A024F9-9882-41D6-AC13-664061EE21BD}
+	EndProjectSection
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "client", "client\client.vcxproj", "{ECB75CD0-7F65-4CF7-AD77-E6F1ABC48960}"
+	ProjectSection(ProjectDependencies) = postProject
+		{81A024F9-9882-41D6-AC13-664061EE21BD} = {81A024F9-9882-41D6-AC13-664061EE21BD}
+	EndProjectSection
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution

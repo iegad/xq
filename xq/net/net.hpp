@@ -48,10 +48,8 @@ constexpr int      IO_RBUF_SIZE      = 1500;                            // 读�
 constexpr int      IO_MSG_SIZE       = 256;                             // recvmmsg mmsghdr 大小
 constexpr int      IO_TIMEOUT        = 5000;                            // IO 读超时 5000毫秒
 
-
-const std::regex REG_IPv4("^((25[0-5]|(2[0-4]|1\\d|[1-9]|)\\d)\\.?\\b){4}$");
-const std::regex REG_IPv6("(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))");
-
+constexpr char REG_IPV4[] = "^((25[0-5]|(2[0-4]|1\\d|[1-9]|)\\d)\\.?\\b){4}$";
+constexpr char REG_IPV6[] = "(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))";
 
 // ------------------------------------------------------------------------ 类型与符号 ------------------------------------------------------------------------
 
@@ -237,6 +235,9 @@ std::string addr2str(const sockaddr *addr) {
 /// @param addrlen OUT sockaddr length
 /// @return 成功转换返回true, 否则返回false
 bool str2addr(const std::string& str, sockaddr *addr, socklen_t *addrlen) {
+    static std::regex r6(REG_IPV6);
+    static std::regex r4(REG_IPV4);
+
     if (!addr || !addrlen) {
         return false;
     }
@@ -258,7 +259,7 @@ bool str2addr(const std::string& str, sockaddr *addr, socklen_t *addrlen) {
         }
     }
 
-    if (std::regex_match(ip, REG_IPv4)) {
+    if (std::regex_match(ip, r4)) {
         sockaddr_in* a4 = (sockaddr_in*)addr;
         a4->sin_family = AF_INET;
         if (::inet_pton(AF_INET, ip.c_str(), &a4->sin_addr) != 1) {
@@ -268,7 +269,7 @@ bool str2addr(const std::string& str, sockaddr *addr, socklen_t *addrlen) {
         a4->sin_port = ntohs((uint16_t)port);
         *addrlen = sizeof(sockaddr_in);
         return true;
-    } else if (std::regex_match(ip, REG_IPv6)) {
+    } else if (std::regex_match(ip, r6)) {
         sockaddr_in6 *a6 = (sockaddr_in6*)addr;
         a6->sin6_family = AF_INET6;
         if (::inet_pton(AF_INET6, ip.c_str(), &a6->sin6_addr) != 1) {
