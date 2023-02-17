@@ -25,8 +25,8 @@
 // ==================================================================================================================================================
 
 
-#ifndef __KCP_LISTENER__
-#define __KCP_LISTENER__
+#ifndef __XQ_NET_KCP_LISTENER__
+#define __XQ_NET_KCP_LISTENER__
 
 
 #include <functional>
@@ -74,7 +74,7 @@ public:
         , que_num_(~0)
         , time_ms_(0)
         , last_ms_(0)
-        , raddr_({ 0,{0} })
+        , raddr_({0, {0}})
         , raddrlen_(sizeof(raddr_))
         , listener_(nullptr) {}
 
@@ -120,7 +120,7 @@ public:
     }
 
 
-private:
+private: 
 
 
     // ------------------------
@@ -140,7 +140,7 @@ private:
         KcpListener<TEvent>* listener,
         sockaddr*            addr,
         socklen_t            addrlen,
-        const std::string&   remote,
+        std::string&&  remote,
         int64_t              now_ms,
         uint32_t             que_num,
         int (*output)(const char* buf, int len, ikcpcb* kcp, void* user)) {
@@ -148,8 +148,7 @@ private:
         if (!kcp_) {
             kcp_ = new Kcp(conv, this);
             kcp_->set_output(output);
-        }
-        else {
+        } else {
             kcp_->reset(conv);
         }
 
@@ -159,7 +158,7 @@ private:
 
         ::memcpy(&raddr_, addr, addrlen);
         raddrlen_ = addrlen;
-        remote_   = remote;
+        remote_   = std::move(remote);
         que_num_  = que_num;
         last_ms_  = time_ms_ = now_ms;
     }
@@ -186,7 +185,7 @@ private:
     // 
     // @return: 成功返回0, 否则返回非0.
     // ------------------------
-    int _input(const uint8_t* raw, long size) {
+    int _input(const uint8_t* raw, size_t size) {
         std::lock_guard<LockType> lk(kcp_mtx_);
         return kcp_->input(raw, size);
     }
@@ -243,6 +242,7 @@ private:
     Sess(const Sess&) = delete;
     Sess& operator=(const Sess&) = delete;
 }; // class Sess;
+
 // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++  END Sess +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 
@@ -262,7 +262,7 @@ struct Seg {
     uint8_t   data[IO_RBUF_SIZE]; // 数据
 
 
-    explicit Seg() {
+    Seg() {
         ::memset(this, 0, sizeof(*this));
         assert(data);
     }
@@ -485,7 +485,7 @@ private:
         using SegPool = xq::tools::ObjectPool<Seg>;
         using KcpPool = xq::tools::ObjectPool<Sess>;
 
-        int      rawlen, err;
+        int      rawlen, err, nremote;
         uint32_t conv;
         int64_t  now_ms;
 
@@ -493,6 +493,8 @@ private:
         Sess*    sess;
         SegPool* segpool = Seg::pool();
         KcpPool* kcppool = Sess::pool();
+
+        char     remote[48];
 
         while (state_ == State::Running) {
             // Step 1: 申请seg
@@ -526,8 +528,8 @@ private:
                     break;
                 }
 
-                std::string remote = xq::net::addr2str(&seg->addr);
-                assert(remote.size() > 0);
+                nremote = xq::net::addr2str(&seg->addr, remote);
+                assert(nremote > 0);
 
                 if (event_->on_recv(seg->data, rawlen, &seg->addr, seg->addrlen) < 0) {
                     break;
@@ -536,7 +538,7 @@ private:
                 now_ms = xq::tools::now_milli();
                 // Step 4: 获取会话
                 if (sessions_.get(conv, sess)) {
-                    if (remote != sess->remote_) {
+                    if (std::string_view(remote, nremote) != sess->remote_) {
                         sess->_reset(&seg->addr, seg->addrlen, remote, now_ms);
                         if (event_->on_reconnected(sess) < 0) {
                             continue;
@@ -549,7 +551,7 @@ private:
                     }
 
                     sess = kcppool->get();
-                    sess->_set(conv, this, &seg->addr, seg->addrlen, remote, now_ms, (conns_ + 1) % QUE_SIZE, &KcpListener::output);
+                    sess->_set(conv, this, &seg->addr, seg->addrlen, std::string(remote, nremote), now_ms, (conns_ + 1) % QUE_SIZE, &KcpListener::output);
                     if (event_->on_connected(sess) < 0) {
                         kcppool->put(sess);
                         break;
@@ -613,7 +615,7 @@ private:
 
         uint32_t conv;
         
-        int      i,  n = IO_MSG_SIZE;
+        int      i,  n = IO_MSG_SIZE, nremote;
         size_t   rawlen;
         int64_t  now_ms;
 
@@ -624,8 +626,10 @@ private:
         Seg*     seg;
         Seg*     segs[IO_MSG_SIZE] = {nullptr};
         iovec    iovecs[IO_MSG_SIZE];
+
+        char remote[48];
         
-        while(state_ == State::Running) {
+        while (state_ == State::Running) {
 
             // Step 1: 申请 Seg
             for (i = 0; i < n; i++) {
@@ -676,8 +680,8 @@ private:
                     }
 
                     
-                    std::string remote = xq::net::addr2str(&seg->addr);
-                    assert(remote.size() > 0);
+                    nremote = xq::net::addr2str(&seg->addr, remote);
+                    assert(nremote > 0);
                     seg->addrlen = msg->msg_hdr.msg_namelen;
 
                     if (event_->on_recv(seg->data, rawlen, &seg->addr, seg->addrlen) < 0) {
@@ -686,7 +690,7 @@ private:
 
                     // Step 4: 获取会话
                     if (sessions_.get(conv, sess)) {
-                        if (remote != sess->remote_) {
+                        if (std::string_view(remote, nremote) != sess->remote_) {
                             sess->_reset(&seg->addr, seg->addrlen, remote, now_ms);
                             if (event_->on_reconnected(sess) < 0) {
                                 continue;
@@ -699,7 +703,7 @@ private:
                         }
 
                         sess = Sess::pool()->get();
-                        sess->_set(conv, this, &seg->addr, seg->addrlen, remote, now_ms, (conns_ + 1) % QUE_SIZE, &KcpListener::output);
+                        sess->_set(conv, this, &seg->addr, seg->addrlen, std::string(remote, nremote), now_ms, (conns_ + 1) % QUE_SIZE, &KcpListener::output);
 
                         if (event_->on_connected(sess) < 0) {
                             Sess::pool()->put(sess);
@@ -848,4 +852,4 @@ private:
 } // namespace xq;
 
 
-#endif // __KCP_LISTENER__
+#endif // __XQ_NET_KCP_LISTENER__

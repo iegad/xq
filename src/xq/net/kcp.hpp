@@ -1,5 +1,5 @@
-#ifndef __NET_KCP__
-#define __NET_KCP__
+#ifndef __XQ_NET_KCP__
+#define __XQ_NET_KCP__
 
 
 #include <memory>
@@ -204,4 +204,4 @@ private:
 } // namespace xq
 
 
-#endif // !__NET_KCP__
+#endif // !__XQ_NET_KCP__

@@ -1,5 +1,5 @@
-#ifndef __KCP_CONN__
-#define __KCP_CONN__
+#ifndef __XQ_NET_KCP_CONN__
+#define __XQ_NET_KCP_CONN__
 
 
 #include "xq/tools/tools.hpp"
@@ -547,4 +547,4 @@ private:
 } // namespace xq
 
 
-#endif // !__KCP_CONN__
+#endif // !__XQ_NET_KCP_CONN__

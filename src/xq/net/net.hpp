@@ -1,5 +1,5 @@
-#ifndef __NET_HPP__
-#define __NET_HPP__
+#ifndef __XQ_NET__
+#define __XQ_NET__
 
 
 #ifdef _WIN32
@@ -49,7 +49,7 @@ constexpr int      IO_MSG_SIZE       = 256;                             // recvm
 constexpr int      IO_TIMEOUT        = 5000;                            // IO 读超时 5000毫秒
 
 constexpr char REG_IPV4[] = "^((25[0-5]|(2[0-4]|1\\d|[1-9]|)\\d)\\.?\\b){4}$";
-constexpr char REG_IPV6[] = "(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))";
+constexpr char REG_IPV6[] = "^\\[(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))\\]$";
 
 // ------------------------------------------------------------------------ 类型与符号 ------------------------------------------------------------------------
 
@@ -221,11 +221,43 @@ std::string addr2str(const sockaddr *addr) {
         rzt = std::string(buf) + ":" + std::to_string(ntohs(ra->sin6_port));
     } break;
 
-    default:
-        return "";
+    default: break;
     } // switch (addr_.sa_family);
 
     return rzt;
+}
+
+
+int addr2str(const sockaddr* addr, char* buf, size_t nbuf = 48) {
+    assert(addr && "addr is invalid");
+    assert(buf && nbuf >= 48 && "buf is invalid");
+
+    ::memset(buf, 0, nbuf);
+
+    switch (addr->sa_family) {
+
+    case AF_INET: {
+        sockaddr_in* ra = (sockaddr_in*)addr;
+        assert(::inet_ntop(AF_INET, &ra->sin_addr, buf, nbuf) && "inet_ntop failed");
+        char* tmpbuf = buf + strlen(buf);
+        snprintf(tmpbuf, nbuf, ":%d", ntohs(ra->sin_port));
+    } break;
+
+    case AF_INET6: {
+        sockaddr_in6* ra = (sockaddr_in6*)addr;
+        assert(::inet_ntop(AF_INET6, &ra->sin6_addr, buf + 1, nbuf) && "inet_ntop failed");
+        buf[0] = '[';
+        int len = strlen(buf);
+        buf[len] = ']';
+        char* tmpbuf = buf + len + 1;
+        snprintf(tmpbuf, nbuf, ":%d", ntohs(ra->sin6_port));
+    } break;
+
+    default:
+        return -1;
+    } // switch (addr_.sa_family);
+
+    return strlen(buf);
 }
 
 
@@ -241,6 +273,8 @@ bool str2addr(const std::string& str, sockaddr *addr, socklen_t *addrlen) {
     if (!addr || !addrlen) {
         return false;
     }
+
+    ::memset(addr, 0, sizeof(*addr));
 
     bool has_port = false;
     int32_t port = 0;
@@ -269,10 +303,11 @@ bool str2addr(const std::string& str, sockaddr *addr, socklen_t *addrlen) {
         a4->sin_port = ntohs((uint16_t)port);
         *addrlen = sizeof(sockaddr_in);
         return true;
-    } else if (std::regex_match(ip, r6)) {
+    }
+    else if (std::regex_match(ip, r6)) {
         sockaddr_in6 *a6 = (sockaddr_in6*)addr;
         a6->sin6_family = AF_INET6;
-        if (::inet_pton(AF_INET6, ip.c_str(), &a6->sin6_addr) != 1) {
+        if (::inet_pton(AF_INET6, std::string(ip.c_str() + 1, ip.size() - 2).c_str(), &a6->sin6_addr) != 1) {
             return false;
         }
 
@@ -289,4 +324,4 @@ bool str2addr(const std::string& str, sockaddr *addr, socklen_t *addrlen) {
 } // namespace xq
 
 
-#endif // __NET_HPP__
+#endif // __XQ_NET__
