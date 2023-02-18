@@ -792,9 +792,9 @@ private:
     // KCP 工作线程
     // ------------------------
     void _kcp_proc(Queue *que) {
-        constexpr std::chrono::milliseconds TIMEOUT = std::chrono::milliseconds(IO_TIMEOUT);
+        constexpr int64_t TIMEOUT = std::chrono::microseconds(IO_TIMEOUT * 1000).count();
 
-        int      nrecv;
+        int      n;
         Seg*     seg;
         Sess*    sess;
         auto     segpool = Seg::pool();
@@ -808,20 +808,15 @@ private:
                     assert(seg->addrlen == sess->raddrlen_ && memcmp(&seg->addr, &sess->raddr_, seg->addrlen) == 0);
 
                     // Step 2: 获取KCP消息包
-                    nrecv = sess->_input(seg->data, seg->len);
-                    if (nrecv < 0) {
-                        event_->on_error(xq::net::ErrType::KCP_INPUT, nrecv, sess);
+                    n = sess->_input(seg->data, seg->len);
+                    if (n < 0) {
+                        event_->on_error(xq::net::ErrType::KCP_INPUT, n, sess);
                         break;
                     }
 
-                    while (true) {
-                        // Step 3: 获取消息包
-                        nrecv = sess->_recv(rbuf, KCP_MAX_DATA_SIZE);
-                        if (nrecv < 0) {
-                            break;
-                        }
-
-                        if (event_->on_message(sess, rbuf, nrecv) < 0) {
+                    // Step 3: 获取消息包
+                    while (n = sess->_recv(rbuf, KCP_MAX_DATA_SIZE), n > 0) {
+                        if (event_->on_message(sess, rbuf, n) < 0) {
                             sess->last_ms_ = 0;
                         }
                     }
