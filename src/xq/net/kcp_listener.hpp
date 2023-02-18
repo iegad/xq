@@ -356,23 +356,20 @@ public:
         // Step 3: 开启 kcp update线程
         update_thread_ = std::thread(std::bind(&KcpListener::_update, this));
 
-        // Step 4 :开启 io read 线程
-        rx_thread_ = std::thread(std::bind(&KcpListener::_rx, this));
+        // Step 4 :开启 主线程 io read
+        _rx();
 
-        // Step 5: 等待IO线程
-        rx_thread_.join();
-
-        // Step 6: 等待update线程
+        // Step 5: 等待update线程
         update_thread_.join();
 
-        // Step 7: 等待工作线程
+        // Step 6: 等待工作线程
         for (auto &t : kp_thread_pool_) {
             t.join();
         }
-        // Step 8: 清理工作线程
+        // Step 7: 清理工作线程
         kp_thread_pool_.clear();
 
-        // Step 9: 清空RxSeg队列
+        // Step 8: 清空RxSeg队列
         Seg* segs[128];
         size_t n = 0;
         for (auto& que : rques_) {
@@ -382,7 +379,7 @@ public:
             } while (n > 0);
         }
 
-        // Step 10: 关闭UDP监听
+        // Step 9: 关闭UDP监听
         close(ufd_);
         ufd_ = INVALID_SOCKET;
 
@@ -481,7 +478,6 @@ private:
     // ------------------------
     void _rx() {
         const size_t QUE_SIZE  = std::thread::hardware_concurrency();
-        const size_t MAX_COUNT = (size_t)(MAX_CONV * 5);
 
         using SegPool = xq::tools::ObjectPool<Seg>;
         using KcpPool = xq::tools::ObjectPool<Sess>;
@@ -545,11 +541,6 @@ private:
 #endif
                     }
                 } else {
-                    if (conns_ >= MAX_COUNT) {
-                        event_->on_error(xq::net::ErrType::KL_MAX_CONN, conns_, this);
-                        continue;
-                    }
-
                     sess = kcppool->get();
                     sess->_set(conv, this, &seg->addr, seg->addrlen, now_ms, qidx++ % QUE_SIZE, &KcpListener::output);
 #if (KL_EVENT_ON_CONNECTED == 1)
@@ -610,7 +601,6 @@ private:
     // ------------------------
     void _rx() {
         const  size_t   QUE_SIZE  = std::thread::hardware_concurrency();
-        const  int32_t  MAX_COUNT = MAX_CONV * 5;
         static timespec TIMEOUT   = {.tv_sec = IO_TIMEOUT / 1000, .tv_nsec = 0};
 
         mmsghdr msgs[IO_MSG_SIZE];
@@ -699,11 +689,6 @@ private:
 #endif
                         }
                     } else {
-                        if (conns_ >= MAX_COUNT) {
-                            event_->on_error(xq::net::ErrType::KL_MAX_CONN, conns_, this);
-                            break;
-                        }
-
                         sess = Sess::pool()->get();
                         sess->_set(conv, this, &seg->addr, seg->addrlen, now_ms, qidx++ % QUE_SIZE, &KcpListener::output);
 
@@ -795,34 +780,37 @@ private:
         constexpr int64_t TIMEOUT = std::chrono::microseconds(IO_TIMEOUT * 1000).count();
 
         int      n;
-        Seg*     seg;
+        size_t   i, nseg;
+        Seg      *seg, *segs[16];
         Sess*    sess;
         auto     segpool = Seg::pool();
         uint8_t* rbuf    = new uint8_t[KCP_MAX_DATA_SIZE];
 
         while (state_ == State::Running) {
-            if (que->wait_dequeue_timed(seg, TIMEOUT)) {
-                do {
-                    // Step 1: 获取Sess
-                    sess = seg->sess;
-                    assert(seg->addrlen == sess->raddrlen_ && memcmp(&seg->addr, &sess->raddr_, seg->addrlen) == 0);
+            nseg = que->wait_dequeue_bulk_timed(segs, 16, TIMEOUT);
+            for (i = 0; i < nseg; i++) {
+                // Step 1: 获取Sess
+                seg  = segs[i];
+                sess = seg->sess;
+                assert(seg->addrlen == sess->raddrlen_ && memcmp(&seg->addr, &sess->raddr_, seg->addrlen) == 0);
 
-                    // Step 2: 获取KCP消息包
-                    n = sess->_input(seg->data, seg->len);
-                    if (n < 0) {
-                        event_->on_error(xq::net::ErrType::KCP_INPUT, n, sess);
-                        break;
-                    }
+                // Step 2: 获取KCP消息包
+                n = sess->_input(seg->data, seg->len);
+                if (n < 0) {
+                    event_->on_error(xq::net::ErrType::KCP_INPUT, n, sess);
+                    sess->last_ms_ = 0;
+                    continue;
+                }
 
-                    // Step 3: 获取消息包
-                    while (n = sess->_recv(rbuf, KCP_MAX_DATA_SIZE), n > 0) {
-                        if (event_->on_message(sess, rbuf, n) < 0) {
-                            sess->last_ms_ = 0;
-                        }
-                    }
-                } while (0);
+                // Step 3: 获取消息包
+                while (n = sess->_recv(rbuf, KCP_MAX_DATA_SIZE), n > 0) {
+                    sess->last_ms_ = (event_->on_message(sess, rbuf, n) < 0) ? 0 : seg->time_ms;
+                }
+                std::this_thread::yield();
+            }
 
-                segpool->put(seg);
+            if (nseg > 0) {
+                segpool->put(segs, nseg);
             }
         } // while (state_ == State::Running);
 
@@ -835,7 +823,6 @@ private:
     SOCKET                          ufd_;            // 监听套接字
     std::string                     host_;           // 监听地址
     std::atomic_int32_t             conns_;          // 当前连接数
-    std::thread                     rx_thread_;      // io read thread
     std::thread                     update_thread_;  // kcp update thread
     std::vector<std::thread>        kp_thread_pool_; // 工作线程池 kcp procedure thread pool
     std::vector<Queue*>             rques_;          // read data queue

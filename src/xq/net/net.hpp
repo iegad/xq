@@ -70,7 +70,6 @@ enum class ErrType {
     KCP_INPUT,   // KCP input 失败
 
     KL_INVALID_CONV, // KCP conv 无效
-    KL_MAX_CONN,     // 当前超过最大连接数
 
     KC_HOST,
 };
