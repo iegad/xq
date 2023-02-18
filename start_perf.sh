@@ -8,5 +8,5 @@ fi
 
 rm -fr perf
 mkdir perf
-`sudo perf record -e cpu-clock -g -p $pid -o ./perf/$1.data`
+`sudo perf record -e cpu-clock -g --call-graph dwarf -p $pid -o ./perf/$1.data`
 echo "press [Ctl+C] to stop collect samples";

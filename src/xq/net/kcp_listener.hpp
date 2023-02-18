@@ -93,6 +93,9 @@ public:
     // 获取对端地址
     // ========================
     const std::string& get_remote() const {
+        if (remote_.empty()) {
+            remote_ = xq::net::addr2str(&raddr_);
+        }
         return remote_;
     }
 
@@ -120,7 +123,12 @@ public:
     }
 
 
-private: 
+private:
+
+
+    bool _diff_addr(const sockaddr* addr, socklen_t addrlen) {
+        return addrlen != raddrlen_ || ::memcmp(addr, &raddr_, addrlen);
+    }
 
 
     // ------------------------
@@ -130,25 +138,16 @@ private:
     // @listener: 会话所属服务端
     // @addr:     会话地址
     // @addrlen:
-    // @remote:   远端地址字符串形式
     // @now_ms:   当前时间(毫秒)
     // @que_num:  工作队列number
     // @output:   KcpListener::output
     // ------------------------
-    void _set(
-        uint32_t             conv,
-        KcpListener<TEvent>* listener,
-        sockaddr*            addr,
-        socklen_t            addrlen,
-        std::string&&  remote,
-        int64_t              now_ms,
-        uint32_t             que_num,
-        int (*output)(const char* buf, int len, ikcpcb* kcp, void* user)) {
-
+    void _set(uint32_t conv, KcpListener<TEvent>* listener, sockaddr* addr, socklen_t addrlen, int64_t now_ms, uint32_t que_num, int (*output)(const char* buf, int len, ikcpcb* kcp, void* user)) {
         if (!kcp_) {
             kcp_ = new Kcp(conv, this);
             kcp_->set_output(output);
-        } else {
+        }
+        else {
             kcp_->reset(conv);
         }
 
@@ -158,21 +157,17 @@ private:
 
         ::memcpy(&raddr_, addr, addrlen);
         raddrlen_ = addrlen;
-        remote_   = std::move(remote);
-        que_num_  = que_num;
-        last_ms_  = time_ms_ = now_ms;
+        remote_.clear();
+        que_num_ = que_num;
+        last_ms_ = time_ms_ = now_ms;
     }
 
 
-    void _reset(
-        sockaddr*          addr,
-        socklen_t          addrlen,
-        const std::string& remote,
-        int64_t            now_ms) {
+    void _reset(sockaddr* addr, socklen_t addrlen, int64_t now_ms) {
         kcp_->reset(kcp_->get_conv());
         ::memcpy(&raddr_, addr, addrlen);
         raddrlen_ = addrlen;
-        remote_   = remote;
+        remote_.clear();
         last_ms_  = time_ms_ = now_ms;
     }
 
@@ -494,8 +489,6 @@ private:
         SegPool* segpool = Seg::pool();
         KcpPool* kcppool = Sess::pool();
 
-        char     remote[48];
-
         while (state_ == State::Running) {
             // Step 1: 申请seg
             if (!seg) {
@@ -528,9 +521,6 @@ private:
                     break;
                 }
 
-                nremote = xq::net::addr2str(&seg->addr, remote);
-                assert(nremote > 0);
-
                 if (event_->on_recv(seg->data, rawlen, &seg->addr, seg->addrlen) < 0) {
                     break;
                 }
@@ -538,8 +528,8 @@ private:
                 now_ms = xq::tools::now_milli();
                 // Step 4: 获取会话
                 if (sessions_.get(conv, sess)) {
-                    if (std::string_view(remote, nremote) != sess->remote_) {
-                        sess->_reset(&seg->addr, seg->addrlen, remote, now_ms);
+                    if (sess->_diff_addr(&seg->addr, seg->addrlen)) {
+                        sess->_reset(&seg->addr, seg->addrlen, now_ms);
                         if (event_->on_reconnected(sess) < 0) {
                             continue;
                         }
@@ -551,7 +541,7 @@ private:
                     }
 
                     sess = kcppool->get();
-                    sess->_set(conv, this, &seg->addr, seg->addrlen, std::string(remote, nremote), now_ms, (conns_ + 1) % QUE_SIZE, &KcpListener::output);
+                    sess->_set(conv, this, &seg->addr, seg->addrlen, now_ms, (conns_ + 1) % QUE_SIZE, &KcpListener::output);
                     if (event_->on_connected(sess) < 0) {
                         kcppool->put(sess);
                         break;
@@ -615,7 +605,7 @@ private:
 
         uint32_t conv;
         
-        int      i,  n = IO_MSG_SIZE, nremote;
+        int      i,  n = IO_MSG_SIZE;
         size_t   rawlen;
         int64_t  now_ms;
 
@@ -626,8 +616,6 @@ private:
         Seg*     seg;
         Seg*     segs[IO_MSG_SIZE] = {nullptr};
         iovec    iovecs[IO_MSG_SIZE];
-
-        char remote[48];
         
         while (state_ == State::Running) {
 
@@ -679,9 +667,6 @@ private:
                         continue;
                     }
 
-                    
-                    nremote = xq::net::addr2str(&seg->addr, remote);
-                    assert(nremote > 0);
                     seg->addrlen = msg->msg_hdr.msg_namelen;
 
                     if (event_->on_recv(seg->data, rawlen, &seg->addr, seg->addrlen) < 0) {
@@ -690,8 +675,8 @@ private:
 
                     // Step 4: 获取会话
                     if (sessions_.get(conv, sess)) {
-                        if (std::string_view(remote, nremote) != sess->remote_) {
-                            sess->_reset(&seg->addr, seg->addrlen, remote, now_ms);
+                        if (sess->_diff_addr(&seg->addr, seg->addrlen)) {
+                            sess->_reset(&seg->addr, seg->addrlen, now_ms);
                             if (event_->on_reconnected(sess) < 0) {
                                 continue;
                             }
@@ -703,7 +688,7 @@ private:
                         }
 
                         sess = Sess::pool()->get();
-                        sess->_set(conv, this, &seg->addr, seg->addrlen, std::string(remote, nremote), now_ms, (conns_ + 1) % QUE_SIZE, &KcpListener::output);
+                        sess->_set(conv, this, &seg->addr, seg->addrlen, now_ms, (conns_ + 1) % QUE_SIZE, &KcpListener::output);
 
                         if (event_->on_connected(sess) < 0) {
                             Sess::pool()->put(sess);
@@ -799,7 +784,7 @@ private:
                 do {
                     // Step 1: 获取Sess
                     sess = seg->sess;
-                    assert(sess->remote_ == addr2str(&seg->addr));
+                    assert(seg->addrlen == sess->raddrlen_ && memcmp(&seg->addr, &sess->raddr_, seg->addrlen) == 0);
 
                     // Step 2: 获取KCP消息包
                     nrecv = sess->_input(seg->data, seg->len);
