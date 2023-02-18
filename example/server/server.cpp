@@ -1,3 +1,12 @@
+#define KL_EVENT_ON_START        1
+#define KL_EVENT_ON_STOP         0
+#define KL_EVENT_ON_CONNECTED    1
+#define KL_EVENT_ON_RECONNECTED  0
+#define KL_EVENT_ON_DISCONNECTED 1
+#define KL_EVENT_ON_SEND         0
+#define KL_EVENT_ON_RECV         0
+
+
 #include "xq/tools/tools.hpp"
 #include "xq/net//kcp_listener.hpp"
 #ifndef WIN32

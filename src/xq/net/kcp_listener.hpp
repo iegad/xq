@@ -333,9 +333,11 @@ public:
     // 启动服务
     // ========================
     void start() {
+#if (KL_EVENT_ON_START == 1)
         if (event_->on_start(this) < 0) {
             return;
         }
+#endif
 
         // Step 1: 创建 udp 监听套接字
         ufd_ = udp_bind(host_);
@@ -385,7 +387,9 @@ public:
         ufd_ = INVALID_SOCKET;
 
         state_ = State::Stopped;
+#if (KL_EVENT_ON_STOP == 1)
         event_->on_stop(this);
+#endif
     }
 
 
@@ -461,9 +465,11 @@ private:
         Sess* sess = (Sess*)user;
         KcpListener* l = sess->listener_;
 
+#if (KL_EVENT_ON_SEND == 1)
         l->event_->on_send((const uint8_t*)raw, len, &sess->raddr_, sess->raddrlen_);
-        int n = ::sendto(l->ufd_, raw, len, 0, &sess->raddr_, sess->raddrlen_);
-        if (n < 0) {
+#endif
+
+        if (::sendto(l->ufd_, raw, len, 0, &sess->raddr_, sess->raddrlen_) < 0) {
             sess->listener_->event_->on_error(xq::net::ErrType::IO_SEND, error(), sess);
         }
 
@@ -521,18 +527,22 @@ private:
                     break;
                 }
 
+#if (KL_EVENT_ON_RECV == 1)
                 if (event_->on_recv(seg->data, rawlen, &seg->addr, seg->addrlen) < 0) {
                     break;
                 }
+#endif
 
                 now_ms = xq::tools::now_milli();
                 // Step 4: 获取会话
                 if (sessions_.get(conv, sess)) {
                     if (sess->_diff_addr(&seg->addr, seg->addrlen)) {
                         sess->_reset(&seg->addr, seg->addrlen, now_ms);
+#if (KL_EVENT_ON_RECONNECTED == 1)
                         if (event_->on_reconnected(sess) < 0) {
                             continue;
                         }
+#endif
                     }
                 } else {
                     if (conns_ >= MAX_COUNT) {
@@ -542,11 +552,12 @@ private:
 
                     sess = kcppool->get();
                     sess->_set(conv, this, &seg->addr, seg->addrlen, now_ms, (conns_ + 1) % QUE_SIZE, &KcpListener::output);
+#if (KL_EVENT_ON_CONNECTED == 1)
                     if (event_->on_connected(sess) < 0) {
                         kcppool->put(sess);
                         break;
                     }
-
+#endif
                     conns_++;
                     assert(sessions_.insert(conv, sess).second);
                 }
@@ -581,9 +592,11 @@ private:
         msg->msg_namelen        = sess->raddrlen_;
         msg->msg_iov[0].iov_len = len;
 
+#if (KL_EVENT_ON_SEND == 1)
         lis->event_->on_send((const uint8_t*)raw, len, &sess->raddr_, sess->raddrlen_);
+#endif
         ::memcpy(msg->msg_iov[0].iov_base, raw, len);
-        
+
         if (++lis->msgs_len_ == IO_MSG_SIZE) {
             lis->_sendmsgs();
         }
@@ -669,17 +682,21 @@ private:
 
                     seg->addrlen = msg->msg_hdr.msg_namelen;
 
+#if (KL_EVENT_ON_RECV == 1)
                     if (event_->on_recv(seg->data, rawlen, &seg->addr, seg->addrlen) < 0) {
                         continue;
                     }
+#endif
 
                     // Step 4: 获取会话
                     if (sessions_.get(conv, sess)) {
                         if (sess->_diff_addr(&seg->addr, seg->addrlen)) {
                             sess->_reset(&seg->addr, seg->addrlen, now_ms);
+#if (KL_EVENT_ON_RECONNECTED == 1)
                             if (event_->on_reconnected(sess) < 0) {
                                 continue;
                             }
+#endif
                         }
                     } else {
                         if (conns_ >= MAX_COUNT) {
@@ -690,10 +707,12 @@ private:
                         sess = Sess::pool()->get();
                         sess->_set(conv, this, &seg->addr, seg->addrlen, now_ms, (conns_ + 1) % QUE_SIZE, &KcpListener::output);
 
+#if (KL_EVENT_ON_CONNECTED == 1)
                         if (event_->on_connected(sess) < 0) {
                             Sess::pool()->put(sess);
                             continue;
                         }
+#endif
 
                         conns_++;
                         assert(sessions_.insert(conv, sess).second);
@@ -751,7 +770,9 @@ private:
                 if (sess->_update(now_ms) < 0) {
                     erase_sess[nerase]   = sess;
                     erase_keys[nerase++] = sess->get_conv();
+#if (KL_EVENT_ON_DISCONNECTED == 1)
                     event_->on_disconnected(sess);
+#endif
                 }
             }
 
