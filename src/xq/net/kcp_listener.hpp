@@ -486,7 +486,7 @@ private:
         using SegPool = xq::tools::ObjectPool<Seg>;
         using KcpPool = xq::tools::ObjectPool<Sess>;
 
-        int      rawlen, err, nremote;
+        int      rawlen, err, nremote, qidx = 0;
         uint32_t conv;
         int64_t  now_ms;
 
@@ -551,7 +551,7 @@ private:
                     }
 
                     sess = kcppool->get();
-                    sess->_set(conv, this, &seg->addr, seg->addrlen, now_ms, (conns_ + 1) % QUE_SIZE, &KcpListener::output);
+                    sess->_set(conv, this, &seg->addr, seg->addrlen, now_ms, qidx++ % QUE_SIZE, &KcpListener::output);
 #if (KL_EVENT_ON_CONNECTED == 1)
                     if (event_->on_connected(sess) < 0) {
                         kcppool->put(sess);
@@ -618,7 +618,7 @@ private:
 
         uint32_t conv;
         
-        int      i,  n = IO_MSG_SIZE;
+        int      i,  n = IO_MSG_SIZE, qidx = 0;
         size_t   rawlen;
         int64_t  now_ms;
 
@@ -705,7 +705,7 @@ private:
                         }
 
                         sess = Sess::pool()->get();
-                        sess->_set(conv, this, &seg->addr, seg->addrlen, now_ms, (conns_ + 1) % QUE_SIZE, &KcpListener::output);
+                        sess->_set(conv, this, &seg->addr, seg->addrlen, now_ms, qidx++ % QUE_SIZE, &KcpListener::output);
 
 #if (KL_EVENT_ON_CONNECTED == 1)
                         if (event_->on_connected(sess) < 0) {
