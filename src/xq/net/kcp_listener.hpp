@@ -73,7 +73,7 @@ public:
         : kcp_(nullptr)
         , que_num_(~0)
         , time_ms_(0)
-        , expire_ms_(0)
+        , last_ms_(0)
         , raddr_({0, {0}})
         , raddrlen_(sizeof(raddr_))
         , listener_(nullptr) {}
@@ -100,8 +100,8 @@ public:
     }
 
 
-    int64_t expire_ms() const {
-        return expire_ms_;
+    int64_t last_ms() const {
+        return last_ms_;
     }
 
 
@@ -169,8 +169,7 @@ private:
         raddrlen_ = addrlen;
         remote_.clear();
         que_num_ = que_num;
-        time_ms_ = now_ms;
-        expire_ms_ = now_ms + KCP_TIMEOUT;
+        last_ms_ = time_ms_ = now_ms;
     }
 
 
@@ -179,8 +178,7 @@ private:
         ::memcpy(&raddr_, addr, addrlen);
         raddrlen_ = addrlen;
         remote_.clear();
-        time_ms_ = now_ms;
-        expire_ms_ = now_ms + KCP_TIMEOUT;
+        last_ms_ = time_ms_ = now_ms;
     }
 
 
@@ -222,9 +220,9 @@ private:
     // @return: 成功返回 0, 连接超时返回 -1.
     // ------------------------
     int _update(int64_t now_ms) {
-        int64_t expire_ms = expire_ms_;
+        int64_t last_ms = last_ms_;
 
-        if (expire_ms == 0 || now_ms > expire_ms) {
+        if (last_ms == 0 || now_ms - last_ms > KCP_TIMEOUT) {
             return -1;
         }
 
@@ -238,7 +236,7 @@ private:
     Kcp*                 kcp_;       // KCP实例
     uint32_t             que_num_;   // 当前工作队列号
     int64_t              time_ms_;   // 激活时间
-    std::atomic<int64_t> expire_ms_; // 会话有效时间
+    std::atomic<int64_t> last_ms_; // 会话有效时间
     sockaddr             raddr_;     // 对端地址
     socklen_t            raddrlen_;
     KcpListener<TEvent>* listener_;
@@ -744,22 +742,21 @@ private:
     void _update() {
         typedef Sess* SessPtr;
 
-        constexpr std::chrono::milliseconds INTVAL    = std::chrono::milliseconds(1);
-        const     size_t                    MAX_COUNT = (size_t)(MAX_CONV * 5);
+        constexpr std::chrono::milliseconds INTVAL = std::chrono::milliseconds(KCP_UPDATE_MS / 2);
 
         size_t    i, n, nerase;
         int64_t   now_ms;
         SessPtr   sess;
-        uint32_t* erase_keys  = new uint32_t[MAX_COUNT];
-        SessPtr*  erase_sess  = new SessPtr[MAX_COUNT];
-        SessPtr*  active_sess = new SessPtr[MAX_COUNT];
+        uint32_t* erase_keys  = new uint32_t[MAX_CONV];
+        SessPtr*  erase_sess  = new SessPtr[MAX_CONV];
+        SessPtr*  active_sess = new SessPtr[MAX_CONV];
 
         while (state_ == State::Running) {
             nerase = 0;
             std::this_thread::sleep_for(INTVAL);
             
             now_ms = xq::tools::now_milli();
-            n      = sessions_.get_all_vals(active_sess, MAX_COUNT);
+            n      = sessions_.get_all_vals(active_sess, MAX_CONV);
 
             for (i = 0; i < n; i++) {
                 sess = active_sess[i];
@@ -790,7 +787,7 @@ private:
     void _kcp_proc(Queue *que) {
         constexpr int64_t TIMEOUT = std::chrono::microseconds(IO_TIMEOUT * 1000).count();
 
-        int      n, res_ms;
+        int      n;
         size_t   i, nseg;
         Seg      *seg, *segs[16];
         Sess*    sess;
@@ -809,19 +806,13 @@ private:
                 n = sess->_input(seg->data, seg->len);
                 if (n < 0) {
                     event_->on_error(xq::net::ErrType::KCP_INPUT, n, sess);
-                    sess->expire_ms_ = 0;
+                    sess->last_ms_ = 0;
                     continue;
                 }
 
                 // Step 3: 获取消息包
                 while (n = sess->_recv(rbuf, KCP_MAX_DATA_SIZE), n > 0) {
-                    res_ms = event_->on_message(sess, rbuf, n);
-                    if (res_ms < 0) {
-                        sess->expire_ms_ = 0;
-                    }
-                    else if (res_ms > 0) {
-                        sess->expire_ms_ += res_ms;
-                    }
+                    sess->last_ms_ = event_->on_message(sess, rbuf, n) < 0 ? 0 : seg->time_ms;
                 }
                 std::this_thread::yield();
             }
