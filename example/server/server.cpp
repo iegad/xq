@@ -20,7 +20,11 @@ public:
     typedef KcpListener::Sess KcpSess;
 
     int on_message(KcpSess* sess, const uint8_t* data, size_t datalen) {
-        return sess->send(data, datalen);
+        if (sess->send(data, datalen) < 0) {
+            return -1;
+        } else {
+            return xq::net::KCP_TIMEOUT;
+        }
     }
 
     int on_connected(KcpSess* sess)  {
