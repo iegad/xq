@@ -415,6 +415,11 @@ public:
         }
     }
 
+    auto size() {
+        std::lock_guard<TLock> lk(mtx_);
+        return m_.size();
+    }
+
 private:
     TLock mtx_;
     std::unordered_map<TKey, TVal> m_;

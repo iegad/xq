@@ -92,7 +92,7 @@ public:
     // ========================
     // 获取对端地址
     // ========================
-    const std::string& remote() const {
+    const std::string& remote() {
         if (remote_.empty()) {
             remote_ = xq::net::addr2str(&raddr_);
         }
@@ -359,6 +359,9 @@ public:
         assert(ufd_ != INVALID_SOCKET && "ufd create failed");
 #ifdef WIN32
         assert(!::setsockopt(ufd_, SOL_SOCKET, SO_RCVTIMEO, (const char *)&IO_TIMEOUT, sizeof(IO_TIMEOUT)));
+#else // LINUX平台下
+        constexpr timeval TIMEOUT = {.tv_sec = IO_TIMEOUT / 1000, .tv_usec = 0};
+        assert(!::setsockopt(ufd_, SOL_SOCKET, SO_RCVTIMEO, &TIMEOUT, sizeof(TIMEOUT)));
 #endif // WIN32
 
         state_ = State::Running;
@@ -381,6 +384,7 @@ public:
         for (auto &t : kp_thread_pool_) {
             t.join();
         }
+
         // Step 7: 清理工作线程
         kp_thread_pool_.clear();
 
@@ -397,6 +401,15 @@ public:
         close(ufd_);
         ufd_ = INVALID_SOCKET;
 
+        Sess** ss = new Sess*[MAX_CONV];
+        n = sessions_.get_all_vals(ss, MAX_CONV);
+        if (n > 0) {
+            Sess::pool()->put(ss, n);
+        }
+        sessions_.clear();
+        delete[] ss;
+
+        conns_ = sessions_.size();
         state_ = State::Stopped;
 #if (KL_EVENT_ON_STOP == 1)
         event_->on_stop(this);
@@ -408,7 +421,9 @@ public:
     // 停止服务
     // ========================
     void stop() {
-        state_ = State::Stopping;
+        if (state_ == State::Running) {
+            state_ = State::Stopping;
+        }
     }
 
 
@@ -614,14 +629,13 @@ private:
     // ------------------------
     void _rx() {
         const  size_t   QUE_SIZE  = std::thread::hardware_concurrency();
-        static timespec TIMEOUT   = {.tv_sec = IO_TIMEOUT / 1000, .tv_nsec = 0};
 
         mmsghdr msgs[IO_MSG_SIZE];
         ::memset(msgs, 0, sizeof(msgs));
 
         uint32_t conv;
         
-        int      i,  n = IO_MSG_SIZE, qidx = 0;
+        int      i,  n = IO_MSG_SIZE, qidx = 0, err;
         size_t   rawlen;
         int64_t  now_ms;
 
@@ -632,7 +646,7 @@ private:
         Seg*     seg;
         Seg*     segs[IO_MSG_SIZE] = {nullptr};
         iovec    iovecs[IO_MSG_SIZE];
-        
+
         while (state_ == State::Running) {
 
             // Step 1: 申请 Seg
@@ -653,11 +667,14 @@ private:
 
             sess = nullptr;
             // Step 2: 获取消息
-            n = ::recvmmsg(ufd_, msgs, IO_MSG_SIZE, MSG_WAITFORONE, &TIMEOUT);
+            n = ::recvmmsg(ufd_, msgs, IO_MSG_SIZE, MSG_WAITFORONE, nullptr);
 
             do {
                 if (n < 0) {
-                    event_->on_error(xq::net::ErrType::IO_RECV, error(), nullptr);
+                    err = error();
+                    if (err != EAGAIN) {
+                        event_->on_error(xq::net::ErrType::IO_RECV, err, nullptr);
+                    }
                     break;
                 }
 
@@ -834,7 +851,7 @@ private:
     State                           state_;          // 服务端状态
     SOCKET                          ufd_;            // 监听套接字
     std::string                     host_;           // 监听地址
-    std::atomic_int32_t             conns_;          // 当前连接数
+    std::atomic<int32_t>            conns_;          // 当前连接数
     std::thread                     update_thread_;  // kcp update thread
     std::vector<std::thread>        kp_thread_pool_; // 工作线程池 kcp procedure thread pool
     std::vector<Queue*>             rques_;          // read data queue
