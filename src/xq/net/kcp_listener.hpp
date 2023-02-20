@@ -92,7 +92,7 @@ public:
     // ========================
     // 获取对端地址
     // ========================
-    const std::string& get_remote() const {
+    const std::string& remote() const {
         if (remote_.empty()) {
             remote_ = xq::net::addr2str(&raddr_);
         }
@@ -113,7 +113,7 @@ public:
     // ========================
     // 获取kcp conv 
     // ========================
-    uint32_t get_conv() const {
+    uint32_t conv() const {
         return kcp_->get_conv();
     }
 
@@ -308,7 +308,12 @@ public:
         }
 #endif
 
-        for (auto q : rques_) {
+        for (auto &q : rques_) {
+            Seg* segs[128];
+            int n;
+            while (n = q->try_dequeue_bulk(segs, 128), n > 0) {
+                Seg::pool()->put(segs, n);
+            }
             delete q;
         }
 
@@ -319,17 +324,17 @@ public:
 
 
     // ========================
-    // 最大连接数
+    // 最大kcp conv
     // ========================
-    uint32_t max_conn() const {
-        return MAX_CONV * 5;
+    uint32_t max_conv() const {
+        return MAX_CONV;
     }
 
 
     // ========================
     // 当前连接数
     // ========================
-    int32_t conn() const {
+    int32_t conns() const {
         return conns_;
     }
 
@@ -342,7 +347,7 @@ public:
     // ========================
     // 启动服务
     // ========================
-    void start() {
+    void run() {
 #if (KL_EVENT_ON_START == 1)
         if (event_->on_start(this) < 0) {
             return;
@@ -383,10 +388,9 @@ public:
         Seg* segs[128];
         size_t n = 0;
         for (auto& que : rques_) {
-            do {
-                n = que->try_dequeue_bulk(segs, 128);
+            while (n = que->try_dequeue_bulk(segs, 128), n > 0) {
                 Seg::pool()->put(segs, n);
-            } while (n > 0);
+            }
         }
 
         // Step 9: 关闭UDP监听
@@ -533,7 +537,7 @@ private:
                 }
 
 #if (KL_EVENT_ON_RECV == 1)
-                if (event_->on_recv(seg->data, rawlen, &seg->addr, seg->addrlen) < 0) {
+                if (event_->on_recv(seg) < 0) {
                     break;
                 }
 #endif
@@ -762,7 +766,7 @@ private:
                 sess = active_sess[i];
                 if (sess->_update(now_ms) < 0) {
                     erase_sess[nerase]   = sess;
-                    erase_keys[nerase++] = sess->get_conv();
+                    erase_keys[nerase++] = sess->conv();
 #if (KL_EVENT_ON_DISCONNECTED == 1)
                     event_->on_disconnected(sess);
 #endif
@@ -800,7 +804,7 @@ private:
                 // Step 1: 获取Sess
                 seg  = segs[i];
                 sess = seg->sess;
-                assert(seg->addrlen == sess->raddrlen_ && memcmp(&seg->addr, &sess->raddr_, seg->addrlen) == 0);
+                assert(!sess->_diff_addr(&seg->addr, seg->addrlen));
 
                 // Step 2: 获取KCP消息包
                 n = sess->_input(seg->data, seg->len);

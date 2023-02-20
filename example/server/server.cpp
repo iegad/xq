@@ -18,6 +18,7 @@ class EchoEvent {
 public:
     typedef xq::net::KcpListener<EchoEvent> KcpListener;
     typedef KcpListener::Sess KcpSess;
+    typedef KcpListener::Seg KcpSeg;
 
     int on_message(KcpSess* sess, const uint8_t* data, size_t datalen) {
         int n = sess->send(data, datalen);
@@ -29,17 +30,17 @@ public:
     }
 
     int on_connected(KcpSess* sess)  {
-        std::printf("+++ %u has connected\n", sess->get_conv());
+        std::printf("+++ %u has connected\n", sess->conv());
         return 0;
     }
 
     int on_reconnected(KcpSess* sess) {
-        std::printf("### %u has reconnected\n", sess->get_conv());
+        std::printf("### %u has reconnected\n", sess->conv());
         return 0;
     }
 
     void on_disconnected(KcpSess * sess) {
-        std::printf("--- %u has disconnected\n", sess->get_conv());
+        std::printf("--- %u has disconnected\n", sess->conv());
     }
 
     void on_error(xq::net::ErrType err_type, int err, void* /*arg*/) {
@@ -55,7 +56,7 @@ public:
         std::printf("%s has stopped...\n", listener->host().c_str());
     }
 
-    int on_recv(uint8_t*, size_t, const sockaddr*, socklen_t) {
+    int on_recv(KcpSeg* seg) {
         return 0;
     }
 
@@ -75,7 +76,7 @@ main(int, char**) {
 		exit(1);
 #endif // _WIN32
 	EchoEvent::KcpListener::Ptr listener = EchoEvent::KcpListener::create(HOST, 2000);
-	listener->start();
+	listener->run();
 
 #ifdef _WIN32
 	WSACleanup();
