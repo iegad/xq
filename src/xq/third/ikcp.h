@@ -291,7 +291,7 @@ struct IKCPCB
 {
     uint32_t conv, mtu, mss, state;
     uint32_t snd_una, snd_nxt, rcv_nxt;
-    uint32_t ts_recent, ts_lastack, ssthresh;
+    uint32_t /*ts_recent, ts_lastack,*/ ssthresh;
     int32_t rx_rttval, rx_srtt, rx_rto, rx_minrto;
     uint32_t snd_wnd, rcv_wnd, rmt_wnd, cwnd, probe;
     uint32_t current, interval, ts_flush, xmit;
@@ -311,10 +311,10 @@ struct IKCPCB
 	uint8_t *buffer;
 	int fastresend;
 	int fastlimit;
-	int nocwnd, stream;
-	int logmask;
+	int nocwnd;
+	//int logmask;
 	int (*output)(const uint8_t *buf, size_t len, struct IKCPCB *kcp, void *user);
-	void (*writelog)(const char *log, struct IKCPCB *kcp, void *user);
+	//void (*writelog)(const char *log, struct IKCPCB *kcp, void *user);
 };
 
 
