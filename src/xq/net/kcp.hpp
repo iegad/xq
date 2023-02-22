@@ -85,13 +85,13 @@ public:
 
     /// @brief 设置output回调
     /// @param output 有效的回调函数
-    void set_output(int (*output)(const char* buf, int len, ikcpcb* kcp, void* user)) {
+    void set_output(int (*output)(const uint8_t* buf, size_t len, ikcpcb* kcp, void* user)) {
         kcp_->output = output;
     }
 
 
     /// @brief 获取当前Kcp conv
-    uint32_t get_conv() const {
+    uint32_t conv() const {
         return kcp_->conv;
     }
 
@@ -101,7 +101,7 @@ public:
     /// @param len  数据缓冲区长度
     /// @return 成功返回0, 否则返回!0
     int recv(uint8_t* buf, int len) {
-        return ::ikcp_recv(kcp_, (char *)buf, len);
+        return ::ikcp_recv(kcp_, buf, len);
     }
 
 
@@ -110,7 +110,7 @@ public:
     /// @param len 
     /// @return 成功返回0, 否则返回!0
     int send(const uint8_t* buf, int len) {
-        return ::ikcp_send(kcp_, (const char *)buf, len);
+        return ::ikcp_send(kcp_, buf, len);
     }
 
 
@@ -126,7 +126,7 @@ public:
     /// @param size 原始数据长度
     /// @return 成功返回0, 否则返回!0
     int input(const uint8_t* data, long size) {
-        return ::ikcp_input(kcp_, (const char *)data, size);
+        return ::ikcp_input(kcp_, data, size);
     }
 
 

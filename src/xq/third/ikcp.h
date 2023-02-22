@@ -15,6 +15,7 @@
 #include <stddef.h>
 #include <stdlib.h>
 #include <assert.h>
+#include <stdint.h>
 
 
 //=====================================================================
@@ -59,53 +60,53 @@
 //=====================================================================
 // Integer Definition
 //=====================================================================
-#ifndef __IINT8_DEFINED
-#define __IINT8_DEFINED
-typedef char IINT8;
-#endif
+//#ifndef __IINT8_DEFINED
+//#define __IINT8_DEFINED
+//typedef char IINT8;
+//#endif
 
-#ifndef __IUINT8_DEFINED
-#define __IUINT8_DEFINED
-typedef unsigned char IUINT8;
-#endif
+//#ifndef __IUINT8_DEFINED
+//#define __IUINT8_DEFINED
+//typedef unsigned char IUINT8;
+//#endif
 
-#ifndef __IUINT16_DEFINED
-#define __IUINT16_DEFINED
-typedef unsigned short IUINT16;
-#endif
+//#ifndef __IUINT16_DEFINED
+//#define __IUINT16_DEFINED
+//typedef unsigned short IUINT16;
+//#endif
 
-#ifndef __IINT16_DEFINED
-#define __IINT16_DEFINED
-typedef short IINT16;
-#endif
+//#ifndef __IINT16_DEFINED
+//#define __IINT16_DEFINED
+//typedef short IINT16;
+//#endif
 
-#ifndef __IINT32_DEFINED
-#define __IINT32_DEFINED
-typedef ISTDINT32 IINT32;
-#endif
+//#ifndef __IINT32_DEFINED
+//#define __IINT32_DEFINED
+//typedef ISTDINT32 IINT32;
+//#endif
 
-#ifndef __IUINT32_DEFINED
-#define __IUINT32_DEFINED
-typedef ISTDUINT32 IUINT32;
-#endif
+//#ifndef __IUINT32_DEFINED
+//#define __IUINT32_DEFINED
+//typedef ISTDUINT32 IUINT32;
+//#endif
 
-#ifndef __IINT64_DEFINED
-#define __IINT64_DEFINED
-#if defined(_MSC_VER) || defined(__BORLANDC__)
-typedef __int64 IINT64;
-#else
-typedef long long IINT64;
-#endif
-#endif
+//#ifndef __IINT64_DEFINED
+//#define __IINT64_DEFINED
+//#if defined(_MSC_VER) || defined(__BORLANDC__)
+//typedef __int64 IINT64;
+//#else
+//typedef long long IINT64;
+//#endif
+//#endif
 
-#ifndef __IUINT64_DEFINED
-#define __IUINT64_DEFINED
-#if defined(_MSC_VER) || defined(__BORLANDC__)
-typedef unsigned __int64 IUINT64;
-#else
-typedef unsigned long long IUINT64;
-#endif
-#endif
+//#ifndef __IUINT64_DEFINED
+//#define __IUINT64_DEFINED
+//#if defined(_MSC_VER) || defined(__BORLANDC__)
+//typedef unsigned __int64 IUINT64;
+//#else
+//typedef unsigned long long IUINT64;
+//#endif
+//#endif
 
 #ifndef INLINE
 #if defined(__GNUC__)
@@ -267,19 +268,19 @@ typedef struct IQUEUEHEAD iqueue_head;
 struct IKCPSEG
 {
 	struct IQUEUEHEAD node;
-	IUINT32 conv;
-	IUINT32 cmd;
-	IUINT32 frg;
-	IUINT32 wnd;
-	IUINT32 ts;
-	IUINT32 sn;
-	IUINT32 una;
-	IUINT32 len;
-	IUINT32 resendts;
-	IUINT32 rto;
-	IUINT32 fastack;
-	IUINT32 xmit;
-	char data[1];
+    uint32_t conv;
+    uint32_t cmd;
+    uint32_t frg;
+    uint32_t wnd;
+    uint32_t ts;
+    uint32_t sn;
+    uint32_t una;
+    uint32_t len;
+    uint32_t resendts;
+    uint32_t rto;
+    uint32_t fastack;
+    uint32_t xmit;
+    uint8_t data[1];
 };
 
 
@@ -288,31 +289,31 @@ struct IKCPSEG
 //---------------------------------------------------------------------
 struct IKCPCB
 {
-	IUINT32 conv, mtu, mss, state;
-	IUINT32 snd_una, snd_nxt, rcv_nxt;
-	IUINT32 ts_recent, ts_lastack, ssthresh;
-	IINT32 rx_rttval, rx_srtt, rx_rto, rx_minrto;
-	IUINT32 snd_wnd, rcv_wnd, rmt_wnd, cwnd, probe;
-	IUINT32 current, interval, ts_flush, xmit;
-	IUINT32 nrcv_buf, nsnd_buf;
-	IUINT32 nrcv_que, nsnd_que;
-	IUINT32 nodelay, updated;
-	IUINT32 ts_probe, probe_wait;
-	IUINT32 dead_link, incr;
+    uint32_t conv, mtu, mss, state;
+    uint32_t snd_una, snd_nxt, rcv_nxt;
+    uint32_t ts_recent, ts_lastack, ssthresh;
+    int32_t rx_rttval, rx_srtt, rx_rto, rx_minrto;
+    uint32_t snd_wnd, rcv_wnd, rmt_wnd, cwnd, probe;
+    uint32_t current, interval, ts_flush, xmit;
+    uint32_t nrcv_buf, nsnd_buf;
+    uint32_t nrcv_que, nsnd_que;
+    uint32_t nodelay, updated;
+    uint32_t ts_probe, probe_wait;
+    uint32_t dead_link, incr;
 	struct IQUEUEHEAD snd_queue;
 	struct IQUEUEHEAD rcv_queue;
 	struct IQUEUEHEAD snd_buf;
 	struct IQUEUEHEAD rcv_buf;
-	IUINT32 *acklist;
-	IUINT32 ackcount;
-	IUINT32 ackblock;
+    uint32_t *acklist;
+    uint32_t ackcount;
+    uint32_t ackblock;
 	void *user;
-	char *buffer;
+	uint8_t *buffer;
 	int fastresend;
 	int fastlimit;
 	int nocwnd, stream;
 	int logmask;
-	int (*output)(const char *buf, int len, struct IKCPCB *kcp, void *user);
+	int (*output)(const uint8_t *buf, size_t len, struct IKCPCB *kcp, void *user);
 	void (*writelog)(const char *log, struct IKCPCB *kcp, void *user);
 };
 
@@ -343,25 +344,25 @@ extern "C" {
 // create a new kcp control object, 'conv' must equal in two endpoint
 // from the same connection. 'user' will be passed to the output callback
 // output callback can be setup like this: 'kcp->output = my_udp_output'
-ikcpcb* ikcp_create(IUINT32 conv, void *user);
+ikcpcb* ikcp_create(uint32_t conv, void *user);
 
 // release kcp control object
 void ikcp_release(ikcpcb *kcp);
 
 // set output callback, which will be invoked by kcp
-void ikcp_setoutput(ikcpcb *kcp, int (*output)(const char *buf, int len, 
+void ikcp_setoutput(ikcpcb *kcp, int (*output)(const uint8_t *buf, size_t len, 
 	ikcpcb *kcp, void *user));
 
 // user/upper level recv: returns size, returns below zero for EAGAIN
-int ikcp_recv(ikcpcb *kcp, char *buffer, int len);
+int ikcp_recv(ikcpcb *kcp, uint8_t *buffer, size_t len);
 
 // user/upper level send, returns below zero for error
-int ikcp_send(ikcpcb *kcp, const char *buffer, int len);
+int ikcp_send(ikcpcb *kcp, const uint8_t *buffer, size_t len);
 
 // update state (call it repeatedly, every 10ms-100ms), or you can ask 
 // ikcp_check when to call it again (without ikcp_input/_send calling).
 // 'current' - current timestamp in millisec. 
-void ikcp_update(ikcpcb *kcp, IUINT32 current);
+void ikcp_update(ikcpcb *kcp, uint32_t current);
 
 // Determine when should you invoke ikcp_update:
 // returns when you should invoke ikcp_update in millisec, if there 
@@ -370,10 +371,10 @@ void ikcp_update(ikcpcb *kcp, IUINT32 current);
 // Important to reduce unnacessary ikcp_update invoking. use it to 
 // schedule ikcp_update (eg. implementing an epoll-like mechanism, 
 // or optimize ikcp_update when handling massive kcp connections)
-IUINT32 ikcp_check(const ikcpcb *kcp, IUINT32 current);
+uint32_t ikcp_check(const ikcpcb *kcp, uint32_t current);
 
 // when you received a low level packet (eg. UDP packet), call it
-int ikcp_input(ikcpcb *kcp, const char *data, long size);
+int ikcp_input(ikcpcb *kcp, const uint8_t *data, size_t size);
 
 // flush pending data
 void ikcp_flush(ikcpcb *kcp);
@@ -404,7 +405,7 @@ void ikcp_log(ikcpcb *kcp, int mask, const char *fmt, ...);
 void ikcp_allocator(void* (*new_malloc)(size_t), void (*new_free)(void*));
 
 // read conv
-IUINT32 ikcp_getconv(const void *ptr);
+uint32_t ikcp_getconv(const void *ptr);
 
 
 #ifdef __cplusplus

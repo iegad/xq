@@ -114,7 +114,7 @@ public:
     // 获取kcp conv 
     // ========================
     uint32_t conv() const {
-        return kcp_->get_conv();
+        return kcp_->conv();
     }
 
 
@@ -152,7 +152,7 @@ private:
     // @que_num:  工作队列number
     // @output:   KcpListener::output
     // ------------------------
-    void _set(uint32_t conv, KcpListener<TEvent>* listener, sockaddr* addr, socklen_t addrlen, int64_t now_ms, uint32_t que_num, int (*output)(const char* buf, int len, ikcpcb* kcp, void* user)) {
+    void _set(uint32_t conv, KcpListener<TEvent>* listener, sockaddr* addr, socklen_t addrlen, int64_t now_ms, uint32_t que_num, int (*output)(const uint8_t* buf, size_t len, ikcpcb* kcp, void* user)) {
         if (!kcp_) {
             kcp_ = new Kcp(conv, this);
             kcp_->set_output(output);
@@ -174,7 +174,7 @@ private:
 
 
     void _reset(sockaddr* addr, socklen_t addrlen, int64_t now_ms) {
-        kcp_->reset(kcp_->get_conv());
+        kcp_->reset(kcp_->conv());
         ::memcpy(&raddr_, addr, addrlen);
         raddrlen_ = addrlen;
         remote_.clear();
@@ -484,7 +484,7 @@ private:
     // windows kcp output
     //    windows 平台下, 直接发送数据
     // ------------------------
-    static int output(const char* raw, int len, IKCPCB*, void* user) {
+    static int output(const uint8_t* raw, size_t len, IKCPCB*, void* user) {
         assert(len > 0 && len <= KCP_MTU);
 
         Sess* sess = (Sess*)user;
@@ -494,7 +494,7 @@ private:
         l->event_->on_send((const uint8_t*)raw, len, &sess->raddr_, sess->raddrlen_);
 #endif
 
-        if (::sendto(l->ufd_, raw, len, 0, &sess->raddr_, sess->raddrlen_) < 0) {
+        if (::sendto(l->ufd_, (const char*)raw, len, 0, &sess->raddr_, sess->raddrlen_) < 0) {
             sess->listener_->event_->on_error(xq::net::ErrType::IO_SEND, error(), sess);
         }
 
@@ -599,7 +599,7 @@ private:
     // Linux KCP output
     //    将数据添加到mmsghdr缓冲区, 当mmsghdr缓冲区满时调用底层方法
     // ------------------------
-    static int output(const char* raw, int len, IKCPCB*, void* user) {
+    static int output(const uint8_t* raw, size_t len, IKCPCB*, void* user) {
         assert(len > 0 && (size_t)len <= KCP_MTU);
 
         Sess*        sess = (Sess*)user;
@@ -641,7 +641,7 @@ private:
 
         mmsghdr* msg;
         msghdr*  hdr;
-        Sess* sess;
+        Sess*    sess;
         
         Seg*     seg;
         Seg*     segs[IO_MSG_SIZE] = {nullptr};
@@ -672,7 +672,7 @@ private:
             do {
                 if (n < 0) {
                     err = error();
-                    if (err != EAGAIN) {
+                    if (err != EAGAIN && err != EINTR) {
                         event_->on_error(xq::net::ErrType::IO_RECV, err, nullptr);
                     }
                     break;
@@ -765,7 +765,7 @@ private:
 
         constexpr std::chrono::milliseconds INTVAL = std::chrono::milliseconds(KCP_UPDATE_MS / 2);
 
-        size_t    i, n, nerase;
+        uint32_t  i, n, nerase;
         int64_t   now_ms;
         SessPtr   sess;
         uint32_t* erase_keys  = new uint32_t[MAX_CONV];
@@ -778,6 +778,7 @@ private:
             
             now_ms = xq::tools::now_milli();
             n      = sessions_.get_all_vals(active_sess, MAX_CONV);
+            assert(n < MAX_CONV);
 
             for (i = 0; i < n; i++) {
                 sess = active_sess[i];
