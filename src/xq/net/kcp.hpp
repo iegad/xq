@@ -164,14 +164,11 @@ public:
         kcp_->snd_una = 0;
         kcp_->snd_nxt = 0;
         kcp_->rcv_nxt = 0;
-        //kcp_->ts_recent = 0;
-        //kcp_->ts_lastack = 0;
         kcp_->ts_probe = 0;
         kcp_->probe_wait = 0;
         kcp_->cwnd = 0;
         kcp_->incr = 0;
         kcp_->probe = 0;
-        //kcp_->stream = 0;
 
         kcp_->nrcv_buf = 0;
         kcp_->nsnd_buf = 0;
@@ -185,7 +182,6 @@ public:
         kcp_->current = 0;
         kcp_->nodelay = 0;
         kcp_->updated = 0;
-        //kcp_->logmask = 0;
         kcp_->fastresend = 0;
         kcp_->nocwnd = 0;
         kcp_->xmit = 0;

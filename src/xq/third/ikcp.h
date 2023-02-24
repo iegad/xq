@@ -291,7 +291,7 @@ struct IKCPCB
 {
     uint32_t conv, mtu, mss, state;
     uint32_t snd_una, snd_nxt, rcv_nxt;
-    uint32_t /*ts_recent, ts_lastack,*/ ssthresh;
+    uint32_t ssthresh;
     int32_t rx_rttval, rx_srtt, rx_rto, rx_minrto;
     uint32_t snd_wnd, rcv_wnd, rmt_wnd, cwnd, probe;
     uint32_t current, interval, ts_flush, xmit;
@@ -312,26 +312,11 @@ struct IKCPCB
 	int fastresend;
 	int fastlimit;
 	int nocwnd;
-	//int logmask;
 	int (*output)(const uint8_t *buf, size_t len, struct IKCPCB *kcp, void *user);
-	//void (*writelog)(const char *log, struct IKCPCB *kcp, void *user);
 };
 
 
 typedef struct IKCPCB ikcpcb;
-
-#define IKCP_LOG_OUTPUT			1
-#define IKCP_LOG_INPUT			2
-#define IKCP_LOG_SEND			4
-#define IKCP_LOG_RECV			8
-#define IKCP_LOG_IN_DATA		16
-#define IKCP_LOG_IN_ACK			32
-#define IKCP_LOG_IN_PROBE		64
-#define IKCP_LOG_IN_WINS		128
-#define IKCP_LOG_OUT_DATA		256
-#define IKCP_LOG_OUT_ACK		512
-#define IKCP_LOG_OUT_PROBE		1024
-#define IKCP_LOG_OUT_WINS		2048
 
 #ifdef __cplusplus
 extern "C" {
@@ -348,10 +333,6 @@ ikcpcb* ikcp_create(uint32_t conv, void *user);
 
 // release kcp control object
 void ikcp_release(ikcpcb *kcp);
-
-// set output callback, which will be invoked by kcp
-void ikcp_setoutput(ikcpcb *kcp, int (*output)(const uint8_t *buf, size_t len, 
-	ikcpcb *kcp, void *user));
 
 // user/upper level recv: returns size, returns below zero for EAGAIN
 int ikcp_recv(ikcpcb *kcp, uint8_t *buffer, size_t len);
@@ -397,9 +378,6 @@ int ikcp_waitsnd(const ikcpcb *kcp);
 // resend: 0:disable fast resend(default), 1:enable fast resend
 // nc: 0:normal congestion control(default), 1:disable congestion control
 int ikcp_nodelay(ikcpcb *kcp, int nodelay, int interval, int resend, int nc);
-
-
-void ikcp_log(ikcpcb *kcp, int mask, const char *fmt, ...);
 
 // setup allocator
 void ikcp_allocator(void* (*new_malloc)(size_t), void (*new_free)(void*));

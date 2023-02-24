@@ -281,9 +281,9 @@ private:
 
 
 #ifdef WIN32
-    static int output(const char* raw, int rawlen, IKCPCB*, void* user) {
+    static int output(const uint8_t* raw, size_t rawlen, IKCPCB*, void* user) {
         Host* host = (Host*)user;
-        int n = ::sendto(host->conn_->ufd_, raw, rawlen, 0, &host->raddr_, host->raddrlen_);
+        int n = ::sendto(host->conn_->ufd_, (const char *)raw, (size_t)rawlen, 0, &host->raddr_, host->raddrlen_);
         if (n < 0) {
             std::printf("send failed: %d\n", error());
         }
