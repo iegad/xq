@@ -28,8 +28,8 @@ public:
     friend class KcpConn<TEvent>;
 
 
-    Host(uint32_t conv, const std::string& host, uint32_t que_num, KcpConn *conn)
-        : kcp_(new Kcp(conv, this))
+    Host(uint32_t conv, const std::string& host, uint32_t que_num, KcpConn *conn, int (*output)(const uint8_t* buf, size_t len, void* user))
+        : kcp_(new Kcp(conv, this, output))
         , que_num_(que_num)
         , time_ms_(xq::tools::now_milli())
         , last_ms_(0)
@@ -255,8 +255,7 @@ private:
         }
 
         for (i = 0; i < n; i++) {
-            Host* host = new Host(conv_, hosts[i], i % nthread, this);
-            host->kcp_->set_output(&KcpConn::output);
+            Host* host = new Host(conv_, hosts[i], i % nthread, this, &KcpConn::output);
             hosts_.insert(std::make_pair(host->remote_, host));
         }
     }
@@ -281,7 +280,7 @@ private:
 
 
 #ifdef WIN32
-    static int output(const uint8_t* raw, size_t rawlen, IKCPCB*, void* user) {
+    static int output(const uint8_t* raw, size_t rawlen, void* user) {
         Host* host = (Host*)user;
         int n = ::sendto(host->conn_->ufd_, (const char *)raw, (size_t)rawlen, 0, &host->raddr_, host->raddrlen_);
         if (n < 0) {

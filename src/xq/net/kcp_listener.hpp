@@ -152,10 +152,9 @@ private:
     // @que_num:  工作队列number
     // @output:   KcpListener::output
     // ------------------------
-    void _set(uint32_t conv, KcpListener<TEvent>* listener, sockaddr* addr, socklen_t addrlen, int64_t now_ms, uint32_t que_num, int (*output)(const uint8_t* buf, size_t len, ikcpcb* kcp, void* user)) {
+    void _set(uint32_t conv, KcpListener<TEvent>* listener, sockaddr* addr, socklen_t addrlen, int64_t now_ms, uint32_t que_num, int (*output)(const uint8_t* buf, size_t len, void* user)) {
         if (!kcp_) {
-            kcp_ = new Kcp(conv, this);
-            kcp_->set_output(output);
+            kcp_ = new Kcp(conv, this, output);
         }
         else {
             kcp_->reset(conv);
@@ -484,7 +483,7 @@ private:
     // windows kcp output
     //    windows 平台下, 直接发送数据
     // ------------------------
-    static int output(const uint8_t* raw, size_t len, IKCPCB*, void* user) {
+    static int output(const uint8_t* raw, size_t len, void* user) {
         assert(len > 0 && len <= KCP_MTU);
 
         Sess* sess = (Sess*)user;
@@ -599,7 +598,7 @@ private:
     // Linux KCP output
     //    将数据添加到mmsghdr缓冲区, 当mmsghdr缓冲区满时调用底层方法
     // ------------------------
-    static int output(const uint8_t* raw, size_t len, IKCPCB*, void* user) {
+    static int output(const uint8_t* raw, size_t len, Kcp*, void* user) {
         assert(len > 0 && (size_t)len <= KCP_MTU);
 
         Sess*        sess = (Sess*)user;
@@ -763,7 +762,7 @@ private:
     void _update() {
         typedef Sess* SessPtr;
 
-        constexpr std::chrono::milliseconds INTVAL = std::chrono::milliseconds(KCP_UPDATE_MS / 2);
+        constexpr std::chrono::milliseconds INTVAL = std::chrono::milliseconds(1);
 
         uint32_t  i, n, nerase;
         int64_t   now_ms;
