@@ -167,7 +167,7 @@ public:
         , snd_wnd_(KCP_WND)
         , rcv_wnd_(KCP_WND)
         , rmt_wnd_(KCP_WND)
-        , cwnd_(0)
+        , cwnd_(1)
         , probe_(0)
         , current_(0)
         , interval_(KCP_UPDATE_MS / 2)
@@ -400,21 +400,21 @@ public:
     /// @param data 原始IO数据
     /// @param size 原始数据长度
     /// @return 成功返回0, 否则返回!0
-    int input(const uint8_t* data, long size) {
+    int input(const uint8_t* data, size_t size) {
         uint32_t prev_una = snd_una_;
         uint32_t maxack = 0;
         int flag = 0;
 
-        if (data == NULL || size < IKCP_OVERHEAD) return -1;
+        assert(data && size >= IKCP_OVERHEAD);
 
-        while (1) {
+        while (size > 0) {
             uint32_t ts, sn, len, una, conv;
             uint16_t wnd;
             uint8_t cmd, frg;
             IKCPSEG* seg;
 
             if (size < IKCP_OVERHEAD) {
-                break;
+                return -2;
             }
 
             // Step 1: 解析消息头
@@ -427,7 +427,7 @@ public:
             data = _decode8u(data, &cmd);
             data = _decode8u(data, &frg);
             data = _decode16u(data, &wnd);
-            data = _decode32u(data, &ts);
+             data = _decode32u(data, &ts);
             data = _decode32u(data, &sn);
             data = _decode32u(data, &una);
             data = _decode32u(data, &len);
@@ -556,7 +556,7 @@ public:
         uint8_t* buf = buffer_;
         uint8_t* ptr = buf;
         int size, i;
-        uint32_t resent, cwnd;
+        uint32_t resent;
         uint32_t rtomin;
         struct IQUEUEHEAD* p;
         int change = 0;
@@ -642,8 +642,8 @@ public:
         probe_ = 0;
 
         // calculate window size
-        cwnd = _imin_(snd_wnd_, rmt_wnd_);
-        if (nocwnd_ == 0) cwnd = _imin_(cwnd, cwnd);
+        uint32_t cwnd = _imin_(snd_wnd_, rmt_wnd_);
+        if (nocwnd_ == 0) cwnd = _imin_(cwnd_, cwnd);
 
         // move data from snd_queue to snd_buf
         while (snd_nxt_ < snd_una_ + cwnd) {
@@ -749,7 +749,7 @@ public:
             if (ssthresh_ < IKCP_THRESH_MIN) {
                 ssthresh_ = IKCP_THRESH_MIN;
             }
-            cwnd = ssthresh_ + resent;
+            cwnd_ = ssthresh_ + resent;
             incr_ = cwnd * mss_;
         }
 
@@ -758,12 +758,12 @@ public:
             if (ssthresh_ < IKCP_THRESH_MIN) {
                 ssthresh_ = IKCP_THRESH_MIN;
             }
-            cwnd = 1;
+            cwnd_ = 1;
             incr_ = mss_;
         }
 
-        if (cwnd < 1) {
-            cwnd = 1;
+        if (cwnd_ < 1) {
+            cwnd_ = 1;
             incr_ = mss_;
         }
     }
@@ -829,7 +829,7 @@ public:
         struct IQUEUEHEAD* p;
 
         if (updated_ == 0) {
-            return now_ms;
+            return 0;
         }
 
         int32_t slap = (int32_t)(now_ms - ts_flush);
@@ -839,7 +839,7 @@ public:
         }
 
         if (now_ms >= ts_flush) {
-            return now_ms;
+            return 0;
         }
 
         tm_flush = -slap;
@@ -848,9 +848,11 @@ public:
             const IKCPSEG* seg = iqueue_entry(p, const IKCPSEG, node);
             int32_t diff = (int32_t)(seg->resendts - now_ms);
             if (diff <= 0) {
-                return now_ms;
+                return 0;
             }
-            if (diff < tm_packet) tm_packet = diff;
+            else if (diff < tm_packet) {
+                tm_packet = diff;
+            }
         }
 
         minimal = (uint32_t)(tm_packet < tm_flush ? tm_packet : tm_flush);
@@ -858,7 +860,7 @@ public:
             minimal = interval_;
         }
 
-        return now_ms + minimal;
+        return minimal;
     }
 
 

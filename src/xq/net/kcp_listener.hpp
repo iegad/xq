@@ -397,7 +397,6 @@ public:
         }
 
         // Step 9: 关闭UDP监听
-        close(ufd_);
         ufd_ = INVALID_SOCKET;
 
         Sess** ss = new Sess*[MAX_CONV];
@@ -420,7 +419,8 @@ public:
     // 停止服务
     // ========================
     void stop() {
-        if (state_ == State::Running) {
+        if (state_ == State::Running && ufd_ != INVALID_SOCKET) {
+            close(ufd_);
             state_ = State::Stopping;
         }
     }
@@ -598,7 +598,7 @@ private:
     // Linux KCP output
     //    将数据添加到mmsghdr缓冲区, 当mmsghdr缓冲区满时调用底层方法
     // ------------------------
-    static int output(const uint8_t* raw, size_t len, Kcp*, void* user) {
+    static int output(const uint8_t* raw, size_t len, void* user) {
         assert(len > 0 && (size_t)len <= KCP_MTU);
 
         Sess*        sess = (Sess*)user;
