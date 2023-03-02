@@ -305,7 +305,7 @@ public:
             delete[] (uint8_t*)iov[0].iov_base;
             delete[] iov;
         }
-#endif
+#endif // WIN32
 
         for (auto &q : rques_) {
             Seg* segs[128];
@@ -351,7 +351,7 @@ public:
         if (event_->on_start(this) < 0) {
             return;
         }
-#endif
+#endif // KL_EVENT_ON_START;
 
         // Step 1: 创建 udp 监听套接字
         ufd_ = udp_bind(host_);
@@ -411,7 +411,7 @@ public:
         state_ = State::Stopped;
 #if (KL_EVENT_ON_STOP == 1)
         event_->on_stop(this);
-#endif
+#endif // KL_EVENT_ON_STOP;
     }
 
 
@@ -453,7 +453,7 @@ private:
             msgs_[i].msg_hdr.msg_iovlen = 1;
             msgs_[i].msg_len = 0;
         }
-#endif
+#endif // WIN32
 
         for (size_t i = 0, n = std::thread::hardware_concurrency(); i < n; i++) {
             rques_.emplace_back(new Queue(2048));
@@ -491,7 +491,7 @@ private:
 
 #if (KL_EVENT_ON_SEND == 1)
         l->event_->on_send((const uint8_t*)raw, len, &sess->raddr_, sess->raddrlen_);
-#endif
+#endif // KL_EVENT_ON_SEND
 
         if (::sendto(l->ufd_, (const char*)raw, len, 0, &sess->raddr_, sess->raddrlen_) < 0) {
             sess->listener_->event_->on_error(xq::net::ErrType::IO_SEND, error(), sess);
@@ -554,28 +554,32 @@ private:
                 if (event_->on_recv(seg) < 0) {
                     break;
                 }
-#endif
+#endif // KL_EVENT_ON_RECV
 
                 now_ms = xq::tools::now_milli();
                 // Step 4: 获取会话
                 if (sessions_.get(conv, sess)) {
                     if (sess->_diff_addr(&seg->addr, seg->addrlen)) {
                         sess->_reset(&seg->addr, seg->addrlen, now_ms);
+
 #if (KL_EVENT_ON_RECONNECTED == 1)
                         if (event_->on_reconnected(sess) < 0) {
                             break;
                         }
-#endif
+#endif // KL_EVENT_ON_RECONNECTED;
+
                     }
                 } else {
                     sess = kcppool->get();
                     sess->_set(conv, this, &seg->addr, seg->addrlen, now_ms, qidx++ % QUE_SIZE, &KcpListener::output);
+
 #if (KL_EVENT_ON_CONNECTED == 1)
                     if (event_->on_connected(sess) < 0) {
                         kcppool->put(sess);
                         break;
                     }
-#endif
+#endif // KL_EVENT_ON_CONNECTED;
+
                     conns_++;
                     assert(sessions_.insert(conv, sess).second);
                 }
@@ -612,7 +616,7 @@ private:
 
 #if (KL_EVENT_ON_SEND == 1)
         l->event_->on_send((const uint8_t*)raw, len, &sess->raddr_, sess->raddrlen_);
-#endif
+#endif // KL_EVENT_ON_SEND;
         ::memcpy(msg->msg_iov[0].iov_base, raw, len);
 
         if (++l->msgs_len_ == IO_MSG_SIZE) {
@@ -705,7 +709,7 @@ private:
                     if (event_->on_recv(seg->data, rawlen, &seg->addr, seg->addrlen) < 0) {
                         continue;
                     }
-#endif
+#endif // KL_EVENT_ON_RECV;
 
                     // Step 4: 获取会话
                     if (sessions_.get(conv, sess)) {
@@ -715,7 +719,7 @@ private:
                             if (event_->on_reconnected(sess) < 0) {
                                 continue;
                             }
-#endif
+#endif // KL_EVENT_ON_RECONNECTED;
                         }
                     } else {
                         sess = Sess::pool()->get();
@@ -726,7 +730,7 @@ private:
                             Sess::pool()->put(sess);
                             continue;
                         }
-#endif
+#endif // KL_EVENT_ON_CONNECTED;
 
                         conns_++;
                         assert(sessions_.insert(conv, sess).second);
@@ -786,7 +790,7 @@ private:
                     erase_keys[nerase++] = sess->conv();
 #if (KL_EVENT_ON_DISCONNECTED == 1)
                     event_->on_disconnected(sess);
-#endif
+#endif // KL_EVENT_ON_DISCONNECTED;
                 }
             }
 

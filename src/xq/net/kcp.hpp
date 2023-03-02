@@ -2,11 +2,10 @@
 #define __XQ_NET_KCP__
 
 
-#include <memory>
-#include <mutex>
-#include <unordered_map>
-
+#include <map>
+#include <list>
 #include "xq/net/net.hpp"
+#include "xq/tools/tools.hpp"
 
 
 namespace xq {
@@ -15,123 +14,34 @@ namespace net {
 
 // ------------------------------------------------------------------------ Kcp ------------------------------------------------------------------------
 
-#define IKCP_RTO_NDL		30		// no delay min rto
-#define IKCP_RTO_MIN		100		// normal min rto
-#define IKCP_RTO_DEF		200
-#define IKCP_RTO_MAX		60000
-#define IKCP_CMD_PUSH		81	// cmd: push data
-#define IKCP_CMD_ACK		82	// cmd: ack
-#define IKCP_CMD_WASK		83	// cmd: window probe (ask)
-#define IKCP_CMD_WINS		84	// cmd: window size (tell)
-#define IKCP_ASK_SEND		1	// need to send IKCP_CMD_WASK
-#define IKCP_ASK_TELL		2	// need to send IKCP_CMD_WINS
-#define IKCP_WND_SND		32
-#define IKCP_WND_RCV		128      // must >= max fragment size
-#define IKCP_MTU_DEF		1400
-#define IKCP_ACK_FAST		3
-#define IKCP_INTERVAL		100
-#define IKCP_OVERHEAD		24
-#define IKCP_DEADLINK		20
-#define IKCP_THRESH_INIT	2
-#define IKCP_THRESH_MIN		2
-#define IKCP_PROBE_INIT		7000		// 7 secs to probe window size
-#define IKCP_PROBE_LIMIT	120000	// up to 120 secs to probe window
-#define IKCP_FASTACK_LIMIT	5		// max times to trigger fastack
-
-
-
-
-//=====================================================================
-// QUEUE DEFINITION                                                  
-//=====================================================================
-
-struct IQUEUEHEAD {
-    struct IQUEUEHEAD* next, * prev;
-};
-
-typedef struct IQUEUEHEAD iqueue_head;
-
-
-//---------------------------------------------------------------------
-// queue init                                                         
-//---------------------------------------------------------------------
-#define IQUEUE_HEAD_INIT(name) { &(name), &(name) }
-#define IQUEUE_HEAD(name) \
-	struct IQUEUEHEAD name = IQUEUE_HEAD_INIT(name)
-
-#define IQUEUE_INIT(ptr) ( \
-	(ptr)->next = (ptr), (ptr)->prev = (ptr))
-
-#define IOFFSETOF(TYPE, MEMBER) ((size_t) &((TYPE *)0)->MEMBER)
-
-#define ICONTAINEROF(ptr, type, member) ( \
-		(type*)( ((char*)((type*)ptr)) - IOFFSETOF(type, member)) )
-
-#define IQUEUE_ENTRY(ptr, type, member) ICONTAINEROF(ptr, type, member)
-
-
-//---------------------------------------------------------------------
-// queue operation                     
-//---------------------------------------------------------------------
-#define IQUEUE_ADD(node, head) ( \
-	(node)->prev = (head), (node)->next = (head)->next, \
-	(head)->next->prev = (node), (head)->next = (node))
-
-#define IQUEUE_ADD_TAIL(node, head) ( \
-	(node)->prev = (head)->prev, (node)->next = (head), \
-	(head)->prev->next = (node), (head)->prev = (node))
-
-#define IQUEUE_DEL_BETWEEN(p, n) ((n)->prev = (p), (p)->next = (n))
-
-#define IQUEUE_DEL(entry) (\
-	(entry)->next->prev = (entry)->prev, \
-	(entry)->prev->next = (entry)->next, \
-	(entry)->next = 0, (entry)->prev = 0)
-
-#define IQUEUE_DEL_INIT(entry) do { \
-	IQUEUE_DEL(entry); IQUEUE_INIT(entry); } while (0)
-
-#define IQUEUE_IS_EMPTY(entry) ((entry) == (entry)->next)
-
-#define iqueue_init		IQUEUE_INIT
-#define iqueue_entry	IQUEUE_ENTRY
-#define iqueue_add		IQUEUE_ADD
-#define iqueue_add_tail	IQUEUE_ADD_TAIL
-#define iqueue_del		IQUEUE_DEL
-#define iqueue_del_init	IQUEUE_DEL_INIT
-#define iqueue_is_empty IQUEUE_IS_EMPTY
-
-#define IQUEUE_FOREACH(iterator, head, TYPE, MEMBER) \
-	for ((iterator) = iqueue_entry((head)->next, TYPE, MEMBER); \
-		&((iterator)->MEMBER) != (head); \
-		(iterator) = iqueue_entry((iterator)->MEMBER.next, TYPE, MEMBER))
-
-#define iqueue_foreach(iterator, head, TYPE, MEMBER) \
-	IQUEUE_FOREACH(iterator, head, TYPE, MEMBER)
-
-#define iqueue_foreach_entry(pos, head) \
-	for( (pos) = (head)->next; (pos) != (head) ; (pos) = (pos)->next )
-
-
-#define __iqueue_splice(list, head) do {	\
-		iqueue_head *first = (list)->next, *last = (list)->prev; \
-		iqueue_head *at = (head)->next; \
-		(first)->prev = (head), (head)->next = (first);		\
-		(last)->next = (at), (at)->prev = (last); }	while (0)
-
-#define iqueue_splice(list, head) do { \
-	if (!iqueue_is_empty(list)) __iqueue_splice(list, head); } while (0)
-
-#define iqueue_splice_init(list, head) do {	\
-	iqueue_splice(list, head);	iqueue_init(list); } while (0)
+constexpr int KCP_RTO_MIN       = 100;    // normal min rto
+constexpr int KCP_RTO_DEF       = 200;
+constexpr int KCP_RTO_MAX       = 60000;
+constexpr int KCP_CMD_PUSH      = 81;     // cmd: push data
+constexpr int KCP_CMD_ACK       = 82;     // cmd: ack
+constexpr int KCP_CMD_WASK      = 83;     // cmd: window probe (ask)
+constexpr int KCP_CMD_WINS      = 84;     // cmd: window size (tell)
+constexpr int KCP_ASK_SEND      = 1;      // need to send IKCP_CMD_WASK
+constexpr int KCP_ASK_TELL      = 2;      // need to send IKCP_CMD_WINS
+constexpr int KCP_MAX_SEG       = 128;    // must >= max fragment size
+constexpr int KCP_ACK_FAST      = 3;
+constexpr int KCP_DEADLINK      = 20;
+constexpr int KCP_THRESH_INIT   = 2;
+constexpr int KCP_THRESH_MIN    = 2;
+constexpr int KCP_PROBE_INIT    = 7000;   // 7 secs to probe window size
+constexpr int KCP_PROBE_LIMIT   = 120000; // up to 120 secs to probe window
+constexpr int KCP_FASTACK_LIMIT = 5;      // max times to trigger fastack
 
 
 /// @brief KCP协议 C++封装
 class Kcp final {
 public:
-    struct IKCPSEG
-    {
-        struct IQUEUEHEAD node;
+    struct Segment {
+
+        static xq::tools::ObjectPool<Segment>* pool() {
+            return xq::tools::ObjectPool<Segment>::instance();
+        }
+
         uint32_t conv;
         uint32_t cmd;
         uint32_t frg;
@@ -144,7 +54,7 @@ public:
         uint32_t rto;
         uint32_t fastack;
         uint32_t xmit;
-        uint8_t data[1];
+        uint8_t  data[1];
     };
 
 
@@ -153,75 +63,63 @@ public:
     /// @param user 附加参数, 该框架中为: KcpSess / KcpHost
     explicit Kcp(uint32_t conv, void* user, int (*output)(const uint8_t* buf, size_t len, void* user))
         : conv_(conv)
-        , mtu_(KCP_MTU)
-        , mss_(KCP_MTU - KCP_HEAD_SIZE)
         , state_(0)
         , snd_una_(0)
         , snd_nxt_(0)
         , rcv_nxt_(0)
-        , ssthresh_(IKCP_THRESH_INIT)
+        , ssthresh_(KCP_THRESH_INIT)
         , rx_rttval_(0)
         , rx_srtt_(0)
-        , rx_rto_(IKCP_RTO_DEF)
-        , rx_minrto_(IKCP_RTO_MIN)
+        , rx_rto_(KCP_RTO_DEF)
         , snd_wnd_(KCP_WND)
         , rcv_wnd_(KCP_WND)
         , rmt_wnd_(KCP_WND)
         , cwnd_(1)
         , probe_(0)
         , current_(0)
-        , interval_(KCP_UPDATE_MS / 2)
-        , ts_flush_(KCP_UPDATE_MS / 2)
+        , interval_(KCP_UPDATE_MS)
+        , ts_flush_(KCP_UPDATE_MS)
         , xmit_(0)
-        , nrcv_buf_(0)
-        , nsnd_buf_(0)
-        , nrcv_que_(0)
-        , nsnd_que_(0)
         , nodelay_(1)
         , updated_(0)
         , ts_probe_(0)
         , probe_wait_(0)
-        , dead_link_(IKCP_DEADLINK)
         , incr_(0)
         , acklist_(nullptr)
         , ackcount_(0)
         , ackblock_(0)
         , user_(user)
         , buffer_((uint8_t*)::malloc((KCP_MTU + KCP_HEAD_SIZE) * 3))
-        , fastresend_(3)
-        , fastlimit_(IKCP_FASTACK_LIMIT)
         , nocwnd_(0)
         , output_(nullptr) {
-        iqueue_init(&snd_queue_);
-        iqueue_init(&rcv_queue_);
-        iqueue_init(&snd_buf_);
-        iqueue_init(&rcv_buf_);
         output_ = output;
     }
 
 
     ~Kcp() {
-        IKCPSEG* seg;
-        while (!iqueue_is_empty(&snd_buf_)) {
-            seg = iqueue_entry(snd_buf_.next, IKCPSEG, node);
-            iqueue_del(&seg->node);
+        Segment* seg;
+        for (auto& itr : snd_buf_) {
+            seg = itr.second;
             ::free(seg);
         }
-        while (!iqueue_is_empty(&rcv_buf_)) {
-            seg = iqueue_entry(rcv_buf_.next, IKCPSEG, node);
-            iqueue_del(&seg->node);
+        snd_buf_.clear();
+
+        for (auto &itr : rcv_buf_) {
+            seg = itr.second;
             ::free(seg);
         }
-        while (!iqueue_is_empty(&snd_queue_)) {
-            seg = iqueue_entry(snd_queue_.next, IKCPSEG, node);
-            iqueue_del(&seg->node);
-            ::free(seg);
+        rcv_buf_.clear();
+
+        for (auto itr : snd_que_) {
+            ::free(itr);
         }
-        while (!iqueue_is_empty(&rcv_queue_)) {
-            seg = iqueue_entry(rcv_queue_.next, IKCPSEG, node);
-            iqueue_del(&seg->node);
-            ::free(seg);
+        snd_que_.clear();
+
+        for (auto itr : rcv_que_) {
+            ::free(itr);
         }
+        rcv_que_.clear();
+        
         if (buffer_) {
             ::free(buffer_);
         }
@@ -255,11 +153,10 @@ public:
     int recv(uint8_t* buf, size_t len) {
         assert(buf);
 
-        struct IQUEUEHEAD* p;
+        Segment* seg;
         int recover = 0;
-        IKCPSEG* seg;
 
-        if (iqueue_is_empty(&rcv_queue_)) {
+        if (rcv_que_.empty()) {
             return -1;
         }
 
@@ -273,25 +170,23 @@ public:
             return -3;
         }
 
-        if (nrcv_que_ >= rcv_wnd_) {
+        if (rcv_que_.size() >= rcv_wnd_) {
             recover = 1;
         }
 
         // merge fragment
-        for (len = 0, p = rcv_queue_.next; p != &rcv_queue_; ) {
-            int fragment;
-            seg = iqueue_entry(p, IKCPSEG, node);
-            p = p->next;
-
+        len = 0;
+        for (auto itr = rcv_que_.begin(); itr != rcv_que_.end(); ) {
+            seg = *itr;
+             
             memcpy(buf, seg->data, seg->len);
             buf += seg->len;
 
             len += seg->len;
-            fragment = seg->frg;
+            int fragment = seg->frg;
 
-            iqueue_del(&seg->node);
+            rcv_que_.erase(itr++);
             ::free(seg);
-            nrcv_que_--;
 
             if (fragment == 0) {
                 break;
@@ -301,13 +196,12 @@ public:
         assert((int)len == peeksize);
 
         // move available data from rcv_buf -> rcv_queue
-        while (!iqueue_is_empty(&rcv_buf_)) {
-            seg = iqueue_entry(rcv_buf_.next, IKCPSEG, node);
-            if (seg->sn == rcv_nxt_ && nrcv_que_ < rcv_wnd_) {
-                iqueue_del(&seg->node);
-                nrcv_buf_--;
-                iqueue_add_tail(&seg->node, &rcv_queue_);
-                nrcv_que_++;
+        while (!rcv_buf_.empty()) {
+            auto itr = rcv_buf_.begin();
+            seg = itr->second;
+            if (seg->sn == rcv_nxt_ && rcv_que_.size() < rcv_wnd_) {
+                rcv_buf_.erase(itr);
+                rcv_que_.emplace_back(seg);
                 rcv_nxt_++;
             }
             else {
@@ -316,10 +210,10 @@ public:
         }
 
         // fast recover
-        if (nrcv_que_ < rcv_wnd_ && recover) {
+        if (rcv_que_.size() < rcv_wnd_ && recover) {
             // ready to send back IKCP_CMD_WINS in ikcp_flush
             // tell remote my window size
-            probe_ |= IKCP_ASK_TELL;
+            probe_ |= KCP_ASK_TELL;
         }
 
         return len;
@@ -331,32 +225,29 @@ public:
     /// @param len 
     /// @return 成功返回0, 否则返回!0
     int send(const uint8_t* buf, size_t len) {
-        IKCPSEG* seg;
+        Segment* seg;
 
         assert(buf && len > 0);
-        assert(mss_ > 0);
 
         // 1, 计算拆包数
-        int count = (len <= mss_) ? 1 : (len + mss_ - 1) / mss_;
+        int count = (len <= KCP_MSS) ? 1 : (len + KCP_MSS - 1) / KCP_MSS;
 
-        // 2, 判断是否大于最大分包
-        if (count >= (int)IKCP_WND_RCV) {
+        // 2, 判断是否大于最大分组
+        if (count >= KCP_MAX_SEG) {
             // 超过最多分段时返回 -1
             return -1;
         }
 
         // fragment
         for (int i = 0; i < count; i++) {
-            int size = len > mss_ ? mss_ : len;
-            seg = (IKCPSEG *)::malloc(sizeof(IKCPSEG) + size);
+            int size = len > KCP_MSS ? KCP_MSS : len;
+            seg = (Segment*)::malloc(sizeof(Segment) + size);
             assert(seg);
 
             memcpy(seg->data, buf, size);
             seg->len = size;
             seg->frg = count - i - 1;
-            iqueue_init(&seg->node);
-            iqueue_add_tail(&seg->node, &snd_queue_);
-            nsnd_que_++;
+            snd_que_.emplace_back(seg);
             buf += size;
             len -= size;
         }
@@ -405,15 +296,15 @@ public:
         uint32_t maxack = 0;
         int flag = 0;
 
-        assert(data && size >= IKCP_OVERHEAD);
+        assert(data && size >= KCP_HEAD_SIZE);
 
         while (size > 0) {
             uint32_t ts, sn, len, una, conv;
             uint16_t wnd;
             uint8_t cmd, frg;
-            IKCPSEG* seg;
+            Segment* seg;
 
-            if (size < IKCP_OVERHEAD) {
+            if (size < KCP_HEAD_SIZE) {
                 return -2;
             }
 
@@ -427,19 +318,19 @@ public:
             data = _decode8u(data, &cmd);
             data = _decode8u(data, &frg);
             data = _decode16u(data, &wnd);
-             data = _decode32u(data, &ts);
+            data = _decode32u(data, &ts);
             data = _decode32u(data, &sn);
             data = _decode32u(data, &una);
             data = _decode32u(data, &len);
 
-            size -= IKCP_OVERHEAD;
+            size -= KCP_HEAD_SIZE;
 
             if (size < len || len > 89 * 16 /* TODO: 后期需要修改, 主要原因是为了进行[AES128]加密 */) {
                 // 当原始数据长度 < 实际数据长度, 实际数据长度 大于段最大长度
                 return -2;
             }
 
-            if (cmd < IKCP_CMD_PUSH && cmd > IKCP_CMD_WINS) {
+            if (cmd < KCP_CMD_PUSH && cmd > KCP_CMD_WINS) {
                 // 无效的CMD
                 return -3;
             }
@@ -452,7 +343,7 @@ public:
             _shrink_buf();
 
             switch (cmd) {
-            case IKCP_CMD_ACK: {
+            case KCP_CMD_ACK: {
                 if (current_ >= ts) {
                     // 如果当前时间 >= 分组的发送时间, 重新计算RTO
                     _update_ack(current_ - ts);
@@ -470,11 +361,11 @@ public:
                 }
             } break;
 
-            case IKCP_CMD_PUSH: {
+            case KCP_CMD_PUSH: {
                 if (sn < rcv_nxt_ + rcv_wnd_) {
                     _ack_push(sn, ts);
                     if (sn >= rcv_nxt_) {
-                        seg = (IKCPSEG*)::malloc(sizeof(IKCPSEG) + len);
+                        seg = (Segment*)::malloc(sizeof(Segment) + len);
                         assert(seg);
                         seg->conv = conv_;
                         seg->cmd = cmd;
@@ -494,11 +385,11 @@ public:
                 }
             } break;
 
-            case IKCP_CMD_WASK: {
-                probe_ |= IKCP_ASK_TELL;
+            case KCP_CMD_WASK: {
+                probe_ |= KCP_ASK_TELL;
             } break;
 
-            case IKCP_CMD_WINS: {
+            case KCP_CMD_WINS: {
                 // do nothing
             } break;
 
@@ -518,24 +409,23 @@ public:
         if (snd_una_ > prev_una) {
             // 重新计算cwnd
             if (cwnd_ < rmt_wnd_) {
-                uint32_t mss = mss_;
                 if (cwnd_ < ssthresh_) {
                     cwnd_++;
-                    incr_ += mss;
+                    incr_ += KCP_MSS;
                 }
                 else {
-                    if (incr_ < mss) {
-                        incr_ = mss;
+                    if (incr_ < KCP_MSS) {
+                        incr_ = KCP_MSS;
                     }
-                    incr_ += (mss * mss) / incr_ + (mss / 16);
-                    if ((cwnd_ + 1) * mss <= incr_) {
-                        cwnd_ = (incr_ + mss - 1) / ((mss > 0) ? mss : 1);
+                    incr_ += (KCP_MSS * KCP_MSS) / incr_ + (KCP_MSS / 16);
+                    if ((cwnd_ + 1) * KCP_MSS <= incr_) {
+                        cwnd_ = (incr_ + KCP_MSS - 1) / ((KCP_MSS > 0) ? KCP_MSS : 1);
                     }
                 }
 
                 if (cwnd_ > rmt_wnd_) {
                     cwnd_ = rmt_wnd_;
-                    incr_ = rmt_wnd_ * mss;
+                    incr_ = rmt_wnd_ * KCP_MSS;
                 }
             }
         }
@@ -544,9 +434,8 @@ public:
     }
 
 
-    int ikcp_waitsnd()
-    {
-        return nsnd_buf_ + nsnd_que_;
+    int ikcp_waitsnd() {
+        return snd_buf_.size() + snd_que_.size();
     }
 
 
@@ -556,12 +445,10 @@ public:
         uint8_t* buf = buffer_;
         uint8_t* ptr = buf;
         int size, i;
-        uint32_t resent;
         uint32_t rtomin;
-        struct IQUEUEHEAD* p;
         int change = 0;
         int lost = 0;
-        IKCPSEG seg;
+        Segment seg;
         ::memset(&seg, 0, sizeof(seg));
         seg.conv = conv_;
         seg.wnd = (uint32_t)_wnd_unused();
@@ -575,11 +462,11 @@ public:
         // flush acknowledges
         int count = ackcount_;
         if (count > 0) {
-            seg.cmd = IKCP_CMD_ACK;
+            seg.cmd = KCP_CMD_ACK;
 
             for (i = 0; i < count; i++) {
                 size = (int)(ptr - buf);
-                if (size + (int)IKCP_OVERHEAD > (int)mtu_) {
+                if (size + (int)KCP_HEAD_SIZE > (int)KCP_MTU) {
                     _output(buf, size);
                     ptr = buf;
                 }
@@ -593,22 +480,22 @@ public:
         // probe window size (if remote window size equals zero)
         if (rmt_wnd_ == 0) {
             if (probe_wait_ == 0) {
-                probe_wait_ = IKCP_PROBE_INIT;
+                probe_wait_ = KCP_PROBE_INIT;
                 ts_probe_ = now_ms + probe_wait_;
             }
             else {
                 if (now_ms >= ts_probe_) {
-                    if (probe_wait_ < IKCP_PROBE_INIT) {
-                        probe_wait_ = IKCP_PROBE_INIT;
+                    if (probe_wait_ < KCP_PROBE_INIT) {
+                        probe_wait_ = KCP_PROBE_INIT;
                     }
 
                     probe_wait_ += probe_wait_ / 2;
-                    if (probe_wait_ > IKCP_PROBE_LIMIT) {
-                        probe_wait_ = IKCP_PROBE_LIMIT;
+                    if (probe_wait_ > KCP_PROBE_LIMIT) {
+                        probe_wait_ = KCP_PROBE_LIMIT;
                     }
 
                     ts_probe_ = now_ms + probe_wait_;
-                    probe_ |= IKCP_ASK_SEND;
+                    probe_ |= KCP_ASK_SEND;
                 }
             }
         }
@@ -618,10 +505,10 @@ public:
         }
 
         // flush window probing commands
-        if (probe_ & IKCP_ASK_SEND) {
-            seg.cmd = IKCP_CMD_WASK;
+        if (probe_ & KCP_ASK_SEND) {
+            seg.cmd = KCP_CMD_WASK;
             size = (int)(ptr - buf);
-            if (size + (int)IKCP_OVERHEAD > (int)mtu_) {
+            if (size + (int)KCP_HEAD_SIZE > (int)KCP_MTU) {
                 _output(buf, size);
                 ptr = buf;
             }
@@ -629,10 +516,10 @@ public:
         }
 
         // flush window probing commands
-        if (probe_ & IKCP_ASK_TELL) {
-            seg.cmd = IKCP_CMD_WINS;
+        if (probe_ & KCP_ASK_TELL) {
+            seg.cmd = KCP_CMD_WINS;
             size = (int)(ptr - buf);
-            if (size + (int)IKCP_OVERHEAD > (int)mtu_) {
+            if (size + (int)KCP_HEAD_SIZE > (int)KCP_MTU) {
                 _output(buf, size);
                 ptr = buf;
             }
@@ -647,37 +534,32 @@ public:
 
         // move data from snd_queue to snd_buf
         while (snd_nxt_ < snd_una_ + cwnd) {
-            IKCPSEG* newseg;
-            if (iqueue_is_empty(&snd_queue_)) {
+            if (snd_que_.empty()) {
                 break;
             }
 
-            newseg = iqueue_entry(snd_queue_.next, IKCPSEG, node);
-
-            iqueue_del(&newseg->node);
-            iqueue_add_tail(&newseg->node, &snd_buf_);
-            nsnd_que_--;
-            nsnd_buf_++;
+            Segment* newseg = snd_que_.front();
+            snd_que_.pop_front();
 
             newseg->conv = conv_;
-            newseg->cmd = IKCP_CMD_PUSH;
+            newseg->cmd = KCP_CMD_PUSH;
             newseg->wnd = seg.wnd;
             newseg->ts = now_ms;
-            newseg->sn = snd_nxt_++;
+            newseg->sn = snd_nxt_;
             newseg->una = rcv_nxt_;
             newseg->resendts = now_ms;
             newseg->rto = rx_rto_;
             newseg->fastack = 0;
             newseg->xmit = 0;
+            snd_buf_.insert(std::make_pair(snd_nxt_++, newseg));
         }
 
         // calculate resent
-        resent = (fastresend_ > 0) ? (uint32_t)fastresend_ : 0xffffffff;
         rtomin = (nodelay_ == 0) ? (rx_rto_ >> 3) : 0;
 
         // flush data segments
-        for (p = snd_buf_.next; p != &snd_buf_; p = p->next) {
-            IKCPSEG* segment = iqueue_entry(p, IKCPSEG, node);
+        for (auto & itr : snd_buf_) {
+            Segment* segment = itr.second;
             int needsend = 0;
             if (segment->xmit == 0) {
                 needsend = 1;
@@ -699,8 +581,8 @@ public:
                 segment->resendts = now_ms + segment->rto;
                 lost = 1;
             }
-            else if (segment->fastack >= resent) {
-                if ((int)segment->xmit <= fastlimit_ || fastlimit_ <= 0) {
+            else if (segment->fastack >= KCP_ACK_FAST) {
+                if ((int)segment->xmit <= KCP_FASTACK_LIMIT) {
                     needsend = 1;
                     segment->xmit++;
                     segment->fastack = 0;
@@ -716,9 +598,9 @@ public:
                 segment->una = rcv_nxt_;
 
                 size = (int)(ptr - buf);
-                need = IKCP_OVERHEAD + segment->len;
+                need = KCP_HEAD_SIZE + segment->len;
 
-                if (size + need > (int)mtu_) {
+                if (size + need > (int)KCP_MTU) {
                     _output(buf, size);
                     ptr = buf;
                 }
@@ -730,7 +612,7 @@ public:
                     ptr += segment->len;
                 }
 
-                if (segment->xmit >= dead_link_) {
+                if (segment->xmit >= KCP_DEADLINK) {
                     state_ = ~0;
                 }
             }
@@ -746,52 +628,54 @@ public:
         if (change) {
             uint32_t inflight = snd_nxt_ - snd_una_;
             ssthresh_ = inflight / 2;
-            if (ssthresh_ < IKCP_THRESH_MIN) {
-                ssthresh_ = IKCP_THRESH_MIN;
+            if (ssthresh_ < KCP_THRESH_MIN) {
+                ssthresh_ = KCP_THRESH_MIN;
             }
-            cwnd_ = ssthresh_ + resent;
-            incr_ = cwnd * mss_;
+            cwnd_ = ssthresh_ + KCP_ACK_FAST;
+            incr_ = cwnd * KCP_MSS;
         }
 
         if (lost) {
             ssthresh_ = cwnd / 2;
-            if (ssthresh_ < IKCP_THRESH_MIN) {
-                ssthresh_ = IKCP_THRESH_MIN;
+            if (ssthresh_ < KCP_THRESH_MIN) {
+                ssthresh_ = KCP_THRESH_MIN;
             }
             cwnd_ = 1;
-            incr_ = mss_;
+            incr_ = KCP_MSS;
         }
 
         if (cwnd_ < 1) {
             cwnd_ = 1;
-            incr_ = mss_;
+            incr_ = KCP_MSS;
         }
     }
 
 
     /// @brief 重置KCP
     void reset(uint32_t conv) {
-        IKCPSEG* seg;
-        while (!IQUEUE_IS_EMPTY(&snd_buf_)) {
-            seg = IQUEUE_ENTRY(snd_buf_.next, IKCPSEG, node);
-            IQUEUE_DEL(&seg->node);
+        Segment* seg;
+
+        for (auto& itr : snd_buf_) {
+            seg = itr.second;
             ::free(seg);
         }
-        while (!IQUEUE_IS_EMPTY(&rcv_buf_)) {
-            seg = IQUEUE_ENTRY(rcv_buf_.next, IKCPSEG, node);
-            IQUEUE_DEL(&seg->node);
+        snd_buf_.clear();
+
+        for (auto &itr : rcv_buf_) {
+            seg = itr.second;
             ::free(seg);
         }
-        while (!IQUEUE_IS_EMPTY(&snd_queue_)) {
-            seg = IQUEUE_ENTRY(snd_queue_.next, IKCPSEG, node);
-            IQUEUE_DEL(&seg->node);
-            ::free(seg);
+        rcv_buf_.clear();
+
+        for (auto itr : snd_que_) {
+            ::free(itr);
         }
-        while (!IQUEUE_IS_EMPTY(&rcv_queue_)) {
-            seg = IQUEUE_ENTRY(rcv_queue_.next, IKCPSEG, node);
-            IQUEUE_DEL(&seg->node);
-            ::free(seg);
+        snd_que_.clear();
+
+        for (auto itr : rcv_que_) {
+            ::free(itr);
         }
+        rcv_que_.clear();
 
         conv_ = conv;
         snd_una_ = 0;
@@ -799,14 +683,9 @@ public:
         rcv_nxt_ = 0;
         ts_probe_ = 0;
         probe_wait_ = 0;
-        cwnd_ = 0;
+        cwnd_ = 1;
         incr_ = 0;
         probe_ = 0;
-
-        nrcv_buf_ = 0;
-        nsnd_buf_ = 0;
-        nrcv_que_ = 0;
-        nsnd_que_ = 0;
         state_ = 0;
         ackblock_ = 0;
         ackcount_ = 0;
@@ -815,7 +694,6 @@ public:
         current_ = 0;
         nodelay_ = 0;
         updated_ = 0;
-        fastresend_ = 0;
         nocwnd_ = 0;
         xmit_ = 0;
     }
@@ -826,7 +704,6 @@ public:
         int32_t tm_flush = 0x7fffffff;
         int32_t tm_packet = 0x7fffffff;
         uint32_t minimal = 0;
-        struct IQUEUEHEAD* p;
 
         if (updated_ == 0) {
             return 0;
@@ -844,8 +721,8 @@ public:
 
         tm_flush = -slap;
 
-        for (p = snd_buf_.next; p != &snd_buf_; p = p->next) {
-            const IKCPSEG* seg = iqueue_entry(p, const IKCPSEG, node);
+        for (auto &itr: snd_buf_) {
+            const Segment* seg = itr.second;
             int32_t diff = (int32_t)(seg->resendts - now_ms);
             if (diff <= 0) {
                 return 0;
@@ -874,7 +751,7 @@ private:
     }
 
 
-    static uint8_t* _encode_seg(uint8_t* ptr, const IKCPSEG* seg) {
+    static uint8_t* _encode_seg(uint8_t* ptr, const Segment* seg) {
         ptr = _encode32u(ptr, seg->conv);
         ptr = _encode8u(ptr, (uint8_t)seg->cmd);
         ptr = _encode8u(ptr, (uint8_t)seg->frg);
@@ -972,7 +849,7 @@ private:
 
 
     int _wnd_unused() {
-        return nrcv_que_ < rcv_wnd_ ? rcv_wnd_ - nrcv_que_ : 0;
+        return rcv_que_.size() < rcv_wnd_ ? rcv_wnd_ - rcv_que_.size() : 0;
     }
 
 
@@ -981,47 +858,36 @@ private:
             snd_wnd_ = sndwnd;
         }
         if (rcvwnd > 0) {   // must >= max fragment size
-            rcv_wnd_ = _imax_(rcvwnd, IKCP_WND_RCV);
+            rcv_wnd_ = _imax_(rcvwnd, KCP_MAX_SEG);
         }
         return 0;
     }
 
 
-    void _parse_una(uint32_t una)
-    {
-        struct IQUEUEHEAD* p, * next;
-        for (p = snd_buf_.next; p != &snd_buf_; p = next) {
-            IKCPSEG* seg = iqueue_entry(p, IKCPSEG, node);
-            next = p->next;
-            if (una > seg->sn) {
-                iqueue_del(p);
-                ::free(seg);
-                nsnd_buf_--;
-            }
-            else {
-                break;
-            }
+    void _parse_una(uint32_t una) {
+        auto end = snd_buf_.find(una);
+        for (auto itr = snd_buf_.begin(); itr != end;) {
+            Segment* seg = itr->second;
+            ::free(seg);
+            snd_buf_.erase(itr++);
         }
     }
 
 
-    void _shrink_buf()
-    {// 该函数确保kcp->snd_una为snd_buf中的最小值, 并且每当snd_buf队列前端的数据有变动时, 都需要调用该函数来确认snd_una
-        struct IQUEUEHEAD* p = snd_buf_.next;
-        if (p != &snd_buf_) {
-            // 如果发送缓冲区不为空 snd_una 为发送缓冲区中最小数分组的sn
-            IKCPSEG* seg = iqueue_entry(p, IKCPSEG, node);
-            snd_una_ = seg->sn;
-        }
-        else {
+    // 该函数确保kcp->snd_una为snd_buf中的最小值, 并且每当snd_buf队列前端的数据有变动时, 都需要调用该函数来确认snd_una
+    void _shrink_buf() {
+        if (snd_buf_.empty()) {
             // 如果发送缓冲区为空 snd_una 为下次要发送分组的sn
             snd_una_ = snd_nxt_;
         }
+        else {
+            // 如果发送缓冲区不为空 snd_una 为发送缓冲区中最小数分组的sn
+            snd_una_ = (*snd_buf_.begin()).second->sn;
+        }
     }
 
 
-    void _update_ack(int32_t rtt)
-    {
+    void _update_ack(int32_t rtt) {
         int32_t rto = 0;
         if (rx_srtt_ == 0) {
             rx_srtt_ = rtt;
@@ -1035,37 +901,23 @@ private:
             if (rx_srtt_ < 1) rx_srtt_ = 1;
         }
         rto = rx_srtt_ + _imax_(interval_, 4 * rx_rttval_);
-        rx_rto_ = _ibound_(rx_minrto_, rto, IKCP_RTO_MAX);
+        rx_rto_ = _ibound_(KCP_RTO_MIN, rto, KCP_RTO_MAX);
     }
 
 
-    void _parse_ack(uint32_t sn)
-    {
-        struct IQUEUEHEAD* p, *next;
-
+    void _parse_ack(uint32_t sn) {
         if (sn < snd_una_ || sn >= snd_nxt_) {
             return;
         }
 
-        for (p = snd_buf_.next; p != &snd_buf_; p = next) {
-            IKCPSEG* seg = iqueue_entry(p, IKCPSEG, node);
-            next = p->next;
-            if (sn == seg->sn) {
-                iqueue_del(p);
-                ::free(seg);
-                nsnd_buf_--;
-                break;
-            }
-            if (sn < seg->sn) {
-                // 当前分组sn 小于缓冲区中某分组的sn时, 说明该ACK已经确认过, 并不存在于缓冲区了
-                break;
-            }
+        auto itr = snd_buf_.find(sn);
+        if (itr != snd_buf_.end()) {
+            snd_buf_.erase(itr);
         }
     }
 
 
-    void _ack_push(uint32_t sn, uint32_t ts)
-    {
+    void _ack_push(uint32_t sn, uint32_t ts) {
         uint32_t newsize = ackcount_ + 1;
         uint32_t* ptr;
 
@@ -1097,46 +949,29 @@ private:
     }
 
 
-    void _parse_data(IKCPSEG* newseg)
-    {
-        struct IQUEUEHEAD* p, * prev;
+    void _parse_data(Segment* newseg) {
         uint32_t sn = newseg->sn;
-        int repeat = 0;
 
         if (sn >= rcv_nxt_ + rcv_wnd_ || sn < rcv_nxt_) {
             ::free(newseg);
             return;
         }
 
-        for (p = rcv_buf_.prev; p != &rcv_buf_; p = prev) {
-            IKCPSEG* seg = iqueue_entry(p, IKCPSEG, node);
-            prev = p->prev;
-            if (seg->sn == sn) {
-                repeat = 1;
-                break;
-            }
-            if (sn > seg->sn) {
-                break;
-            }
-        }
-
-        if (repeat == 0) {
-            iqueue_init(&newseg->node);
-            iqueue_add(&newseg->node, p);
-            nrcv_buf_++;
+        auto itr = rcv_buf_.find(sn);
+        if (itr == rcv_buf_.end()) {
+            rcv_buf_.insert(std::make_pair(newseg->sn, newseg));
         }
         else {
             ::free(newseg);
         }
 
         // move available data from rcv_buf -> rcv_queue
-        while (!iqueue_is_empty(&rcv_buf_)) {
-            IKCPSEG* seg = iqueue_entry(rcv_buf_.next, IKCPSEG, node);
-            if (seg->sn == rcv_nxt_ && nrcv_que_ < rcv_wnd_) {
-                iqueue_del(&seg->node);
-                nrcv_buf_--;
-                iqueue_add_tail(&seg->node, &rcv_queue_);
-                nrcv_que_++;
+        while (!rcv_buf_.empty()) {
+            auto itr = rcv_buf_.begin();
+            Segment* seg = itr->second;
+            if (seg->sn == rcv_nxt_ && rcv_que_.size() < rcv_wnd_) {
+                rcv_buf_.erase(itr);
+                rcv_que_.emplace_back(seg);
                 rcv_nxt_++;
             }
             else {
@@ -1146,16 +981,14 @@ private:
     }
 
 
-    void _parse_fastack(uint32_t sn)
-    {// 确认 缓冲区中分组 sn 被跨越了多少次
-        struct IQUEUEHEAD* p, *next;
-
+    // 确认 缓冲区中分组 sn 被跨越了多少次
+    void _parse_fastack(uint32_t sn) {
         if (sn < snd_una_ || sn >= snd_nxt_)
             return;
 
-        for (p = snd_buf_.next; p != &snd_buf_; p = next) {
-            IKCPSEG* seg = iqueue_entry(p, IKCPSEG, node);
-            next = p->next;
+        //for (p = snd_buf_.next; p != &snd_buf_; p = next) {
+        for (auto &itr: snd_buf_) {
+            Segment* seg = itr.second;
             if (sn < seg->sn) {
                 break;
             }
@@ -1166,51 +999,53 @@ private:
     }
 
 
-    int _peeksize()
-    {
-        struct IQUEUEHEAD* p;
-        IKCPSEG* seg;
+    int _peeksize() {
+        Segment* seg;
         int length = 0;
 
-        if (iqueue_is_empty(&rcv_queue_)) return -1;
+        if (rcv_que_.empty()) {
+            return -1;
+        }
 
-        seg = iqueue_entry(rcv_queue_.next, IKCPSEG, node);
-        if (seg->frg == 0) return seg->len;
+        seg = rcv_que_.front();
+        if (seg->frg == 0) {
+            return seg->len;
+        }
 
-        if (nrcv_que_ < seg->frg + 1) return -1;
+        if (rcv_que_.size() < seg->frg + 1) {
+            return -1;
+        }
 
-        for (p = rcv_queue_.next; p != &rcv_queue_; p = p->next) {
-            seg = iqueue_entry(p, IKCPSEG, node);
+        for (auto itr: rcv_que_) {
+            seg = itr;
             length += seg->len;
-            if (seg->frg == 0) break;
+            if (seg->frg == 0) {
+                break;
+            }
         }
 
         return length;
     }
 
 
-    uint32_t conv_, mtu_, mss_, state_;
+    uint32_t conv_, state_;
     uint32_t snd_una_, snd_nxt_, rcv_nxt_;
     uint32_t ssthresh_;
-    int32_t rx_rttval_, rx_srtt_, rx_rto_, rx_minrto_;
+    int32_t rx_rttval_, rx_srtt_, rx_rto_;
     uint32_t snd_wnd_, rcv_wnd_, rmt_wnd_, cwnd_, probe_;
     uint32_t current_, interval_, ts_flush_, xmit_;
-    uint32_t nrcv_buf_, nsnd_buf_;
-    uint32_t nrcv_que_, nsnd_que_;
     uint32_t nodelay_, updated_;
     uint32_t ts_probe_, probe_wait_;
-    uint32_t dead_link_, incr_;
-    struct IQUEUEHEAD snd_queue_;
-    struct IQUEUEHEAD rcv_queue_;
-    struct IQUEUEHEAD snd_buf_;
-    struct IQUEUEHEAD rcv_buf_;
+    uint32_t incr_;
+    std::list<Segment*> snd_que_;
+    std::list<Segment*> rcv_que_;
+    std::map<uint32_t, Segment*> snd_buf_;
+    std::map<uint32_t, Segment*> rcv_buf_;
     uint32_t* acklist_;
     uint32_t ackcount_;
     uint32_t ackblock_;
     void* user_;
     uint8_t* buffer_;
-    int fastresend_;
-    int fastlimit_;
     int nocwnd_;
     int (*output_)(const uint8_t* buf, size_t len, void* user);
 

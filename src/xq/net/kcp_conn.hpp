@@ -481,7 +481,7 @@ private:
 #endif // WIN32
 
     void _update() {
-        constexpr std::chrono::milliseconds INTVAL = std::chrono::milliseconds(KCP_UPDATE_MS / 2);
+        constexpr std::chrono::milliseconds INTVAL = std::chrono::milliseconds(KCP_UPDATE_MS);
 
         int64_t now_ms;
 
