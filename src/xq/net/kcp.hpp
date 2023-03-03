@@ -94,7 +94,7 @@ public:
         , incr_(0)
         , acklist_(std::vector<Ack>(KCP_WND))
         , user_(user)
-        , buffer_((uint8_t*)::malloc((KCP_MTU + KCP_HEAD_SIZE) * 3))
+        , buffer_(new uint8_t[KCP_MTU * 2])
         , nocwnd_(0)
         , output_(nullptr) {
         output_ = output;
@@ -126,7 +126,7 @@ public:
         rcv_que_.clear();
         
         if (buffer_) {
-            ::free(buffer_);
+            delete[] buffer_;
         }
 
         acklist_.clear();
