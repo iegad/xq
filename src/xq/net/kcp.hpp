@@ -54,14 +54,21 @@ public:
         uint32_t rto;
         uint32_t fastack;
         uint32_t xmit;
-        uint8_t  data[1];
+        uint8_t  data[KCP_MSS];
+
+        Segment() {
+            ::memset(this, 0, sizeof(Segment));
+        }
     };
+
+
+    typedef std::pair<uint64_t, uint64_t> Ack;
 
 
     /// @brief 构建函数
     /// @param conv kcp conv
     /// @param user 附加参数, 该框架中为: KcpSess / KcpHost
-    explicit Kcp(uint32_t conv, void* user, int (*output)(const uint8_t* buf, size_t len, void* user))
+    Kcp(uint32_t conv, void* user, int (*output)(const uint8_t* buf, size_t len, void* user))
         : conv_(conv)
         , state_(0)
         , snd_una_(0)
@@ -85,9 +92,7 @@ public:
         , ts_probe_(0)
         , probe_wait_(0)
         , incr_(0)
-        , acklist_(nullptr)
-        , ackcount_(0)
-        , ackblock_(0)
+        , acklist_(std::vector<Ack>(KCP_WND))
         , user_(user)
         , buffer_((uint8_t*)::malloc((KCP_MTU + KCP_HEAD_SIZE) * 3))
         , nocwnd_(0)
@@ -100,32 +105,31 @@ public:
         Segment* seg;
         for (auto& itr : snd_buf_) {
             seg = itr.second;
-            ::free(seg);
+            Segment::pool()->put(seg);
         }
         snd_buf_.clear();
 
         for (auto &itr : rcv_buf_) {
             seg = itr.second;
-            ::free(seg);
+            Segment::pool()->put(seg);
         }
         rcv_buf_.clear();
 
         for (auto itr : snd_que_) {
-            ::free(itr);
+            Segment::pool()->put(itr);
         }
         snd_que_.clear();
 
         for (auto itr : rcv_que_) {
-            ::free(itr);
+            Segment::pool()->put(itr);
         }
         rcv_que_.clear();
         
         if (buffer_) {
             ::free(buffer_);
         }
-        if (acklist_) {
-            ::free(acklist_);
-        }
+
+        acklist_.clear();
     }
 
 
@@ -186,7 +190,7 @@ public:
             int fragment = seg->frg;
 
             rcv_que_.erase(itr++);
-            ::free(seg);
+            Segment::pool()->put(seg);
 
             if (fragment == 0) {
                 break;
@@ -241,7 +245,7 @@ public:
         // fragment
         for (int i = 0; i < count; i++) {
             int size = len > KCP_MSS ? KCP_MSS : len;
-            seg = (Segment*)::malloc(sizeof(Segment) + size);
+            seg = Segment::pool()->get();
             assert(seg);
 
             memcpy(seg->data, buf, size);
@@ -363,9 +367,9 @@ public:
 
             case KCP_CMD_PUSH: {
                 if (sn < rcv_nxt_ + rcv_wnd_) {
-                    _ack_push(sn, ts);
+                    acklist_.emplace_back(std::make_pair(sn, ts));
                     if (sn >= rcv_nxt_) {
-                        seg = (Segment*)::malloc(sizeof(Segment) + len);
+                        seg = Segment::pool()->get();
                         assert(seg);
                         seg->conv = conv_;
                         seg->cmd = cmd;
@@ -444,12 +448,11 @@ public:
         uint32_t now_ms = current_;
         uint8_t* buf = buffer_;
         uint8_t* ptr = buf;
-        int size, i;
+        int size;
         uint32_t rtomin;
         int change = 0;
         int lost = 0;
         Segment seg;
-        ::memset(&seg, 0, sizeof(seg));
         seg.conv = conv_;
         seg.wnd = (uint32_t)_wnd_unused();
         seg.una = rcv_nxt_;
@@ -460,21 +463,21 @@ public:
         }
 
         // flush acknowledges
-        int count = ackcount_;
-        if (count > 0) {
+        if (acklist_.size() > 0) {
             seg.cmd = KCP_CMD_ACK;
 
-            for (i = 0; i < count; i++) {
+            for (auto &ack: acklist_) {
                 size = (int)(ptr - buf);
                 if (size + (int)KCP_HEAD_SIZE > (int)KCP_MTU) {
                     _output(buf, size);
                     ptr = buf;
                 }
-                _ack_get(i, &seg.sn, &seg.ts);
+                seg.sn = ack.first;
+                seg.ts = ack.second;
                 ptr = _encode_seg(ptr, &seg);
             }
 
-            ackcount_ = 0;
+            acklist_.clear();
         }
 
         // probe window size (if remote window size equals zero)
@@ -657,23 +660,23 @@ public:
 
         for (auto& itr : snd_buf_) {
             seg = itr.second;
-            ::free(seg);
+            Segment::pool()->put(seg);
         }
         snd_buf_.clear();
 
         for (auto &itr : rcv_buf_) {
             seg = itr.second;
-            ::free(seg);
+            Segment::pool()->put(seg);
         }
         rcv_buf_.clear();
 
         for (auto itr : snd_que_) {
-            ::free(itr);
+            Segment::pool()->put(itr);
         }
         snd_que_.clear();
 
         for (auto itr : rcv_que_) {
-            ::free(itr);
+            Segment::pool()->put(itr);
         }
         rcv_que_.clear();
 
@@ -684,11 +687,10 @@ public:
         ts_probe_ = 0;
         probe_wait_ = 0;
         cwnd_ = 1;
+        ssthresh_ = KCP_THRESH_INIT;
         incr_ = 0;
         probe_ = 0;
         state_ = 0;
-        ackblock_ = 0;
-        ackcount_ = 0;
         rx_srtt_ = 0;
         rx_rttval_ = 0;
         current_ = 0;
@@ -842,12 +844,6 @@ private:
     }
 
 
-    void _ack_get(int p, uint32_t* sn, uint32_t* ts) {
-        if (sn) sn[0] = acklist_[p * 2 + 0];
-        if (ts) ts[0] = acklist_[p * 2 + 1];
-    }
-
-
     int _wnd_unused() {
         return rcv_que_.size() < rcv_wnd_ ? rcv_wnd_ - rcv_que_.size() : 0;
     }
@@ -867,8 +863,7 @@ private:
     void _parse_una(uint32_t una) {
         auto end = snd_buf_.find(una);
         for (auto itr = snd_buf_.begin(); itr != end;) {
-            Segment* seg = itr->second;
-            ::free(seg);
+            Segment::pool()->put(itr->second);
             snd_buf_.erase(itr++);
         }
     }
@@ -917,43 +912,11 @@ private:
     }
 
 
-    void _ack_push(uint32_t sn, uint32_t ts) {
-        uint32_t newsize = ackcount_ + 1;
-        uint32_t* ptr;
-
-        if (newsize > ackblock_) {
-            uint32_t* tmp;
-            uint32_t newblock;
-
-            for (newblock = 8; newblock < newsize; newblock <<= 1) {}
-            tmp = (uint32_t*)::malloc(newblock * sizeof(uint32_t) * 2);
-            assert(tmp);
-
-            if (acklist_ != NULL) {
-                uint32_t x;
-                for (x = 0; x < ackcount_; x++) {
-                    tmp[x * 2 + 0] = acklist_[x * 2 + 0];
-                    tmp[x * 2 + 1] = acklist_[x * 2 + 1];
-                }
-                ::free(acklist_);
-            }
-
-            acklist_ = tmp;
-            ackblock_ = newblock;
-        }
-
-        ptr = &acklist_[ackcount_ * 2];
-        ptr[0] = sn;
-        ptr[1] = ts;
-        ackcount_++;
-    }
-
-
     void _parse_data(Segment* newseg) {
         uint32_t sn = newseg->sn;
 
         if (sn >= rcv_nxt_ + rcv_wnd_ || sn < rcv_nxt_) {
-            ::free(newseg);
+            Segment::pool()->put(newseg);
             return;
         }
 
@@ -962,7 +925,7 @@ private:
             rcv_buf_.insert(std::make_pair(newseg->sn, newseg));
         }
         else {
-            ::free(newseg);
+            Segment::pool()->put(newseg);
         }
 
         // move available data from rcv_buf -> rcv_queue
@@ -986,7 +949,6 @@ private:
         if (sn < snd_una_ || sn >= snd_nxt_)
             return;
 
-        //for (p = snd_buf_.next; p != &snd_buf_; p = next) {
         for (auto &itr: snd_buf_) {
             Segment* seg = itr.second;
             if (sn < seg->sn) {
@@ -1041,9 +1003,7 @@ private:
     std::list<Segment*> rcv_que_;
     std::map<uint32_t, Segment*> snd_buf_;
     std::map<uint32_t, Segment*> rcv_buf_;
-    uint32_t* acklist_;
-    uint32_t ackcount_;
-    uint32_t ackblock_;
+    std::vector<Ack> acklist_;
     void* user_;
     uint8_t* buffer_;
     int nocwnd_;
