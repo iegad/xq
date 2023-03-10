@@ -28,11 +28,9 @@ public:
     friend class KcpConn<TEvent>;
 
 
-    Host(uint32_t conv, const std::string& host, uint32_t que_num, KcpConn *conn, int (*output)(const uint8_t* buf, size_t len, void* user))
+    Host(uint32_t conv, const std::string& host, KcpConn *conn, int (*output)(const uint8_t* buf, size_t len, void* user))
         : kcp_(new Kcp(conv, this, output))
-        , que_num_(que_num)
         , time_ms_(xq::tools::now_milli())
-        , last_ms_(0)
         , raddr_({ 0, {0} })
         , raddrlen_(sizeof(raddr_))
         , conn_(conn)
@@ -92,15 +90,13 @@ public:
 
 
 private:
-    Kcp*                 kcp_;
-    uint32_t             que_num_;
-    int64_t              time_ms_;
-    std::atomic<int64_t> last_ms_;
-    sockaddr             raddr_;
-    socklen_t            raddrlen_;
-    KcpConn<TEvent>*     conn_;
-    std::string          remote_;
-    LockType             kcp_mtx_;
+    Kcp*             kcp_;
+    int64_t          time_ms_;
+    sockaddr         raddr_;
+    socklen_t        raddrlen_;
+    KcpConn<TEvent>* conn_;
+    std::string      remote_;
+    LockType         kcp_mtx_;
 
     Host(const Host&) = delete;
     Host& operator=(const Host&) = delete;
@@ -109,38 +105,11 @@ private:
 // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++  END Host +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 
-// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++  BEG Seg +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-
-struct Seg {
-    static xq::tools::ObjectPool<Seg>* pool() {
-        return xq::tools::ObjectPool<Seg>::instance();
-    }
-
-    int       len;                // 消息总长度
-    Host*     host;               // 消息来源
-    socklen_t addrlen;            // 地址长度
-    sockaddr  addr;               // 地址
-    int64_t   time_ms;            // 消息包时间
-    uint8_t   data[IO_RBUF_SIZE]; // 数据块
-
-
-    explicit Seg() {
-        ::memset(this, 0, sizeof(*this));
-        assert(data);
-    }
-}; // struct RxSeg;
-// +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++  END Seg +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-
-
-private:
-    typedef moodycamel::BlockingConcurrentQueue<Seg*> Queue;
-
-
 public:
-    static Ptr create(uint32_t conv, const std::string& local, const std::vector<std::string>& hosts, size_t nthread = 1) {
+    static Ptr create(uint32_t conv, const std::string& local, const std::vector<std::string>& hosts) {
         assert(conv > 0 && conv != (uint32_t)(~0));
         assert(hosts.size() > 0);
-        return Ptr(new KcpConn(conv, local, hosts, nthread));
+        return Ptr(new KcpConn(conv, local, hosts));
     }
 
 
@@ -152,15 +121,6 @@ public:
             delete[] iov;
         }
 #endif
-
-        for (auto& que : rques_) {
-            int  n;
-            Seg* segs[128];
-            while (n = que->try_dequeue_bulk(segs, 128), n > 0) {
-                Seg::pool()->put(segs, n);
-            }
-            delete que;
-        }
 
         for (auto kh : hosts_) {
             delete kh.second;
@@ -182,11 +142,6 @@ public:
 
         state_ = State::Running;
 
-        // Step 2: 开启工作线程
-        for (Queue* q : rques_) {
-            kp_thread_pool_.emplace_back(std::bind(&KcpConn::_kcp_proc, this, q));
-        }
-
         // Step 3: 开启 kcp update线程
         update_thread_ = std::thread(std::bind(&KcpConn::_update, this));
 
@@ -196,25 +151,7 @@ public:
         // Step 5: 等待 update线程
         update_thread_.join();
 
-        // Step 6: 等待工作线程
-        for (auto& t : kp_thread_pool_) {
-            t.join();
-        }
-
-        // Step 7: 清理工作线程
-        kp_thread_pool_.clear();
-
-        // Step 8: 清空Seg队列
-        Seg* segs[128];
-        size_t n;
-        for (auto& q : rques_) {
-            while (n = q->try_dequeue_bulk(segs, 128), n > 0) {
-                Seg::pool()->put(segs, n);
-            }
-        }
-
         // Step 9: 关闭UDP
-        close(ufd_);
         ufd_ = INVALID_SOCKET;
 
         state_ = State::Stopped;
@@ -222,6 +159,7 @@ public:
 
 
     void stop() {
+        close(ufd_);
         state_ = State::Stopping;
     }
 
@@ -233,7 +171,7 @@ public:
 
 
 private:
-    KcpConn(uint32_t conv, const std::string &local, const std::vector<std::string> &hosts, size_t nthread)
+    KcpConn(uint32_t conv, const std::string &local, const std::vector<std::string> &hosts)
         : state_(State::Stopped)
         , ufd_(INVALID_SOCKET)
         , conv_(conv)
@@ -258,12 +196,8 @@ private:
         }
 #endif
 
-        for (size_t i = 0; i < nthread; i++) {
-            rques_.emplace_back(new Queue());
-        }
-
         for (i = 0; i < n; i++) {
-            Host* host = new Host(conv_, hosts[i], i % nthread, this, &KcpConn::output);
+            Host* host = new Host(conv_, hosts[i], this, &KcpConn::output);
             hosts_.insert(std::make_pair(host->remote_, host));
         }
     }
@@ -299,19 +233,19 @@ private:
     }
 
     void _rx() {
-        int      rawlen, err;
-        uint32_t conv;
-        Seg*     seg = nullptr;
-        Host*    host;
+        int       rawlen, err, n;
+        uint32_t  conv;
+        Host*     host;
+        char      rbuf[IO_RBUF_SIZE];
+        sockaddr  addr;
+        socklen_t addrlen = sizeof(addr);
+        uint8_t*  indata = new uint8_t[KCP_MAX_DATA_SIZE];
 
         while (state_ == State::Running) {
-            if (!seg) {
-                seg = Seg::pool()->get();
-            }
-            assert(seg);
-            seg->addrlen = sizeof(sockaddr);
+            ::memset(&addr, 0, addrlen);
+            addrlen = sizeof(addr);
 
-            rawlen = ::recvfrom(ufd_, (char*)seg->data, IO_RBUF_SIZE, 0, &seg->addr, &seg->addrlen);
+            rawlen = ::recvfrom(ufd_, rbuf, IO_RBUF_SIZE, 0, &addr, &addrlen);
 
             do {
                 if (rawlen < 0) {
@@ -323,17 +257,17 @@ private:
                 }
 
                 if (rawlen < KCP_HEAD_SIZE) {
-                    event_->on_error(xq::net::ErrType::KCP_HEAD, EK_INVALID, &seg->addr);
+                    event_->on_error(xq::net::ErrType::KCP_HEAD, EK_INVALID, &addr);
                     break;
                 }
 
-                conv = Kcp::get_conv(seg->data);
+                conv = Kcp::get_conv(rbuf);
                 if (conv != conv_) {
-                    event_->on_error(xq::net::ErrType::KC_HOST, EK_CONV, &seg->addr);
+                    event_->on_error(xq::net::ErrType::KC_HOST, EK_CONV, &addr);
                     break;
                 }
 
-                std::string remote = xq::net::addr2str(&seg->addr);
+                std::string remote = xq::net::addr2str(&addr);
                 assert(remote.size() > 0);
 
                 if (hosts_.count(remote) == 0) {
@@ -341,15 +275,18 @@ private:
                     break;
                 }
 
-                host         = hosts_[remote];
-                seg->host    = host;
-                seg->time_ms = xq::tools::now_milli();
-                seg->len     = rawlen;
+                host = hosts_[remote];
+                if (host->input((uint8_t*)rbuf, rawlen, xq::tools::now_milli())) {
+                    continue;
+                }
 
-                rques_[host->que_num_]->enqueue(seg);
-                seg = nullptr;
+                while (n = host->recv(indata, KCP_MAX_DATA_SIZE), n > 0) {
+                    event_->on_message(host, indata, n);
+                }
             } while (0);
         }
+
+        delete[] indata;
     }
 #else
     // ------------------------
@@ -389,7 +326,8 @@ private:
 
         uint32_t conv;
 
-        int      i,  n = IO_MSG_SIZE;
+        int      i, n = IO_MSG_SIZE;
+        socklen_t addrlen;
         size_t   rawlen;
         int64_t  now_ms;
 
@@ -397,25 +335,21 @@ private:
         msghdr*  hdr;
         Host* host;
 
-        Seg*     seg;
-        Seg*     segs[IO_MSG_SIZE] = {nullptr};
+        sockaddr addrs[IO_MSG_SIZE];
+        uint8_t  rbufs[IO_MSG_SIZE][IO_RBUF_SIZE];
         iovec    iovecs[IO_MSG_SIZE];
+        uint8_t* indata = new uint8_t[KCP_MAX_DATA_SIZE];
 
         while(state_ == State::Running) {
 
-            // Step 1: 申请 Seg
+            // Step 1: 
             for (i = 0; i < n; i++) {
-                if (!segs[i]) {
-                    segs[i] = Seg::pool()->get();
-                }
-
-                seg                = segs[i];
                 hdr                = &msgs[i].msg_hdr;
-                hdr->msg_name      = &seg->addr;
+                hdr->msg_name      = &addrs[i];
                 hdr->msg_namelen   = sizeof(sockaddr);
                 hdr->msg_iov       = &iovecs[i];
                 hdr->msg_iovlen    = 1;
-                iovecs[i].iov_base = seg->data;
+                iovecs[i].iov_base = rbufs[i];
                 iovecs[i].iov_len  = IO_RBUF_SIZE;
             }
 
@@ -437,54 +371,47 @@ private:
 
                 for (i = 0; i < n; i++) {
                     msg    = &msgs[i];
-                    seg    = segs[i];
                     rawlen = msg->msg_len;
                     if (rawlen < KCP_HEAD_SIZE) {
-                        event_->on_error(xq::net::ErrType::KCP_HEAD, EK_INVALID, &seg->addr);
+                        event_->on_error(xq::net::ErrType::KCP_HEAD, EK_INVALID, &addrs[i]);
                         continue;
                     }
 
                     // Step 3: 获取 kcp conv
-                    conv = Kcp::get_conv(seg->data);
+                    conv = Kcp::get_conv(rbufs[i]);
                     if (conv != conv_) {
-                        event_->on_error(xq::net::ErrType::KL_INVALID_CONV, conv, &seg->addr);
+                        event_->on_error(xq::net::ErrType::KL_INVALID_CONV, conv, &addrs[i]);
                         continue;
                     }
 
 
-                    std::string remote = xq::net::addr2str(&seg->addr);
+                    std::string remote = xq::net::addr2str(&addrs[i]);
                     assert(remote.size() > 0);
-                    seg->addrlen = msg->msg_hdr.msg_namelen;
+                    addrlen = msg->msg_hdr.msg_namelen;
 
-                    if (event_->on_recv(seg->data, rawlen, &seg->addr, seg->addrlen) < 0) {
+                    if (event_->on_recv(rbufs[i], rawlen, &addrs[i], addrlen) < 0) {
                         continue;
                     }
 
                     // Step 4: 获取会话
                     if (hosts_.count(remote) == 0) {
-                        event_->on_error(xq::net::ErrType::KC_HOST, EK_CONV, &seg->addr);
+                        event_->on_error(xq::net::ErrType::KC_HOST, EK_CONV, &addrs[i]);
                         break;
                     }
 
-                    // Step 5: 构建Seg
                     host = hosts_[remote];
-                    seg->host    = host;
-                    seg->time_ms = now_ms;
-                    seg->len     = rawlen;
+                    if (host->input(rbufs[i], rawlen, now_ms)) {
+                        continue;
+                    }
 
-                    // Step 6: 投递队列
-                    assert(rques_[host->que_num_]->enqueue(seg));
-                    segs[i] = nullptr;
+                    while (n = host->recv(indata, KCP_MAX_DATA_SIZE), n > 0) {
+                        event_->on_message(host, indata, n);
+                    }
                 } // for (i = 0; i < n; i++);
             } while(0);
         }
 
-        for (i = 0; i < IO_MSG_SIZE; i++) {
-            seg = segs[i];
-            if (seg) {
-                Seg::pool()->put(seg);
-            }
-        }
+        delete[] indata;
     }
 #endif // WIN32
 
@@ -504,47 +431,12 @@ private:
         }
     }
 
-    void _kcp_proc(Queue *que) {
-        constexpr std::chrono::milliseconds TIMEOUT = std::chrono::milliseconds(IO_TIMEOUT);
-
-        Seg*  segs[16], *seg;
-        Host* host;
-
-        int      i, n, nseg;
-        uint8_t* rbuf = new uint8_t[KCP_MAX_DATA_SIZE];
-
-        while (state_ == State::Running) {
-            nseg = que->wait_dequeue_bulk_timed(segs, 16, TIMEOUT);
-            for (i = 0; i < nseg; i++) {
-                seg = segs[i];
-                host = seg->host;
-                assert(host->remote_ == addr2str(&seg->addr));
-
-                if (host->input(seg->data, seg->len, seg->time_ms)) {
-                    continue;
-                }
-
-                while (n = host->recv(rbuf, KCP_MAX_DATA_SIZE), n > 0) {
-                    host->last_ms_ = event_->on_message(host, rbuf, n) < 0 ? 0 : seg->time_ms;
-                }
-            }
-
-            if (nseg > 0) {
-                Seg::pool()->put(segs, nseg);
-            }
-        } // while (state_ == State::Running);
-
-        delete[] rbuf;
-    }
-
 
     State                                  state_;
     SOCKET                                 ufd_;
     uint32_t                               conv_;
     std::string                            local_;
     std::thread                            update_thread_;
-    std::vector<std::thread>               kp_thread_pool_;
-    std::vector<Queue*>                    rques_;
     std::unordered_map<std::string, Host*> hosts_;
     TEvent*                                event_;
 #ifndef WIN32
