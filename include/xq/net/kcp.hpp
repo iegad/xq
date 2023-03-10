@@ -82,8 +82,8 @@ public:
     /// @param conv kcp conv
     /// @param user 附加参数, 该框架中为: KcpSess / KcpHost
     Kcp(uint32_t conv, void* user, int (*output)(const uint8_t* buf, size_t len, void* user))
-        : conv_(conv)
-        , state_(0)
+        : state_(0)
+        , conv_(conv)
         , snd_una_(0)
         , snd_nxt_(0)
         , rcv_nxt_(0)
@@ -105,6 +105,8 @@ public:
         , ts_probe_(0)
         , probe_wait_(0)
         , incr_(0)
+        , last_rcv_ts_(0)
+        , last_snd_ts_(0)
         , user_(user)
         , buffer_(new uint8_t[KCP_MTU * 2])
         , nocwnd_(0)
@@ -178,6 +180,16 @@ public:
     /// @brief 获取当前Kcp conv
     uint32_t conv() const {
         return conv_;
+    }
+
+
+    void bad() {
+        state_ = -1;
+    }
+
+
+    int state() const {
+        return state_;
     }
 
 
@@ -293,21 +305,23 @@ public:
 
     /// @brief kcp update
     /// @param current 当前kcp时间(毫秒)
-    int update(uint32_t now_ms) {
-        if (state_ == (uint32_t)~0) {
+    int update(uint32_t now_ts) {
+        if (state_ == -1) {
             return -1;
         }
 
-        int32_t slap;
+        if ((int64_t)now_ts - last_rcv_ts_ > KCP_TIMEOUT) {
+            return -2;
+        }
 
-        current_ = now_ms;
+        current_ = now_ts;
 
         if (updated_ == 0) {
             updated_ = 1;
             ts_flush_ = current_;
         }
 
-        slap = current_ - ts_flush_;
+        int32_t slap = current_ - ts_flush_;
 
         if (slap >= 10000 || slap < -10000) {
             ts_flush_ = current_;
@@ -332,7 +346,7 @@ public:
     /// @param data 原始IO数据
     /// @param size 原始数据长度
     /// @return 成功返回0, 否则返回!0
-    int input(const uint8_t* data, size_t size) {
+    int input(const uint8_t* data, size_t size, int64_t now_ts) {
         uint32_t prev_una = snd_una_;
         uint32_t maxack = 0;
         int flag = 0;
@@ -471,6 +485,7 @@ public:
             }
         }
 
+        last_rcv_ts_ = now_ts;
         return 0;
     }
 
@@ -494,11 +509,6 @@ public:
         seg.wnd = (uint32_t)_wnd_unused();
         seg.una = rcv_nxt_;
 
-        // 'ikcp_update' haven't been called. 
-        //if (updated_ == 0) {
-        //    return;
-        //}
-
         // flush acknowledges
         if (acklist_.size() > 0) {
             seg.cmd = KCP_CMD_ACK;
@@ -506,7 +516,9 @@ public:
             for (auto &ack: acklist_) {
                 size = (int)(ptr - buf);
                 if (size + (int)KCP_HEAD_SIZE > (int)KCP_MTU) {
-                    _output(buf, size);
+                    if (_output(buf, size) > 0) {
+                        last_snd_ts_ = now_ms;
+                    }
                     ptr = buf;
                 }
                 seg.sn = ack.first;
@@ -549,7 +561,9 @@ public:
             seg.cmd = KCP_CMD_WASK;
             size = (int)(ptr - buf);
             if (size + (int)KCP_HEAD_SIZE > (int)KCP_MTU) {
-                _output(buf, size);
+                if (_output(buf, size) > 0) {
+                    last_snd_ts_ = now_ms;
+                }
                 ptr = buf;
             }
             ptr = _encode_seg(ptr, &seg);
@@ -560,7 +574,9 @@ public:
             seg.cmd = KCP_CMD_WINS;
             size = (int)(ptr - buf);
             if (size + (int)KCP_HEAD_SIZE > (int)KCP_MTU) {
-                _output(buf, size);
+                if (_output(buf, size) > 0) {
+                    last_snd_ts_ = now_ms;
+                }
                 ptr = buf;
             }
             ptr = _encode_seg(ptr, &seg);
@@ -642,7 +658,9 @@ public:
                 need = KCP_HEAD_SIZE + segment->len;
 
                 if (size + need > (int)KCP_MTU) {
-                    _output(buf, size);
+                    if (_output(buf, size) > 0) {
+                        last_snd_ts_ = now_ms;
+                    }
                     ptr = buf;
                 }
 
@@ -655,7 +673,7 @@ public:
 
                 if (segment->xmit >= KCP_DEADLINK) {
                     assert(0 && "################# XMIT ################");
-                    state_ = ~0;
+                    state_ = -1;
                     return -1;
                 }
             }
@@ -664,7 +682,9 @@ public:
         // flash remain segments
         size = (int)(ptr - buf);
         if (size > 0) {
-            _output(buf, size);
+            if (_output(buf, size) > 0) {
+                last_snd_ts_ = now_ms;
+            }
         }
 
         // update ssthresh
@@ -729,6 +749,8 @@ public:
         snd_nxt_ = 0;
         rcv_nxt_ = 0;
         ts_probe_ = 0;
+        last_rcv_ts_ = 0;
+        last_snd_ts_ = 0;
         probe_wait_ = 0;
         cwnd_ = 1;
         ssthresh_ = KCP_THRESH_INIT;
@@ -1034,7 +1056,8 @@ private:
     }
 
 
-    uint32_t conv_, state_;
+    int state_;
+    uint32_t conv_;
     uint32_t snd_una_, snd_nxt_, rcv_nxt_;
     uint32_t ssthresh_;
     int32_t rx_rttval_, rx_srtt_, rx_rto_;
@@ -1043,6 +1066,7 @@ private:
     uint32_t nodelay_, updated_;
     uint32_t ts_probe_, probe_wait_;
     uint32_t incr_;
+    int64_t last_rcv_ts_, last_snd_ts_;
     std::list<Segment*> snd_que_;
     std::list<Segment*> rcv_que_;
     std::map<uint32_t, Segment*> snd_buf_;

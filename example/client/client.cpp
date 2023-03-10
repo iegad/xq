@@ -11,7 +11,7 @@
 
 const std::string host = "1.15.81.179:6688";
 //const std::string host = "192.168.0.101:6688";
-constexpr int NTIMES = 200000;
+constexpr int NTIMES = 100000;
 
 class EchoEvent {
 public:

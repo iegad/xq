@@ -63,9 +63,9 @@ public:
     }
 
 
-    int input(const uint8_t* data, long size) {
+    int input(const uint8_t* data, long size, int64_t now_ms) {
         std::lock_guard<LockType> lk(kcp_mtx_);
-        return kcp_->input(data, size);
+        return kcp_->input(data, size, now_ms - time_ms_);
     }
 
 
@@ -520,7 +520,7 @@ private:
                 host = seg->host;
                 assert(host->remote_ == addr2str(&seg->addr));
 
-                if (host->input(seg->data, seg->len)) {
+                if (host->input(seg->data, seg->len, seg->time_ms)) {
                     continue;
                 }
 

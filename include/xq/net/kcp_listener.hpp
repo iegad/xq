@@ -73,7 +73,6 @@ public:
         : kcp_(nullptr)
         , que_num_(~0)
         , time_ms_(0)
-        , last_ms_(0)
         , raddr_({0, {0}})
         , raddrlen_(sizeof(raddr_))
         , listener_(nullptr) {}
@@ -97,11 +96,6 @@ public:
             remote_ = xq::net::addr2str(&raddr_);
         }
         return remote_;
-    }
-
-
-    int64_t last_ms() const {
-        return last_ms_;
     }
 
 
@@ -172,7 +166,7 @@ private:
         raddrlen_ = addrlen;
         remote_.clear();
         que_num_ = que_num;
-        last_ms_ = time_ms_ = now_ms;
+        time_ms_ = now_ms;
     }
 
 
@@ -181,7 +175,13 @@ private:
         ::memcpy(&raddr_, addr, addrlen);
         raddrlen_ = addrlen;
         remote_.clear();
-        last_ms_ = time_ms_ = now_ms;
+        time_ms_ = now_ms;
+    }
+
+
+    void _bad() {
+        std::lock_guard<LockType> lk(kcp_mtx_);
+        kcp_->bad();
     }
 
 
@@ -193,9 +193,9 @@ private:
     // 
     // @return: 成功返回0, 否则返回非0.
     // ------------------------
-    int _input(const uint8_t* raw, size_t size) {
+    int _input(const uint8_t* raw, size_t size, int64_t now_ms) {
         std::lock_guard<LockType> lk(kcp_mtx_);
-        return kcp_->input(raw, size);
+        return kcp_->input(raw, size, now_ms - time_ms_);
     }
 
 
@@ -223,12 +223,6 @@ private:
     // @return: 成功返回 0, 连接超时返回 -1.
     // ------------------------
     int _update(int64_t now_ms) {
-        int64_t last_ms = last_ms_;
-
-        if (last_ms == 0 || now_ms - last_ms > KCP_TIMEOUT) {
-            return -1;
-        }
-
         std::lock_guard<LockType> lk(kcp_mtx_);
         return kcp_->update((uint32_t)(now_ms - time_ms_));
     }
@@ -237,7 +231,6 @@ private:
     Kcp*                 kcp_;       // KCP实例
     uint32_t             que_num_;   // 当前工作队列号
     int64_t              time_ms_;   // 激活时间
-    std::atomic<int64_t> last_ms_;   // 会话有效时间
     sockaddr             raddr_;     // 对端地址
     socklen_t            raddrlen_;
     KcpListener<TEvent>* listener_;
@@ -789,8 +782,9 @@ private:
             nerase = 0;
             std::this_thread::sleep_for(INTVAL);
             
+            
             now_ms = xq::tools::now_milli();
-            n      = sessions_.get_all_vals(active_sess, MAX_CONV);
+            n = sessions_.get_all_vals(active_sess, MAX_CONV);
             assert(n < MAX_CONV);
 
             for (i = 0; i < n; i++) {
@@ -838,16 +832,18 @@ private:
                 assert(!sess->_diff_addr(&seg->addr, seg->addrlen));
 
                 // Step 2: 获取KCP消息包
-                n = sess->_input(seg->data, seg->len);
+                n = sess->_input(seg->data, seg->len, seg->time_ms);
                 if (n < 0) {
                     event_->on_error(xq::net::ErrType::KCP_INPUT, n, sess);
-                    sess->last_ms_ = 0;
+                    sess->_bad();
                     continue;
                 }
 
                 // Step 3: 获取消息包
                 while (n = sess->_recv(rbuf, KCP_MAX_DATA_SIZE), n > 0) {
-                    sess->last_ms_ = event_->on_message(sess, rbuf, n) < 0 ? 0 : seg->time_ms;
+                    if (event_->on_message(sess, rbuf, n) < 0) {
+                        sess->_bad();
+                    }
                 }
                 std::this_thread::yield();
             }
