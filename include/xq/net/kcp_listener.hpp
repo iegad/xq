@@ -218,7 +218,7 @@ private:
     // ------------------------
     // Kcp udpate
     //
-    // @now_ms: 刷新时间(毫秒), 并非当前时间. 是Kcp的相应时间: now_ms - connection_time .
+    // @now_ms: 刷新时间(毫秒), 并非当前时间. 是Kcp的相应时间: now_ms - connection_time
     //
     // @return: 成功返回 0, 连接超时返回 -1.
     // ------------------------
@@ -230,16 +230,14 @@ private:
         }
 
         std::lock_guard<LockType> lk(kcp_mtx_);
-        kcp_->update((uint32_t)(now_ms - time_ms_));
-
-        return 0;
+        return kcp_->update((uint32_t)(now_ms - time_ms_));
     }
 
 
     Kcp*                 kcp_;       // KCP实例
     uint32_t             que_num_;   // 当前工作队列号
     int64_t              time_ms_;   // 激活时间
-    std::atomic<int64_t> last_ms_; // 会话有效时间
+    std::atomic<int64_t> last_ms_;   // 会话有效时间
     sockaddr             raddr_;     // 对端地址
     socklen_t            raddrlen_;
     KcpListener<TEvent>* listener_;
@@ -718,7 +716,7 @@ private:
                     seg->addrlen = msg->msg_hdr.msg_namelen;
 
 #if (KL_EVENT_ON_RECV == 1)
-                    if (event_->on_recv(seg->data, rawlen, &seg->addr, seg->addrlen) < 0) {
+                    if (event_->on_recv(seg) < 0) {
                         continue;
                     }
 #endif // KL_EVENT_ON_RECV;

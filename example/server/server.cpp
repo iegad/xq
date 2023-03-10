@@ -3,8 +3,8 @@
 #define KL_EVENT_ON_CONNECTED    1
 #define KL_EVENT_ON_RECONNECTED  1
 #define KL_EVENT_ON_DISCONNECTED 1
-#define KL_EVENT_ON_SEND         0
-#define KL_EVENT_ON_RECV         0
+#define KL_EVENT_ON_SEND         1
+#define KL_EVENT_ON_RECV         1
 
 
 #include "xq/net//kcp_listener.hpp"
@@ -57,12 +57,23 @@ public:
         std::printf("[%s] [sessions: %d] has stopped.\n", listener->host().c_str(), listener->conns());
     }
 
-    int on_recv(KcpSeg*) {
+    int on_recv(KcpSeg* data) {
         return 0;
     }
 
-    void on_send(const uint8_t*, size_t, const sockaddr*, socklen_t) {
+    void on_send(const uint8_t* data, size_t datalen, const sockaddr*, socklen_t) {
+        int nleft = datalen;
+        const uint8_t* p = data;
 
+        std::printf("---------------------------------------\n");
+        xq::net::Kcp::Segment* seg = xq::net::Kcp::Segment::pool()->get();
+        while (nleft > 0) {
+            int n = xq::net::Kcp::decode(p, nleft, seg);
+            p += n;
+            nleft -= n;
+            std::printf("%s\n", seg->to_string().c_str());
+        }
+        xq::net::Kcp::Segment::pool()->put(seg);
     }
 };
 

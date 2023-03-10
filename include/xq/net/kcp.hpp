@@ -14,6 +14,13 @@ namespace net {
 
 // ------------------------------------------------------------------------ Kcp ------------------------------------------------------------------------
 
+constexpr int KCP_WND           = 512;                     // KCP 默认读/写窗口
+constexpr int KCP_MTU           = 1448;                    // KCP TODO: 目前为1448, KCP_MSS为 1448 - 24 = 1424, 未来消息头应该是: 36字节, KCP_MSS: 为1408 > 1392, 1392是因为要给一个PADDING16字节
+constexpr int KCP_HEAD_SIZE     = 24;                      // KCP 消息头长度
+constexpr int KCP_MSS           = KCP_MTU - KCP_HEAD_SIZE;
+constexpr int KCP_MAX_DATA_SIZE = KCP_MSS * 128;           // KCP 单包最大字节
+constexpr int KCP_TIMEOUT       = 60000;                   // KCP 默认超时(毫秒)
+constexpr int KCP_UPDATE_MS     = 10;                      // KCP UPDATE 间隔(毫秒)
 constexpr int KCP_RTO_MIN       = 100;    // normal min rto
 constexpr int KCP_RTO_DEF       = 200;
 constexpr int KCP_RTO_MAX       = 60000;
@@ -43,9 +50,9 @@ public:
         }
 
         uint32_t conv;
-        uint32_t cmd;
-        uint32_t frg;
-        uint32_t wnd;
+        uint8_t  cmd;
+        uint8_t  frg;
+        uint16_t wnd;
         uint32_t ts;
         uint32_t sn;
         uint32_t una;
@@ -58,6 +65,12 @@ public:
 
         Segment() {
             ::memset(this, 0, sizeof(Segment));
+        }
+
+        std::string to_string() {
+            char buff[3000];
+            sprintf(buff, "CONV[%d]:CMD[%d]:FRG[%d]:WND[%d]:TS[%d]:SN[%d]:UNA[%d]:LEN[%d]:%s", conv, cmd, frg, wnd, ts, sn, una, len, xq::tools::bin2hex(data, len).c_str());
+            return buff;
         }
     };
 
@@ -80,7 +93,7 @@ public:
         , rx_rto_(KCP_RTO_DEF)
         , snd_wnd_(KCP_WND)
         , rcv_wnd_(KCP_WND)
-        , rmt_wnd_(KCP_WND)
+        , rmt_wnd_(1)
         , cwnd_(1)
         , probe_(0)
         , current_(0)
@@ -92,7 +105,6 @@ public:
         , ts_probe_(0)
         , probe_wait_(0)
         , incr_(0)
-        , acklist_(std::vector<Ack>(KCP_WND))
         , user_(user)
         , buffer_(new uint8_t[KCP_MTU * 2])
         , nocwnd_(0)
@@ -140,7 +152,26 @@ public:
         uint32_t conv;
         _decode32u((const uint8_t*)raw, &conv);
         return conv;
+    }
 
+
+    static int decode(const uint8_t* data, size_t datalen, Segment* seg) {
+        if (datalen < KCP_HEAD_SIZE) {
+            return -1;
+        }
+
+        const uint8_t* p = data;
+        p = _decode32u(p, &seg->conv);
+        p = _decode8u(p, &seg->cmd);
+        p = _decode8u(p, &seg->frg);
+        p = _decode16u(p, &seg->wnd);
+        p = _decode32u(p, &seg->ts);
+        p = _decode32u(p, &seg->sn);
+        p = _decode32u(p, &seg->una);
+        p = _decode32u(p, &seg->len);
+
+        ::memcpy(seg->data, p, seg->len);
+        return KCP_HEAD_SIZE + seg->len;
     }
 
 
@@ -262,7 +293,11 @@ public:
 
     /// @brief kcp update
     /// @param current 当前kcp时间(毫秒)
-    void update(uint32_t now_ms) {
+    int update(uint32_t now_ms) {
+        if (state_ == (uint32_t)~0) {
+            return -1;
+        }
+
         int32_t slap;
 
         current_ = now_ms;
@@ -286,8 +321,10 @@ public:
             else {
                 ts_flush_ += interval_;
             }
-            flush();
+            return flush();
         }
+
+        return 0;
     }
 
 
@@ -438,13 +475,13 @@ public:
     }
 
 
-    int ikcp_waitsnd() {
+    int waitsnd() {
         return snd_buf_.size() + snd_que_.size();
     }
 
 
     /// @brief 将发送缓冲区的数据给 回调函数(output)处理
-    void flush() {
+    int flush() {
         uint32_t now_ms = current_;
         uint8_t* buf = buffer_;
         uint8_t* ptr = buf;
@@ -458,9 +495,9 @@ public:
         seg.una = rcv_nxt_;
 
         // 'ikcp_update' haven't been called. 
-        if (updated_ == 0) {
-            return;
-        }
+        //if (updated_ == 0) {
+        //    return;
+        //}
 
         // flush acknowledges
         if (acklist_.size() > 0) {
@@ -574,6 +611,7 @@ public:
                 needsend = 1;
                 segment->xmit++;
                 xmit_++;
+
                 if (nodelay_ == 0) {
                     segment->rto += _imax_(segment->rto, (uint32_t)rx_rto_);
                 }
@@ -616,7 +654,9 @@ public:
                 }
 
                 if (segment->xmit >= KCP_DEADLINK) {
+                    assert(0 && "################# XMIT ################");
                     state_ = ~0;
+                    return -1;
                 }
             }
         }
@@ -651,6 +691,8 @@ public:
             cwnd_ = 1;
             incr_ = KCP_MSS;
         }
+
+        return 0;
     }
 
 
@@ -680,6 +722,8 @@ public:
         }
         rcv_que_.clear();
 
+        acklist_.clear();
+
         conv_ = conv;
         snd_una_ = 0;
         snd_nxt_ = 0;
@@ -703,7 +747,7 @@ public:
 
     uint32_t check(uint32_t now_ms) {
         uint32_t ts_flush = ts_flush_;
-        int32_t tm_flush = 0x7fffffff;
+        int32_t tm_flush = 0;
         int32_t tm_packet = 0x7fffffff;
         uint32_t minimal = 0;
 
@@ -779,8 +823,8 @@ private:
 
 
     static uint8_t* _encode16u(uint8_t* p, uint16_t w) {
-#if IWORDS_BIG_ENDIAN || IWORDS_MUST_ALIGN
-        * (uint8_t*)(p + 0) = (w & 0xff);
+#if X_BIG_ENDIAN || X_MUST_ALIGN
+        *(uint8_t*)(p + 0) = (w & 0xff);
         *(uint8_t*)(p + 1) = (w >> 8);
 #else
         memcpy(p, &w, 2);
@@ -791,8 +835,8 @@ private:
 
 
     static const uint8_t* _decode16u(const uint8_t* p, uint16_t* w) {
-#if IWORDS_BIG_ENDIAN || IWORDS_MUST_ALIGN
-        * w = *(const uint8_t*)(p + 1);
+#if X_BIG_ENDIAN || X_MUST_ALIGN
+        *w = *(const uint8_t*)(p + 1);
         *w = *(const uint8_t*)(p + 0) + (*w << 8);
 #else
         memcpy(w, p, 2);
@@ -803,11 +847,11 @@ private:
 
 
     static uint8_t* _encode32u(uint8_t* p, uint32_t l) {
-#if IWORDS_BIG_ENDIAN || IWORDS_MUST_ALIGN
-        * (uint8_t*)(p + 0) = (uint8_t)((l /*>>  0*/)/* & 0xff */);
-        *(uint8_t*)(p + 1) = (uint8_t)((l >> 8)/* & 0xff */);
-        *(uint8_t*)(p + 2) = (uint8_t)((l >> 16)/* & 0xff */);
-        *(uint8_t*)(p + 3) = (uint8_t)((l >> 24)/* & 0xff */);
+#if X_BIG_ENDIAN || X_MUST_ALIGN
+        *(uint8_t*)(p + 0) = (uint8_t)(l);
+        *(uint8_t*)(p + 1) = (uint8_t)((l >> 8));
+        *(uint8_t*)(p + 2) = (uint8_t)((l >> 16));
+        *(uint8_t*)(p + 3) = (uint8_t)((l >> 24));
 #else
         memcpy(p, &l, 4);
 #endif
@@ -817,8 +861,8 @@ private:
 
 
     static const uint8_t* _decode32u(const uint8_t* p, uint32_t* l) {
-#if IWORDS_BIG_ENDIAN || IWORDS_MUST_ALIGN
-        * l = *(const uint8_t*)(p + 3);
+#if X_BIG_ENDIAN || X_MUST_ALIGN
+        *l = *(const uint8_t*)(p + 3);
         *l = *(const uint8_t*)(p + 2) + (*l << 8);
         *l = *(const uint8_t*)(p + 1) + (*l << 8);
         *l = *(const uint8_t*)(p + 0) + (*l << 8);
@@ -974,7 +1018,7 @@ private:
             return seg->len;
         }
 
-        if (rcv_que_.size() < seg->frg + 1) {
+        if (rcv_que_.size() < (size_t)(seg->frg + 1)) {
             return -1;
         }
 

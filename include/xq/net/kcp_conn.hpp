@@ -51,7 +51,15 @@ public:
 
     int send(const uint8_t* data, size_t datalen) {
         std::lock_guard<LockType > lk(kcp_mtx_);
-        return kcp_->send(data, datalen);
+        if (kcp_->waitsnd() >= (int)KCP_WND) {
+            return 1;
+        }
+        
+        int n = kcp_->send(data, datalen);
+        if (n == 0) {
+            kcp_->flush();
+        }
+        return n;
     }
 
 
@@ -74,7 +82,7 @@ public:
 
 
     uint32_t conv() const {
-        return kcp_->get_conv();
+        return kcp_->conv();
     }
 
 
@@ -345,139 +353,139 @@ private:
     }
 #else
     // ------------------------
-        // Linux KCP output
-        //    将数据添加到mmsghdr缓冲区, 当mmsghdr缓冲区满时调用底层方法
-        // ------------------------
-        static int output(const char* raw, int len, IKCPCB*, void* user) {
-            assert(len > 0 && (size_t)len <= KCP_MTU);
+    // Linux KCP output
+    //    将数据添加到mmsghdr缓冲区, 当mmsghdr缓冲区满时调用底层方法
+    // ------------------------
+    static int output(const uint8_t* raw, size_t len, void* user) {
+        assert(len > 0 && (size_t)len <= KCP_MTU);
 
-            Host*        host = (Host*)user;
-            KcpConn* c  = host->conn_;
-            size_t       i    = c->msgs_len_;
-            msghdr*      msg  = &c->msgs_[i].msg_hdr;
+        Host*        host = (Host*)user;
+        KcpConn* c  = host->conn_;
+        size_t       i    = c->msgs_len_;
+        msghdr*      msg  = &c->msgs_[i].msg_hdr;
 
-            msg->msg_name           = &host->raddr_;
-            msg->msg_namelen        = host->raddrlen_;
-            msg->msg_iov[0].iov_len = len;
+        msg->msg_name           = &host->raddr_;
+        msg->msg_namelen        = host->raddrlen_;
+        msg->msg_iov[0].iov_len = len;
 
-            ::memcpy(msg->msg_iov[0].iov_base, raw, len);
+        ::memcpy(msg->msg_iov[0].iov_base, raw, len);
 
-            if (++c->msgs_len_ == IO_MSG_SIZE) {
-                c->_sendmsgs();
-            }
-
-            return 0;
+        if (++c->msgs_len_ == IO_MSG_SIZE) {
+            c->_sendmsgs();
         }
 
-
-        // ------------------------
-            // Linux IO 工作线程
-            // ------------------------
-            void _rx() {
-                static timespec TIMEOUT   = {.tv_sec = IO_TIMEOUT / 1000, .tv_nsec = 0};
-
-                mmsghdr msgs[IO_MSG_SIZE];
-                ::memset(msgs, 0, sizeof(msgs));
-
-                uint32_t conv;
-
-                int      i,  n = IO_MSG_SIZE;
-                size_t   rawlen;
-                int64_t  now_ms;
-
-                mmsghdr* msg;
-                msghdr*  hdr;
-                Host* host;
-
-                Seg*     seg;
-                Seg*     segs[IO_MSG_SIZE] = {nullptr};
-                iovec    iovecs[IO_MSG_SIZE];
-
-                while(state_ == State::Running) {
-
-                    // Step 1: 申请 Seg
-                    for (i = 0; i < n; i++) {
-                        if (!segs[i]) {
-                            segs[i] = Seg::pool()->get();
-                        }
-
-                        seg                = segs[i];
-                        hdr                = &msgs[i].msg_hdr;
-                        hdr->msg_name      = &seg->addr;
-                        hdr->msg_namelen   = sizeof(sockaddr);
-                        hdr->msg_iov       = &iovecs[i];
-                        hdr->msg_iovlen    = 1;
-                        iovecs[i].iov_base = seg->data;
-                        iovecs[i].iov_len  = IO_RBUF_SIZE;
-                    }
-
-                    host = nullptr;
-                    // Step 2: 获取消息
-                    n = ::recvmmsg(ufd_, msgs, IO_MSG_SIZE, MSG_WAITFORONE, &TIMEOUT);
-
-                    do {
-                        if (n < 0) {
-                            event_->on_error(xq::net::ErrType::IO_RECV, error(), nullptr);
-                            break;
-                        }
-
-                        if (n == 0) {
-                            break;
-                        }
-
-                        now_ms = xq::tools::now_milli();
-
-                        for (i = 0; i < n; i++) {
-                            msg    = &msgs[i];
-                            seg    = segs[i];
-                            rawlen = msg->msg_len;
-                            if (rawlen < KCP_HEAD_SIZE) {
-                                event_->on_error(xq::net::ErrType::KCP_HEAD, EK_INVALID, &seg->addr);
-                                continue;
-                            }
-
-                            // Step 3: 获取 kcp conv
-                            conv = Kcp::get_conv(seg->data);
-                            if (conv != conv_) {
-                                event_->on_error(xq::net::ErrType::KL_INVALID_CONV, conv, &seg->addr);
-                                continue;
-                            }
+        return 0;
+    }
 
 
-                            std::string remote = xq::net::addr2str(&seg->addr);
-                            assert(remote.size() > 0);
-                            seg->addrlen = msg->msg_hdr.msg_namelen;
+    // ------------------------
+    // Linux IO 工作线程
+    // ------------------------
+    void _rx() {
+        static timespec TIMEOUT   = {.tv_sec = IO_TIMEOUT / 1000, .tv_nsec = 0};
 
-                            if (event_->on_recv(seg->data, rawlen, &seg->addr, seg->addrlen) < 0) {
-                                continue;
-                            }
+        mmsghdr msgs[IO_MSG_SIZE];
+        ::memset(msgs, 0, sizeof(msgs));
 
-                            // Step 4: 获取会话
-                            if (hosts_.count(remote) == 0) {
-                                event_->on_error(xq::net::ErrType::KC_HOST, EK_CONV, &seg->addr);
-                                break;
-                            }
+        uint32_t conv;
 
-                            // Step 5: 构建Seg
-                            host = hosts_[remote];
-                            seg->host    = host;
-                            seg->time_ms = now_ms;
-                            seg->len     = rawlen;
+        int      i,  n = IO_MSG_SIZE;
+        size_t   rawlen;
+        int64_t  now_ms;
 
-                            // Step 6: 投递队列
-                            assert(rques_[host->que_num_]->enqueue(seg));
-                            segs[i] = nullptr;
-                        } // for (i = 0; i < n; i++);
-                    } while(0);
+        mmsghdr* msg;
+        msghdr*  hdr;
+        Host* host;
+
+        Seg*     seg;
+        Seg*     segs[IO_MSG_SIZE] = {nullptr};
+        iovec    iovecs[IO_MSG_SIZE];
+
+        while(state_ == State::Running) {
+
+            // Step 1: 申请 Seg
+            for (i = 0; i < n; i++) {
+                if (!segs[i]) {
+                    segs[i] = Seg::pool()->get();
                 }
 
-                for (i = 0; i < IO_MSG_SIZE; i++) {
-                    seg = segs[i];
-                    if (seg) {
-                        Seg::pool()->put(seg);
-                    }
-                }
+                seg                = segs[i];
+                hdr                = &msgs[i].msg_hdr;
+                hdr->msg_name      = &seg->addr;
+                hdr->msg_namelen   = sizeof(sockaddr);
+                hdr->msg_iov       = &iovecs[i];
+                hdr->msg_iovlen    = 1;
+                iovecs[i].iov_base = seg->data;
+                iovecs[i].iov_len  = IO_RBUF_SIZE;
             }
+
+            host = nullptr;
+            // Step 2: 获取消息
+            n = ::recvmmsg(ufd_, msgs, IO_MSG_SIZE, MSG_WAITFORONE, &TIMEOUT);
+
+            do {
+                if (n < 0) {
+                    event_->on_error(xq::net::ErrType::IO_RECV, error(), nullptr);
+                    break;
+                }
+
+                if (n == 0) {
+                    break;
+                }
+
+                now_ms = xq::tools::now_milli();
+
+                for (i = 0; i < n; i++) {
+                    msg    = &msgs[i];
+                    seg    = segs[i];
+                    rawlen = msg->msg_len;
+                    if (rawlen < KCP_HEAD_SIZE) {
+                        event_->on_error(xq::net::ErrType::KCP_HEAD, EK_INVALID, &seg->addr);
+                        continue;
+                    }
+
+                    // Step 3: 获取 kcp conv
+                    conv = Kcp::get_conv(seg->data);
+                    if (conv != conv_) {
+                        event_->on_error(xq::net::ErrType::KL_INVALID_CONV, conv, &seg->addr);
+                        continue;
+                    }
+
+
+                    std::string remote = xq::net::addr2str(&seg->addr);
+                    assert(remote.size() > 0);
+                    seg->addrlen = msg->msg_hdr.msg_namelen;
+
+                    if (event_->on_recv(seg->data, rawlen, &seg->addr, seg->addrlen) < 0) {
+                        continue;
+                    }
+
+                    // Step 4: 获取会话
+                    if (hosts_.count(remote) == 0) {
+                        event_->on_error(xq::net::ErrType::KC_HOST, EK_CONV, &seg->addr);
+                        break;
+                    }
+
+                    // Step 5: 构建Seg
+                    host = hosts_[remote];
+                    seg->host    = host;
+                    seg->time_ms = now_ms;
+                    seg->len     = rawlen;
+
+                    // Step 6: 投递队列
+                    assert(rques_[host->que_num_]->enqueue(seg));
+                    segs[i] = nullptr;
+                } // for (i = 0; i < n; i++);
+            } while(0);
+        }
+
+        for (i = 0; i < IO_MSG_SIZE; i++) {
+            seg = segs[i];
+            if (seg) {
+                Seg::pool()->put(seg);
+            }
+        }
+    }
 #endif // WIN32
 
     void _update() {
