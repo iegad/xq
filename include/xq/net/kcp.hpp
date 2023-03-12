@@ -218,9 +218,7 @@ public:
             return -1;
         }
 
-        if (peeksize > (int)len) {
-            return -2;
-        }
+        assert(peeksize <= (int)len);
 
         if (rcv_que_.size() >= rcv_wnd_) {
             recover = 1;

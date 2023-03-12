@@ -770,8 +770,6 @@ private:
                         break;
                     }
                     else if (n < 0) {
-                        event_->on_error(xq::net::ErrType::KCP_RECV, n, sess);
-                        sess->_bad();
                         break;
                     }
 

@@ -299,7 +299,7 @@ private:
                 host = hosts_[remote];
                 n = host->input((uint8_t*)rbuf, rawlen, xq::tools::now_milli());
                 if (n < 0) {
-                    logger->info("ERR: INPUT: " + std::to_string(res));
+                    logger->info("ERR: INPUT: " + std::to_string(n));
                     break;
                 }
                 logger->info("input ...");
@@ -310,7 +310,7 @@ private:
                         break;
                     }
                     else if (n < 0) {
-                        logger->info("recv failed: " + std::to_string(n));
+                        logger->info("ERR: RECV: " + std::to_string(n));
                         break;
                     }
                     logger->info(std::string((char*)indata, 16));
