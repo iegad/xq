@@ -59,6 +59,7 @@ enum class ErrType {
 
     KCP_HEAD,    // KCP 消息头错误
     KCP_INPUT,   // KCP input 失败
+    KCP_RECV,
 
     KL_INVALID_CONV, // KCP conv 无效
 

@@ -6,6 +6,8 @@
 #include "xq/net/kcp.hpp"
 #include "xq/net/net.hpp"
 #include "xq/third/blockingconcurrentqueue.h"
+#include <spdlog/spdlog.h>
+#include <spdlog/sinks/rotating_file_sink.h>
 
 
 namespace xq {
@@ -49,7 +51,7 @@ public:
 
     int send(const uint8_t* data, size_t datalen) {
         std::lock_guard<LockType > lk(kcp_mtx_);
-        if (kcp_->waitsnd() >= (int)KCP_WND) {
+        if (kcp_->waitsnd() >= (int)KCP_SND_WND) {
             return 1;
         }
         
@@ -103,7 +105,6 @@ private:
 }; // class KcpHost;
 
 // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++  END Host +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-
 
 public:
     static Ptr create(uint32_t conv, const std::string& local, const std::vector<std::string>& hosts) {
@@ -224,6 +225,11 @@ private:
 #ifdef WIN32
     static int output(const uint8_t* raw, size_t rawlen, void* user) {
         Host* host = (Host*)user;
+
+#if KC_EVENT_ON_SEND
+        host->conn_->event_->on_send(raw, rawlen, &host->raddr_, host->raddrlen_);
+#endif // !KCP_EVENT_ON_SEND;
+
         int n = ::sendto(host->conn_->ufd_, (const char *)raw, (size_t)rawlen, 0, &host->raddr_, host->raddrlen_);
         if (n < 0) {
             std::printf("send failed: %d\n", error());
@@ -232,7 +238,10 @@ private:
         return n;
     }
 
+
     void _rx() {
+        std::shared_ptr<spdlog::logger> logger(spdlog::rotating_logger_st("rx", SPDLOG_FILENAME_T("rx.txt"), 1024 * 1024 * 1024, 0));
+
         int       rawlen, err, n;
         uint32_t  conv;
         Host*     host;
@@ -240,6 +249,8 @@ private:
         sockaddr  addr;
         socklen_t addrlen = sizeof(addr);
         uint8_t*  indata = new uint8_t[KCP_MAX_DATA_SIZE];
+
+        int count = 0;
 
         while (state_ == State::Running) {
             ::memset(&addr, 0, addrlen);
@@ -256,16 +267,25 @@ private:
                     break;
                 }
 
+                logger->info("-- BEG --");
+                logger->info(xq::tools::bin2hex((uint8_t*)rbuf, rawlen));
+
                 if (rawlen < KCP_HEAD_SIZE) {
                     event_->on_error(xq::net::ErrType::KCP_HEAD, EK_INVALID, &addr);
                     break;
                 }
+                logger->info("check head size");
+
+#if KC_EVENT_ON_RECV
+                event_->on_recv((uint8_t*)rbuf, rawlen, &addr, addrlen);
+#endif // !KC_EVENT_ON_RECV;
 
                 conv = Kcp::get_conv(rbuf);
                 if (conv != conv_) {
                     event_->on_error(xq::net::ErrType::KC_HOST, EK_CONV, &addr);
                     break;
                 }
+                logger->info("check conv");
 
                 std::string remote = xq::net::addr2str(&addr);
                 assert(remote.size() > 0);
@@ -274,19 +294,34 @@ private:
                     event_->on_error(xq::net::ErrType::KC_HOST, EK_UNKNOWN_HOST, &remote);
                     break;
                 }
+                logger->info("check remote");
 
                 host = hosts_[remote];
-                if (host->input((uint8_t*)rbuf, rawlen, xq::tools::now_milli())) {
-                    continue;
+                n = host->input((uint8_t*)rbuf, rawlen, xq::tools::now_milli());
+                if (n < 0) {
+                    logger->info("ERR: INPUT: " + std::to_string(res));
+                    break;
                 }
+                logger->info("input ...");
 
-                while (n = host->recv(indata, KCP_MAX_DATA_SIZE), n > 0) {
+                do {
+                    n = host->recv(indata, KCP_MAX_DATA_SIZE);
+                    if (n == 0) {
+                        break;
+                    }
+                    else if (n < 0) {
+                        logger->info("recv failed: " + std::to_string(n));
+                        break;
+                    }
+                    logger->info(std::string((char*)indata, 16));
                     event_->on_message(host, indata, n);
-                }
+                } while (1);
+
             } while (0);
         }
 
         delete[] indata;
+        logger->flush();
     }
 #else
     // ------------------------

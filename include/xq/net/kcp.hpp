@@ -14,11 +14,13 @@ namespace net {
 
 // ------------------------------------------------------------------------ Kcp ------------------------------------------------------------------------
 
-constexpr int KCP_WND           = 512;                     // KCP 默认读/写窗口
-constexpr int KCP_MTU           = 1448;                    // KCP TODO: 目前为1448, KCP_MSS为 1448 - 24 = 1424, 未来消息头应该是: 36字节, KCP_MSS: 为1408 > 1392, 1392是因为要给一个PADDING16字节
-constexpr int KCP_HEAD_SIZE     = 24;                      // KCP 消息头长度
+constexpr int KCP_MAX_SEG       = 128;    // must >= max fragment size
+constexpr int KCP_SND_WND       = 32;     // KCP 默认读/写窗口
+constexpr int KCP_RCV_WND       = 128;
+constexpr int KCP_MTU           = 1448;   // KCP TODO: 目前为1448, KCP_MSS为 1448 - 24 = 1424, 未来消息头应该是: 36字节, KCP_MSS: 为1408 > 1392, 1392是因为要给一个PADDING16字节
+constexpr int KCP_HEAD_SIZE     = 24;     // KCP 消息头长度
 constexpr int KCP_MSS           = KCP_MTU - KCP_HEAD_SIZE;
-constexpr int KCP_MAX_DATA_SIZE = KCP_MSS * 128;           // KCP 单包最大字节
+constexpr int KCP_MAX_DATA_SIZE = KCP_MSS * KCP_MAX_SEG;   // KCP 单包最大字节
 constexpr int KCP_TIMEOUT       = 60000;                   // KCP 默认超时(毫秒)
 constexpr int KCP_UPDATE_MS     = 100;                     // KCP UPDATE 间隔(毫秒)
 constexpr int KCP_RTO_MIN       = 100;    // normal min rto
@@ -30,7 +32,6 @@ constexpr int KCP_CMD_WASK      = 83;     // cmd: window probe (ask)
 constexpr int KCP_CMD_WINS      = 84;     // cmd: window size (tell)
 constexpr int KCP_ASK_SEND      = 1;      // need to send IKCP_CMD_WASK
 constexpr int KCP_ASK_TELL      = 2;      // need to send IKCP_CMD_WINS
-constexpr int KCP_MAX_SEG       = 128;    // must >= max fragment size
 constexpr int KCP_ACK_FAST      = 3;
 constexpr int KCP_DEADLINK      = 20;
 constexpr int KCP_THRESH_INIT   = 2;
@@ -91,8 +92,8 @@ public:
         , rx_rttval_(0)
         , rx_srtt_(0)
         , rx_rto_(KCP_RTO_DEF)
-        , snd_wnd_(KCP_WND)
-        , rcv_wnd_(KCP_WND)
+        , snd_wnd_(KCP_SND_WND)
+        , rcv_wnd_(KCP_RCV_WND)
         , rmt_wnd_(1)
         , cwnd_(1)
         , probe_(0)
@@ -172,6 +173,10 @@ public:
         p = _decode32u(p, &seg->una);
         p = _decode32u(p, &seg->len);
 
+        if (seg->len > KCP_MSS) {
+            return -2;
+        }
+
         ::memcpy(seg->data, p, seg->len);
         return KCP_HEAD_SIZE + seg->len;
     }
@@ -204,17 +209,17 @@ public:
         int recover = 0;
 
         if (rcv_que_.empty()) {
-            return -1;
+            return 0;
         }
 
         int peeksize = _peeksize();
 
         if (peeksize < 0) {
-            return -2;
+            return -1;
         }
 
         if (peeksize > (int)len) {
-            return -3;
+            return -2;
         }
 
         if (rcv_que_.size() >= rcv_wnd_) {
@@ -225,8 +230,8 @@ public:
         len = 0;
         for (auto itr = rcv_que_.begin(); itr != rcv_que_.end(); ) {
             seg = *itr;
-             
-            memcpy(buf, seg->data, seg->len);
+
+            ::memcpy(buf, seg->data, seg->len);
             buf += seg->len;
 
             len += seg->len;
@@ -399,9 +404,9 @@ public:
 
             switch (cmd) {
             case KCP_CMD_ACK: {
-                if (current_ >= ts) {
+                if (now_ts >= ts) {
                     // 如果当前时间 >= 分组的发送时间, 重新计算RTO
-                    _update_ack(current_ - ts);
+                    _update_ack(now_ts - ts);
                 }
                 // 将ACK对应的分组移出snd_buf
                 _parse_ack(sn);
@@ -485,7 +490,7 @@ public:
             }
         }
 
-        last_rcv_ts_ = now_ts;
+        current_ = last_rcv_ts_ = now_ts;
         return 0;
     }
 
@@ -672,7 +677,6 @@ public:
                 }
 
                 if (segment->xmit >= KCP_DEADLINK) {
-                    assert(0 && "################# XMIT ################");
                     state_ = -1;
                     return -1;
                 }
@@ -956,10 +960,16 @@ private:
         }
         else {
             long delta = rtt - rx_srtt_;
-            if (delta < 0) delta = -delta;
+            if (delta < 0) {
+                delta = -delta;
+            }
+
             rx_rttval_ = (3 * rx_rttval_ + delta) / 4;
             rx_srtt_ = (7 * rx_srtt_ + rtt) / 8;
-            if (rx_srtt_ < 1) rx_srtt_ = 1;
+
+            if (rx_srtt_ < 1) {
+                rx_srtt_ = 1;
+            }
         }
         rto = rx_srtt_ + _imax_(interval_, 4 * rx_rttval_);
         rx_rto_ = _ibound_(KCP_RTO_MIN, rto, KCP_RTO_MAX);

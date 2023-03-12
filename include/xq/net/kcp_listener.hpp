@@ -294,14 +294,6 @@ public:
     // 析构函数
     // ========================
     ~KcpListener() {
-//#ifndef WIN32
-//        for (auto &msg: msgs_) {
-//            iovec *iov = msg.msg_hdr.msg_iov;
-//            delete[] (uint8_t*)iov[0].iov_base;
-//            delete[] iov;
-//        }
-//#endif // WIN32
-
         for (auto &q : rques_) {
             Seg* segs[128];
             int n;
@@ -432,45 +424,12 @@ private:
         , state_(State::Stopped)
         , ufd_(INVALID_SOCKET)
         , host_(host)
-        , event_(new TEvent)
-        /*, msgs_len_(0)*/ {
-//#ifndef WIN32
-//        for (size_t i = 0; i < IO_MSG_SIZE; i++) {
-//            msgs_[i].msg_hdr.msg_control = nullptr;
-//            msgs_[i].msg_hdr.msg_controllen = 0;
-//            msgs_[i].msg_hdr.msg_flags = 0;
-//            msgs_[i].msg_hdr.msg_name = nullptr;
-//            msgs_[i].msg_hdr.msg_namelen = 0;
-//            iovec *iov = new iovec[1];
-//            iov[0].iov_base = new uint8_t[IO_RBUF_SIZE];
-//            iov[0].iov_len = IO_RBUF_SIZE;
-//            msgs_[i].msg_hdr.msg_iov = iov;
-//            msgs_[i].msg_hdr.msg_iovlen = 1;
-//            msgs_[i].msg_len = 0;
-//        }
-//#endif // WIN32
-
+        , event_(new TEvent) {
         for (size_t i = 0, n = std::thread::hardware_concurrency(); i < n; i++) {
             rques_.emplace_back(new Queue(2048));
         }
     }
 
-
-    // ------------------------
-    // 发送数据, 该方法只在Linux平台下有效
-    // ------------------------
-//    void _sendmsgs() {
-//#ifndef WIN32
-//        int len = msgs_len_;
-//        if (len > 0) {
-//            int n = ::sendmmsg(ufd_, msgs_, len, 0);
-//            if (n < 0) {
-//                event_->on_error(xq::net::ErrType::IO_SEND, error(), nullptr);
-//            }
-//            msgs_len_ = 0;
-//        }
-//#endif // !WIN32
-//    }
 
     // ------------------------
     // kcp output
@@ -546,7 +505,7 @@ private:
                 }
 
 #if (KL_EVENT_ON_RECV == 1)
-                if (event_->on_recv(seg) < 0) {
+                if (event_->on_recv(seg->data, rawlen, &seg->addr, seg->addrlen) < 0) {
                     break;
                 }
 #endif // KL_EVENT_ON_RECV
@@ -593,41 +552,6 @@ private:
 
 
 #else
-    // ------------------------
-    // Linux KCP output
-    //    将数据添加到mmsghdr缓冲区, 当mmsghdr缓冲区满时调用底层方法
-    // ------------------------
-//    static int output(const uint8_t* raw, size_t len, void* user) {
-//        assert(len > 0 && (size_t)len <= KCP_MTU);
-//
-//        Sess*        sess = (Sess*)user;
-//        KcpListener* l    = sess->listener_;
-//        if (::sendto(l->ufd_, raw, len, 0, &sess->raddr_, sess->raddrlen_) < 0) {
-//            std::printf("sendto failed: %d\n", error());
-//        }
-//
-//        if (l->msgs_len_ == IO_MSG_SIZE / 2) {
-//            l->_sendmsgs();
-//        }
-//
-//        size_t       i    = l->msgs_len_++;
-//        msghdr*      msg  = &l->msgs_[i].msg_hdr;
-//
-//        msg->msg_name           = &sess->raddr_;
-//        msg->msg_namelen        = sess->raddrlen_;
-//        msg->msg_iov[0].iov_len = len;
-//
-//#if (KL_EVENT_ON_SEND == 1)
-//        l->event_->on_send((const uint8_t*)raw, len, &sess->raddr_, sess->raddrlen_);
-//#endif // KL_EVENT_ON_SEND;
-//        ::memcpy(msg->msg_iov[0].iov_base, raw, len);
-//
-//        if (l->msgs_len_ == IO_MSG_SIZE / 2) {
-//            l->_sendmsgs();
-//        }
-//
-//        return 0;
-//    }
 
 
     // ------------------------
@@ -709,7 +633,7 @@ private:
                     seg->addrlen = msg->msg_hdr.msg_namelen;
 
 #if (KL_EVENT_ON_RECV == 1)
-                    if (event_->on_recv(seg) < 0) {
+                    if (event_->on_recv(seg->data, rawlen, &seg->addr, seg->addrlen) < 0) {
                         continue;
                     }
 #endif // KL_EVENT_ON_RECV;
@@ -840,11 +764,21 @@ private:
                 }
 
                 // Step 3: 获取消息包
-                while (n = sess->_recv(rbuf, KCP_MAX_DATA_SIZE), n > 0) {
+                do {
+                    n = sess->_recv(rbuf, KCP_MAX_DATA_SIZE);
+                    if (n == 0) {
+                        break;
+                    }
+                    else if (n < 0) {
+                        event_->on_error(xq::net::ErrType::KCP_RECV, n, sess);
+                        sess->_bad();
+                        break;
+                    }
+
                     if (event_->on_message(sess, rbuf, n) < 0) {
                         sess->_bad();
                     }
-                }
+                } while (1);
                 std::this_thread::yield();
             }
 
@@ -867,11 +801,6 @@ private:
     std::vector<Queue*>             rques_;          // read data queue
     xq::tools::Map<uint32_t, Sess*> sessions_;       // 会话
     TEvent*                         event_;          // 事件实例
-
-//#ifndef WIN32
-//    mmsghdr msgs_[IO_MSG_SIZE];
-//#endif
-//    std::atomic<int> msgs_len_;
 }; // class KcpListener;
 
 

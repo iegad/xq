@@ -13,6 +13,8 @@
 #endif
 
 #include <csignal>
+#include <spdlog/spdlog.h>
+#include <spdlog/sinks/rotating_file_sink.h>
 
 
 class EchoEvent {
@@ -57,24 +59,48 @@ public:
         std::printf("[%s] [sessions: %d] has stopped.\n", listener->host().c_str(), listener->conns());
     }
 
-    int on_recv(KcpSeg* data) {
+    int on_recv(const uint8_t *raw, size_t rawlen, const sockaddr*, socklen_t) {
+        xq::net::Kcp::Segment* seg = xq::net::Kcp::Segment::pool()->get();
+        const uint8_t* p = raw;
+
+        while (rawlen > 0) {
+            int n = xq::net::Kcp::decode(p, rawlen, seg);
+            raw += n;
+            rawlen -= n;
+            rl_->info("RCV-> " + seg->to_string());
+        }
+
+        xq::net::Kcp::Segment::pool()->put(seg);
         return 0;
     }
 
-    void on_send(const uint8_t* data, size_t datalen, const sockaddr*, socklen_t) {
-        int nleft = datalen;
-        const uint8_t* p = data;
-
-        std::printf("---------------------------------------\n");
+    void on_send(const uint8_t* raw, size_t rawlen, const sockaddr*, socklen_t) {
         xq::net::Kcp::Segment* seg = xq::net::Kcp::Segment::pool()->get();
-        while (nleft > 0) {
-            int n = xq::net::Kcp::decode(p, nleft, seg);
-            p += n;
-            nleft -= n;
-            std::printf("%s\n", seg->to_string().c_str());
+        const uint8_t* p = raw;
+
+        while (rawlen > 0) {
+            int n = xq::net::Kcp::decode(p, rawlen, seg);
+            raw += n;
+            rawlen -= n;
+            tl_->info("SND-> " + seg->to_string());
         }
+
         xq::net::Kcp::Segment::pool()->put(seg);
     }
+
+
+    EchoEvent()
+        : rl_(spdlog::rotating_logger_st("recv", SPDLOG_FILENAME_T("recv.txt"), 1024 * 1024 * 1024, 0))
+        , tl_(spdlog::rotating_logger_st("send", SPDLOG_FILENAME_T("send.txt"), 1024 * 1024 * 1024, 0))
+    {}
+
+    ~EchoEvent() {
+        rl_->flush();
+    }
+
+private:
+    std::shared_ptr<spdlog::logger> rl_;
+    std::shared_ptr<spdlog::logger> tl_;
 };
 
 
