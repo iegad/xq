@@ -92,8 +92,6 @@ public:
         , rx_rttval_(0)
         , rx_srtt_(0)
         , rx_rto_(KCP_RTO_DEF)
-        , snd_wnd_(KCP_SND_WND)
-        , rcv_wnd_(KCP_RCV_WND)
         , rmt_wnd_(1)
         , cwnd_(1)
         , probe_(0)
@@ -208,19 +206,11 @@ public:
         Segment* seg;
         int recover = 0;
 
-        if (rcv_que_.empty()) {
+        if (_check_rcv_que()) {
             return 0;
         }
 
-        int peeksize = _peeksize();
-
-        if (peeksize < 0) {
-            return -1;
-        }
-
-        assert(peeksize <= (int)len);
-
-        if (rcv_que_.size() >= rcv_wnd_) {
+        if (rcv_que_.size() >= KCP_RCV_WND) {
             recover = 1;
         }
 
@@ -243,13 +233,15 @@ public:
             }
         }
 
-        assert((int)len == peeksize);
+        if (len > KCP_MAX_DATA_SIZE) {
+            return -1;
+        }
 
         // move available data from rcv_buf -> rcv_queue
         while (!rcv_buf_.empty()) {
             auto itr = rcv_buf_.begin();
             seg = itr->second;
-            if (seg->sn == rcv_nxt_ && rcv_que_.size() < rcv_wnd_) {
+            if (seg->sn == rcv_nxt_ && rcv_que_.size() < KCP_RCV_WND) {
                 rcv_buf_.erase(itr);
                 rcv_que_.emplace_back(seg);
                 rcv_nxt_++;
@@ -260,7 +252,7 @@ public:
         }
 
         // fast recover
-        if (rcv_que_.size() < rcv_wnd_ && recover) {
+        if (rcv_que_.size() < KCP_RCV_WND && recover) {
             // ready to send back IKCP_CMD_WINS in ikcp_flush
             // tell remote my window size
             probe_ |= KCP_ASK_TELL;
@@ -420,7 +412,7 @@ public:
             } break;
 
             case KCP_CMD_PUSH: {
-                if (sn < rcv_nxt_ + rcv_wnd_) {
+                if (sn < rcv_nxt_ + KCP_RCV_WND) {
                     acklist_.emplace_back(std::make_pair(sn, ts));
                     if (sn >= rcv_nxt_) {
                         seg = Segment::pool()->get();
@@ -588,7 +580,7 @@ public:
         probe_ = 0;
 
         // calculate window size
-        uint32_t cwnd = _imin_(snd_wnd_, rmt_wnd_);
+        uint32_t cwnd = _imin_(KCP_SND_WND, rmt_wnd_);
         if (nocwnd_ == 0) cwnd = _imin_(cwnd_, cwnd);
 
         // move data from snd_queue to snd_buf
@@ -913,18 +905,7 @@ private:
 
 
     int _wnd_unused() {
-        return rcv_que_.size() < rcv_wnd_ ? rcv_wnd_ - rcv_que_.size() : 0;
-    }
-
-
-    int _wndsize(int sndwnd, int rcvwnd) {
-        if (sndwnd > 0) {
-            snd_wnd_ = sndwnd;
-        }
-        if (rcvwnd > 0) {   // must >= max fragment size
-            rcv_wnd_ = _imax_(rcvwnd, KCP_MAX_SEG);
-        }
-        return 0;
+        return rcv_que_.size() < KCP_RCV_WND ? KCP_RCV_WND - rcv_que_.size() : 0;
     }
 
 
@@ -989,7 +970,7 @@ private:
     void _parse_data(Segment* newseg) {
         uint32_t sn = newseg->sn;
 
-        if (sn >= rcv_nxt_ + rcv_wnd_ || sn < rcv_nxt_) {
+        if (sn >= rcv_nxt_ + KCP_RCV_WND || sn < rcv_nxt_) {
             Segment::pool()->put(newseg);
             return;
         }
@@ -1006,7 +987,7 @@ private:
         while (!rcv_buf_.empty()) {
             auto itr = rcv_buf_.begin();
             Segment* seg = itr->second;
-            if (seg->sn == rcv_nxt_ && rcv_que_.size() < rcv_wnd_) {
+            if (seg->sn == rcv_nxt_ && rcv_que_.size() < KCP_RCV_WND) {
                 rcv_buf_.erase(itr);
                 rcv_que_.emplace_back(seg);
                 rcv_nxt_++;
@@ -1035,32 +1016,22 @@ private:
     }
 
 
-    int _peeksize() {
-        Segment* seg;
-        int length = 0;
-
+    // 检查rcv_que中是否有一条完整的数据包
+    int _check_rcv_que() {
         if (rcv_que_.empty()) {
             return -1;
         }
 
-        seg = rcv_que_.front();
+        Segment* seg = rcv_que_.front();
         if (seg->frg == 0) {
-            return seg->len;
+            return 0;
         }
 
         if (rcv_que_.size() < (size_t)(seg->frg + 1)) {
             return -1;
         }
 
-        for (auto itr: rcv_que_) {
-            seg = itr;
-            length += seg->len;
-            if (seg->frg == 0) {
-                break;
-            }
-        }
-
-        return length;
+        return 0;
     }
 
 
@@ -1069,7 +1040,7 @@ private:
     uint32_t snd_una_, snd_nxt_, rcv_nxt_;
     uint32_t ssthresh_;
     int32_t rx_rttval_, rx_srtt_, rx_rto_;
-    uint32_t snd_wnd_, rcv_wnd_, rmt_wnd_, cwnd_, probe_;
+    uint32_t rmt_wnd_, cwnd_, probe_;
     uint32_t current_, interval_, ts_flush_, xmit_;
     uint32_t nodelay_, updated_;
     uint32_t ts_probe_, probe_wait_;
