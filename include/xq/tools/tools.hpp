@@ -59,36 +59,36 @@ inline int64_t now_nano() {
 
 // ---------------------------------------------------------------------------- 字节序 ----------------------------------------------------------------------------
 
-#ifndef IWORDS_BIG_ENDIAN
+#ifndef X_BIG_ENDIAN
 #ifdef _BIG_ENDIAN_
 #if _BIG_ENDIAN_
-#define IWORDS_BIG_ENDIAN 1
+#define X_BIG_ENDIAN 1
 #endif
 #endif
-#ifndef IWORDS_BIG_ENDIAN
+#ifndef X_BIG_ENDIAN
 #if defined(__hppa__) || \
             defined(__m68k__) || defined(mc68000) || defined(_M_M68K) || \
             (defined(__MIPS__) && defined(__MIPSEB__)) || \
             defined(__ppc__) || defined(__POWERPC__) || defined(_M_PPC) || \
             defined(__sparc__) || defined(__powerpc__) || \
             defined(__mc68000__) || defined(__s390x__) || defined(__s390__)
-#define IWORDS_BIG_ENDIAN 1
+#define X_BIG_ENDIAN 1
 #endif
 #endif
-#ifndef IWORDS_BIG_ENDIAN
-#define IWORDS_BIG_ENDIAN  0
+#ifndef X_BIG_ENDIAN
+#define X_BIG_ENDIAN  0
 #endif
 #endif
 
-#ifndef IWORDS_MUST_ALIGN
+#ifndef X_MUST_ALIGN
 #if defined(__i386__) || defined(__i386) || defined(_i386_)
-#define IWORDS_MUST_ALIGN 0
+#define X_MUST_ALIGN 0
 #elif defined(_M_IX86) || defined(_X86_) || defined(__x86_64__)
-#define IWORDS_MUST_ALIGN 0
+#define X_MUST_ALIGN 0
 #elif defined(__amd64) || defined(__amd64__)
-#define IWORDS_MUST_ALIGN 0
+#define X_MUST_ALIGN 0
 #else
-#define IWORDS_MUST_ALIGN 1
+#define X_MUST_ALIGN 1
 #endif
 #endif
 
@@ -124,7 +124,7 @@ inline uint64_t __rvs_u64(uint64_t v) {
 /// </summary>
 /// <returns></returns>
 inline bool is_le() {
-    return !IWORDS_BIG_ENDIAN;
+    return !X_BIG_ENDIAN;
 }
 
 /// <summary>
@@ -132,7 +132,7 @@ inline bool is_le() {
 /// </summary>
 /// <returns></returns>
 inline bool is_be() {
-    return IWORDS_BIG_ENDIAN;
+    return X_BIG_ENDIAN;
 }
 
 /// <summary>
@@ -141,11 +141,11 @@ inline bool is_be() {
 /// <param name="v"></param>
 /// <returns></returns>
 inline uint16_t to_le_u16(uint16_t v) {
-#ifdef IWORD_BIG_ENDIAN
+#if X_BIG_ENDIAN
     return __rvs_u16(v);
 #else
     return v;
-#endif // IWORD_BIG_ENDIAN
+#endif // X_BIG_ENDIAN
 
 }
 
@@ -155,11 +155,11 @@ inline uint16_t to_le_u16(uint16_t v) {
 /// <param name="v"></param>
 /// <returns></returns>
 inline uint16_t to_be_u16(uint16_t v) {
-#ifdef IWORD_BIG_ENDIAN
+#if X_BIG_ENDIAN
     return v;
 #else
     return __rvs_u16(v);
-#endif // IWORD_BIG_ENDIAN
+#endif // X_BIG_ENDIAN
 }
 
 /// <summary>
@@ -168,11 +168,11 @@ inline uint16_t to_be_u16(uint16_t v) {
 /// <param name="v"></param>
 /// <returns></returns>
 inline uint32_t to_le_u32(uint32_t v) {
-#ifdef IWORD_BIG_ENDIAN
+#if X_BIG_ENDIAN
     return __rvs_u32(v);
 #else
     return v;
-#endif // IWORD_BIG_ENDIAN
+#endif // X_BIG_ENDIAN
 }
 
 /// <summary>
@@ -181,11 +181,11 @@ inline uint32_t to_le_u32(uint32_t v) {
 /// <param name="v"></param>
 /// <returns></returns>
 inline uint32_t to_be_u32(uint32_t v) {
-#ifdef IWORD_BIG_ENDIAN
+#if X_BIG_ENDIAN
     return v;
 #else
     return __rvs_u32(v);
-#endif // IWORD_BIG_ENDIAN
+#endif // X_BIG_ENDIAN
 }
 
 /// <summary>
@@ -194,11 +194,11 @@ inline uint32_t to_be_u32(uint32_t v) {
 /// <param name="v"></param>
 /// <returns></returns>
 inline uint64_t to_le_u64(uint64_t v) {
-#ifdef IWORD_BIG_ENDIAN
+#if X_BIG_ENDIAN
     return __rvs_u64(v);
 #else
     return v;
-#endif // IWORD_BIG_ENDIAN
+#endif // X_BIG_ENDIAN
 }
 
 /// <summary>
@@ -207,11 +207,11 @@ inline uint64_t to_le_u64(uint64_t v) {
 /// <param name="v"></param>
 /// <returns></returns>
 inline uint64_t to_be_u64(uint64_t v) {
-#ifdef IWORD_BIG_ENDIAN
+#if X_BIG_ENDIAN
     return v;
 #else
     return __rvs_u64(v);
-#endif // IWORD_BIG_ENDIAN
+#endif // X_BIG_ENDIAN
 }
 
 /// <summary>

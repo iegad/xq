@@ -35,15 +35,6 @@ namespace net {
 
 // ------------------------------------------------------------------------ 常量 ------------------------------------------------------------------------
 
-
-constexpr size_t   KCP_WND           = 512;                             // KCP 默认读/写窗口
-constexpr size_t   KCP_MTU           = 1448;                            // KCP TODO: 目前为1448, KCP_MSS为 1448 - 24 = 1424, 未来消息头应该是: 36字节, KCP_MSS: 为1408 > 1392, 1392是因为要给一个PADDING16字节
-constexpr size_t   KCP_HEAD_SIZE     = 24;                              // KCP 消息头长度
-constexpr size_t   KCP_MAX_DATA_SIZE = (KCP_MTU - KCP_HEAD_SIZE) * 128; // KCP 单包最大字节
-constexpr uint32_t KCP_TIMEOUT       = 60000;                           // KCP 默认超时(毫秒)
-constexpr int64_t  KCP_UPDATE_MS     = 10;                              // KCP UPDATE 间隔(毫秒)
-
-
 constexpr int      IO_RBUF_SIZE      = 1500;                            // 读缓冲区大小
 constexpr int      IO_MSG_SIZE       = 256;                             // recvmmsg mmsghdr 大小
 constexpr int      IO_TIMEOUT        = 5000;                            // IO 读超时 5000毫秒
@@ -68,6 +59,7 @@ enum class ErrType {
 
     KCP_HEAD,    // KCP 消息头错误
     KCP_INPUT,   // KCP input 失败
+    KCP_RECV,
 
     KL_INVALID_CONV, // KCP conv 无效
 

@@ -1,16 +1,24 @@
-#include "xq/net/net.hpp"
+#define KC_EVENT_ON_SEND 0
+#define KC_EVENT_ON_RECV 0
+
 #include "xq/tools/tools.hpp"
 #include "xq/net/kcp_conn.hpp"
 #include <spdlog/spdlog.h>
 #include <spdlog/sinks/rotating_file_sink.h>
+#include <csignal>
 
 #ifndef WIN32
 #include <jemalloc/jemalloc.h>
 #endif
 
+class EchoEvent;
+
 const std::string host = "1.15.81.179:6688";
-//const std::string host = "192.168.0.101:6688";
-constexpr int NTIMES = 43200000;
+constexpr int NTIMES = 200000;
+
+static std::atomic<int> ncount(0);
+static xq::net::KcpConn<EchoEvent>::Ptr conn;
+static int64_t beg = 0;
 
 class EchoEvent {
 public:
@@ -18,9 +26,14 @@ public:
 	typedef KcpConn::Host KcpHost;
 
 	int on_message(KcpHost* host, const uint8_t* data, size_t datalen) {
-		std::string tmp = std::string((const char*)data, datalen);
-		spdlog::info(tmp);
-		logger_->info(tmp);
+		std::string tmp((const char*)data, datalen);
+		rl_->info(tmp);
+		std::printf("%s\n", tmp.c_str());
+		ncount++;
+		if (ncount == NTIMES) {
+			std::printf("%d packages, takes: %ld milliseconds\n", NTIMES, xq::tools::now_milli() - beg);
+			conn->stop();
+		}
 		return 0;
 	}
 
@@ -29,26 +42,51 @@ public:
 	}
 
 
-	int on_recv(uint8_t* raw, size_t rawlen, const sockaddr* addr, socklen_t addrlen) {
+	int on_recv(const uint8_t* raw, size_t rawlen, const sockaddr*, socklen_t) {
+		xq::net::Kcp::Segment* seg = xq::net::Kcp::Segment::pool()->get();
+		const uint8_t* p = raw;
+
+		while (rawlen > 0) {
+			int n = xq::net::Kcp::decode(p, rawlen, seg);
+			raw += n;
+			rawlen -= n;
+			rl_->info("RCV-> " + seg->to_string());
+		}
+
+		xq::net::Kcp::Segment::pool()->put(seg);
 		return 0;
 	}
 
 
-	void on_send(const uint8_t* raw, size_t rawlen, const sockaddr* addr, socklen_t addrlen) {
+	void on_send(const uint8_t* raw, size_t rawlen, const sockaddr*, socklen_t) {
+		xq::net::Kcp::Segment* seg = xq::net::Kcp::Segment::pool()->get();
+		const uint8_t* p = raw;
 
+		while (rawlen > 0) {
+			int n = xq::net::Kcp::decode(p, rawlen, seg);
+			raw += n;
+			rawlen -= n;
+			tl_->info("SND-> " + seg->to_string());
+		}
+
+		xq::net::Kcp::Segment::pool()->put(seg);
 	}
 
 	EchoEvent() 
-		: logger_(spdlog::rotating_logger_st("logger", SPDLOG_FILENAME_T("log.txt"), 1024 * 1024 * 1024 * 2, 0))
+		: rl_(spdlog::rotating_logger_st("recv", SPDLOG_FILENAME_T("recv.txt"), 1024 * 1024 * 1024, 0))
+		, tl_(spdlog::rotating_logger_st("send", SPDLOG_FILENAME_T("send.txt"), 1024 * 1024 * 1024, 0))
 	{}
 
-	~EchoEvent() {}
+	~EchoEvent() {
+		rl_->flush();
+	}
 
 private:
-	std::shared_ptr<spdlog::logger> logger_;
+	std::shared_ptr<spdlog::logger> rl_;
+	std::shared_ptr<spdlog::logger> tl_;
 };
 
-EchoEvent::KcpConn::Ptr conn;
+
 
 void worker() {
 	std::this_thread::sleep_for(std::chrono::seconds(1));
@@ -56,15 +94,20 @@ void worker() {
 	char* buf = new char[xq::net::KCP_MAX_DATA_SIZE];
 	::memset(buf, 0, xq::net::KCP_MAX_DATA_SIZE);
 
-	int i = 0;
-	for (i = 0; i < NTIMES; i++) {
-		std::this_thread::sleep_for(std::chrono::milliseconds(240));
-		sprintf(buf, "---- %d ---- Hello world!!!", i);
+	beg = xq::tools::now_milli();
+	for (int i = 0; i < NTIMES;) {
+		sprintf(buf, "---- %d ---- 1234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890123456789012345678901234567890", i);
 		
 		int n = conn->send(host, (uint8_t *)buf, strlen(buf));
 		if (n < 0) {
 			std::printf("conn->send failed: %d\n", n);
-			throw new std::exception("conn->send failed");
+			exit(1);
+		}
+		else if (n == 1) {
+			std::this_thread::sleep_for(std::chrono::milliseconds(xq::net::KCP_UPDATE_MS));
+		}
+		else {
+			i++;
 		}
 		std::this_thread::yield();
 	}
@@ -73,6 +116,12 @@ void worker() {
 }
 
 #include "xq/third/AES.h"
+
+void signal_handler(int signal) {
+	if (signal == SIGINT && conn) {
+		conn->stop();
+	}
+}
 
 int
 main(int argc, char** argv) {
@@ -90,9 +139,12 @@ main(int argc, char** argv) {
 #endif // _WIN32
 	std::vector<std::string> hosts{host};
 	conn = EchoEvent::KcpConn::create(conv, ":0", hosts);
+
+	std::signal(SIGINT, signal_handler);
+
 	std::thread(worker).detach();
 	conn->run();
-
+	std::printf(">>> DONE...!!!\n");
 #ifdef _WIN32
 	WSACleanup();
 #endif // _WIN32

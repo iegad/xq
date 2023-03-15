@@ -10,11 +10,11 @@ set(THREADS_PREFER_PTHREAD_FLAG ON)
 find_package(Threads REQUIRED)
 
 
-INCLUDE_DIRECTORIES(${main_SOURCE_DIR}/src)
+INCLUDE_DIRECTORIES(${main_SOURCE_DIR}/include)
 
 target_link_libraries(${PROJECT_NAME} PUBLIC Threads::Threads xq)
 IF (CMAKE_SYSTEM_NAME MATCHES "Linux")
-    target_link_libraries(${PROJECT_NAME} PUBLIC libjemalloc.a dl)
+    target_link_libraries(${PROJECT_NAME} PUBLIC libjemalloc.a libspdlog.a dl)
     link_directories("/usr/local/lib")
     include_directories("/user/local/include")
     set(CMAKE_CXX_FLAGS "--std=gnu++2a")
