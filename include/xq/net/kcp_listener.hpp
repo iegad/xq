@@ -73,7 +73,6 @@ public:
         : kcp_(nullptr)
         , que_num_(~0)
         , time_ms_(0)
-        , last_ms_(0)
         , raddr_({0, {0}})
         , raddrlen_(sizeof(raddr_))
         , listener_(nullptr) {}
@@ -100,11 +99,6 @@ public:
     }
 
 
-    int64_t last_ms() const {
-        return last_ms_;
-    }
-
-
     int64_t time_ms() const {
         return time_ms_;
     }
@@ -114,7 +108,7 @@ public:
     // 获取kcp conv 
     // ========================
     uint32_t conv() const {
-        return kcp_->get_conv();
+        return kcp_->conv();
     }
 
 
@@ -129,7 +123,11 @@ public:
     // ========================
     int send(const uint8_t* buf, int len) {
         std::lock_guard<LockType> lk(kcp_mtx_);
-        return kcp_->send(buf, len);
+        int n = kcp_->send(buf, len);
+        if (n == 0) {
+            kcp_->flush();
+        }
+        return n;
     }
 
 
@@ -152,10 +150,9 @@ private:
     // @que_num:  工作队列number
     // @output:   KcpListener::output
     // ------------------------
-    void _set(uint32_t conv, KcpListener<TEvent>* listener, sockaddr* addr, socklen_t addrlen, int64_t now_ms, uint32_t que_num, int (*output)(const char* buf, int len, ikcpcb* kcp, void* user)) {
+    void _set(uint32_t conv, KcpListener<TEvent>* listener, sockaddr* addr, socklen_t addrlen, int64_t now_ms, uint32_t que_num, int (*output)(const uint8_t* buf, size_t len, void* user)) {
         if (!kcp_) {
-            kcp_ = new Kcp(conv, this);
-            kcp_->set_output(output);
+            kcp_ = new Kcp(conv, this, output);
         }
         else {
             kcp_->reset(conv);
@@ -169,16 +166,22 @@ private:
         raddrlen_ = addrlen;
         remote_.clear();
         que_num_ = que_num;
-        last_ms_ = time_ms_ = now_ms;
+        time_ms_ = now_ms;
     }
 
 
     void _reset(sockaddr* addr, socklen_t addrlen, int64_t now_ms) {
-        kcp_->reset(kcp_->get_conv());
+        kcp_->reset(kcp_->conv());
         ::memcpy(&raddr_, addr, addrlen);
         raddrlen_ = addrlen;
         remote_.clear();
-        last_ms_ = time_ms_ = now_ms;
+        time_ms_ = now_ms;
+    }
+
+
+    void _bad() {
+        std::lock_guard<LockType> lk(kcp_mtx_);
+        kcp_->bad();
     }
 
 
@@ -190,9 +193,9 @@ private:
     // 
     // @return: 成功返回0, 否则返回非0.
     // ------------------------
-    int _input(const uint8_t* raw, size_t size) {
+    int _input(const uint8_t* raw, size_t size, int64_t now_ms) {
         std::lock_guard<LockType> lk(kcp_mtx_);
-        return kcp_->input(raw, size);
+        return kcp_->input(raw, size, now_ms - time_ms_);
     }
 
 
@@ -215,28 +218,19 @@ private:
     // ------------------------
     // Kcp udpate
     //
-    // @now_ms: 刷新时间(毫秒), 并非当前时间. 是Kcp的相应时间: now_ms - connection_time .
+    // @now_ms: 刷新时间(毫秒), 并非当前时间. 是Kcp的相应时间: now_ms - connection_time
     //
     // @return: 成功返回 0, 连接超时返回 -1.
     // ------------------------
     int _update(int64_t now_ms) {
-        int64_t last_ms = last_ms_;
-
-        if (last_ms == 0 || now_ms - last_ms > KCP_TIMEOUT) {
-            return -1;
-        }
-
         std::lock_guard<LockType> lk(kcp_mtx_);
-        kcp_->update((uint32_t)(now_ms - time_ms_));
-
-        return 0;
+        return kcp_->update((uint32_t)(now_ms - time_ms_));
     }
 
 
     Kcp*                 kcp_;       // KCP实例
     uint32_t             que_num_;   // 当前工作队列号
     int64_t              time_ms_;   // 激活时间
-    std::atomic<int64_t> last_ms_; // 会话有效时间
     sockaddr             raddr_;     // 对端地址
     socklen_t            raddrlen_;
     KcpListener<TEvent>* listener_;
@@ -300,14 +294,6 @@ public:
     // 析构函数
     // ========================
     ~KcpListener() {
-#ifndef WIN32
-        for (auto &msg: msgs_) {
-            iovec *iov = msg.msg_hdr.msg_iov;
-            delete[] (uint8_t*)iov[0].iov_base;
-            delete[] iov;
-        }
-#endif
-
         for (auto &q : rques_) {
             Seg* segs[128];
             int n;
@@ -352,7 +338,7 @@ public:
         if (event_->on_start(this) < 0) {
             return;
         }
-#endif
+#endif // KL_EVENT_ON_START;
 
         // Step 1: 创建 udp 监听套接字
         ufd_ = udp_bind(host_);
@@ -398,7 +384,6 @@ public:
         }
 
         // Step 9: 关闭UDP监听
-        close(ufd_);
         ufd_ = INVALID_SOCKET;
 
         Sess** ss = new Sess*[MAX_CONV];
@@ -413,7 +398,7 @@ public:
         state_ = State::Stopped;
 #if (KL_EVENT_ON_STOP == 1)
         event_->on_stop(this);
-#endif
+#endif // KL_EVENT_ON_STOP;
     }
 
 
@@ -421,7 +406,8 @@ public:
     // 停止服务
     // ========================
     void stop() {
-        if (state_ == State::Running) {
+        if (state_ == State::Running && ufd_ != INVALID_SOCKET) {
+            close(ufd_);
             state_ = State::Stopping;
         }
     }
@@ -438,24 +424,7 @@ private:
         , state_(State::Stopped)
         , ufd_(INVALID_SOCKET)
         , host_(host)
-        , event_(new TEvent)
-        , msgs_len_(0) {
-#ifndef WIN32
-        for (size_t i = 0; i < IO_MSG_SIZE; i++) {
-            msgs_[i].msg_hdr.msg_control = nullptr;
-            msgs_[i].msg_hdr.msg_controllen = 0;
-            msgs_[i].msg_hdr.msg_flags = 0;
-            msgs_[i].msg_hdr.msg_name = nullptr;
-            msgs_[i].msg_hdr.msg_namelen = 0;
-            iovec *iov = new iovec[1];
-            iov[0].iov_base = new uint8_t[IO_RBUF_SIZE];
-            iov[0].iov_len = IO_RBUF_SIZE;
-            msgs_[i].msg_hdr.msg_iov = iov;
-            msgs_[i].msg_hdr.msg_iovlen = 1;
-            msgs_[i].msg_len = 0;
-        }
-#endif
-
+        , event_(new TEvent) {
         for (size_t i = 0, n = std::thread::hardware_concurrency(); i < n; i++) {
             rques_.emplace_back(new Queue(2048));
         }
@@ -463,28 +432,9 @@ private:
 
 
     // ------------------------
-    // 发送数据, 该方法只在Linux平台下有效
+    // kcp output
     // ------------------------
-    void _sendmsgs() {
-#ifndef WIN32
-        int len = msgs_len_;
-        if (len > 0) {
-            int n = ::sendmmsg(ufd_, msgs_, len, 0);
-            if (n < 0) {
-                event_->on_error(xq::net::ErrType::IO_SEND, error(), nullptr);
-            }
-            msgs_len_ = 0;
-        }
-#endif // !WIN32
-    }
-
-
-#ifdef WIN32
-    // ------------------------
-    // windows kcp output
-    //    windows 平台下, 直接发送数据
-    // ------------------------
-    static int output(const char* raw, int len, IKCPCB*, void* user) {
+    static int output(const uint8_t* raw, size_t len, void* user) {
         assert(len > 0 && len <= KCP_MTU);
 
         Sess* sess = (Sess*)user;
@@ -492,14 +442,17 @@ private:
 
 #if (KL_EVENT_ON_SEND == 1)
         l->event_->on_send((const uint8_t*)raw, len, &sess->raddr_, sess->raddrlen_);
-#endif
+#endif // KL_EVENT_ON_SEND
 
-        if (::sendto(l->ufd_, raw, len, 0, &sess->raddr_, sess->raddrlen_) < 0) {
+        if (::sendto(l->ufd_, (const char*)raw, len, 0, &sess->raddr_, sess->raddrlen_) < 0) {
             sess->listener_->event_->on_error(xq::net::ErrType::IO_SEND, error(), sess);
         }
 
         return 0;
     }
+
+
+#ifdef WIN32
 
     // ------------------------
     // IO 接收线程
@@ -552,31 +505,35 @@ private:
                 }
 
 #if (KL_EVENT_ON_RECV == 1)
-                if (event_->on_recv(seg) < 0) {
+                if (event_->on_recv(seg->data, rawlen, &seg->addr, seg->addrlen) < 0) {
                     break;
                 }
-#endif
+#endif // KL_EVENT_ON_RECV
 
                 now_ms = xq::tools::now_milli();
                 // Step 4: 获取会话
                 if (sessions_.get(conv, sess)) {
                     if (sess->_diff_addr(&seg->addr, seg->addrlen)) {
                         sess->_reset(&seg->addr, seg->addrlen, now_ms);
+
 #if (KL_EVENT_ON_RECONNECTED == 1)
                         if (event_->on_reconnected(sess) < 0) {
                             break;
                         }
-#endif
+#endif // KL_EVENT_ON_RECONNECTED;
+
                     }
                 } else {
                     sess = kcppool->get();
                     sess->_set(conv, this, &seg->addr, seg->addrlen, now_ms, qidx++ % QUE_SIZE, &KcpListener::output);
+
 #if (KL_EVENT_ON_CONNECTED == 1)
                     if (event_->on_connected(sess) < 0) {
                         kcppool->put(sess);
                         break;
                     }
-#endif
+#endif // KL_EVENT_ON_CONNECTED;
+
                     conns_++;
                     assert(sessions_.insert(conv, sess).second);
                 }
@@ -595,33 +552,6 @@ private:
 
 
 #else
-    // ------------------------
-    // Linux KCP output
-    //    将数据添加到mmsghdr缓冲区, 当mmsghdr缓冲区满时调用底层方法
-    // ------------------------
-    static int output(const char* raw, int len, IKCPCB*, void* user) {
-        assert(len > 0 && (size_t)len <= KCP_MTU);
-
-        Sess*        sess = (Sess*)user;
-        KcpListener* l    = sess->listener_;
-        size_t       i    = l->msgs_len_;
-        msghdr*      msg  = &l->msgs_[i].msg_hdr;
-
-        msg->msg_name           = &sess->raddr_;
-        msg->msg_namelen        = sess->raddrlen_;
-        msg->msg_iov[0].iov_len = len;
-
-#if (KL_EVENT_ON_SEND == 1)
-        l->event_->on_send((const uint8_t*)raw, len, &sess->raddr_, sess->raddrlen_);
-#endif
-        ::memcpy(msg->msg_iov[0].iov_base, raw, len);
-
-        if (++l->msgs_len_ == IO_MSG_SIZE) {
-            l->_sendmsgs();
-        }
-
-        return 0;
-    }
 
 
     // ------------------------
@@ -641,7 +571,7 @@ private:
 
         mmsghdr* msg;
         msghdr*  hdr;
-        Sess* sess;
+        Sess*    sess;
         
         Seg*     seg;
         Seg*     segs[IO_MSG_SIZE] = {nullptr};
@@ -672,7 +602,7 @@ private:
             do {
                 if (n < 0) {
                     err = error();
-                    if (err != EAGAIN) {
+                    if (err != EAGAIN && err != EINTR) {
                         event_->on_error(xq::net::ErrType::IO_RECV, err, nullptr);
                     }
                     break;
@@ -706,7 +636,7 @@ private:
                     if (event_->on_recv(seg->data, rawlen, &seg->addr, seg->addrlen) < 0) {
                         continue;
                     }
-#endif
+#endif // KL_EVENT_ON_RECV;
 
                     // Step 4: 获取会话
                     if (sessions_.get(conv, sess)) {
@@ -716,7 +646,7 @@ private:
                             if (event_->on_reconnected(sess) < 0) {
                                 continue;
                             }
-#endif
+#endif // KL_EVENT_ON_RECONNECTED;
                         }
                     } else {
                         sess = Sess::pool()->get();
@@ -727,7 +657,7 @@ private:
                             Sess::pool()->put(sess);
                             continue;
                         }
-#endif
+#endif // KL_EVENT_ON_CONNECTED;
 
                         conns_++;
                         assert(sessions_.insert(conv, sess).second);
@@ -763,9 +693,9 @@ private:
     void _update() {
         typedef Sess* SessPtr;
 
-        constexpr std::chrono::milliseconds INTVAL = std::chrono::milliseconds(KCP_UPDATE_MS / 2);
+        constexpr std::chrono::milliseconds INTVAL = std::chrono::milliseconds(1);
 
-        size_t    i, n, nerase;
+        uint32_t  i, n, nerase;
         int64_t   now_ms;
         SessPtr   sess;
         uint32_t* erase_keys  = new uint32_t[MAX_CONV];
@@ -776,8 +706,10 @@ private:
             nerase = 0;
             std::this_thread::sleep_for(INTVAL);
             
+            
             now_ms = xq::tools::now_milli();
-            n      = sessions_.get_all_vals(active_sess, MAX_CONV);
+            n = sessions_.get_all_vals(active_sess, MAX_CONV);
+            assert(n < MAX_CONV);
 
             for (i = 0; i < n; i++) {
                 sess = active_sess[i];
@@ -786,11 +718,11 @@ private:
                     erase_keys[nerase++] = sess->conv();
 #if (KL_EVENT_ON_DISCONNECTED == 1)
                     event_->on_disconnected(sess);
-#endif
+#endif // KL_EVENT_ON_DISCONNECTED;
                 }
             }
 
-            _sendmsgs();
+            // _sendmsgs();
 
             sessions_.erase(erase_keys, nerase);
             Sess::pool()->put(erase_sess, nerase);
@@ -824,17 +756,27 @@ private:
                 assert(!sess->_diff_addr(&seg->addr, seg->addrlen));
 
                 // Step 2: 获取KCP消息包
-                n = sess->_input(seg->data, seg->len);
+                n = sess->_input(seg->data, seg->len, seg->time_ms);
                 if (n < 0) {
                     event_->on_error(xq::net::ErrType::KCP_INPUT, n, sess);
-                    sess->last_ms_ = 0;
+                    sess->_bad();
                     continue;
                 }
 
                 // Step 3: 获取消息包
-                while (n = sess->_recv(rbuf, KCP_MAX_DATA_SIZE), n > 0) {
-                    sess->last_ms_ = event_->on_message(sess, rbuf, n) < 0 ? 0 : seg->time_ms;
-                }
+                do {
+                    n = sess->_recv(rbuf, KCP_MAX_DATA_SIZE);
+                    if (n == 0) {
+                        break;
+                    }
+                    else if (n < 0) {
+                        break;
+                    }
+
+                    if (event_->on_message(sess, rbuf, n) < 0) {
+                        sess->_bad();
+                    }
+                } while (1);
                 std::this_thread::yield();
             }
 
@@ -857,11 +799,6 @@ private:
     std::vector<Queue*>             rques_;          // read data queue
     xq::tools::Map<uint32_t, Sess*> sessions_;       // 会话
     TEvent*                         event_;          // 事件实例
-
-#ifndef WIN32
-    mmsghdr msgs_[IO_MSG_SIZE];
-#endif
-    std::atomic<int> msgs_len_;
 }; // class KcpListener;
 
 
