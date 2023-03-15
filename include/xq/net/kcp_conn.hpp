@@ -299,10 +299,10 @@ private:
                 host = hosts_[remote];
                 n = host->input((uint8_t*)rbuf, rawlen, xq::tools::now_milli());
                 if (n < 0) {
-                    logger->info("ERR: INPUT: " + std::to_string(n));
+                    logger->error("ERR: INPUT: " + std::to_string(n));
                     break;
                 }
-                logger->info("input ...");
+                logger->info("input done.");
 
                 do {
                     n = host->recv(indata, KCP_MAX_DATA_SIZE);
@@ -310,10 +310,10 @@ private:
                         break;
                     }
                     else if (n < 0) {
-                        logger->info("ERR: RECV: " + std::to_string(n));
+                        logger->error("ERR: RECV: " + std::to_string(n));
                         break;
                     }
-                    logger->info(std::string((char*)indata, 16));
+                    logger->warn(std::string((char*)indata, 16));
                     event_->on_message(host, indata, n);
                 } while (1);
 
