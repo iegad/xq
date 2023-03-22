@@ -45,13 +45,7 @@ constexpr int KCP_FASTACK_LIMIT = 5;      // max times to trigger fastack
 class Kcp final {
 public:
     struct Segment {
-        typedef std::shared_ptr<Segment> Ptr;
-
-
-        static Ptr get() {
-            return xq::tools::ObjectPool<Segment>::instance()->get();
-        }
-
+        OPL_PROP(Segment)
 
         uint32_t conv;
         uint8_t  cmd;

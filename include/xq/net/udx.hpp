@@ -299,37 +299,46 @@ public:
     int recv(uint8_t* buf, size_t buflen) {
         assert(buf && buflen > 0);
 
-        buflen = 0;
-        uint64_t nxt = rcv_nxt_;
-
+        bool com = false;
         Segment::Ptr segs[UDX_SEG_SIZE];
         size_t nsegs = 0;
 
-        for (auto itr = rcv_buf_.begin(); itr != rcv_buf_.end(); ) {
-            auto seg = itr->second;
+        uint64_t nxt = rcv_nxt_;
+        auto itr = rcv_buf_.begin();
 
-            if (seg->sn != nxt++) {
+        for (; itr != rcv_buf_.end(); ++itr, ++nxt) {
+            if (com) {
                 break;
             }
 
+            auto &seg = itr->second;
+            if (seg->sn != nxt) {
+                return 0;
+            }
+
+            segs[nsegs++] = seg;
             if (seg->com) {
-                segs[nsegs++] = seg;
-                break;
+                com = true;
             }
         }
 
-        if (nsegs > 0) {
-            uint8_t* p = buf;
+        if (com) {
+            rcv_nxt_ = nxt;
+            std::printf("rcv_nxt: %lu\n", rcv_nxt_);
+            rcv_buf_.erase(rcv_buf_.begin(), itr);
+            std::printf("%lu\n", rcv_buf_.size());
+
+            uint8_t *p = buf;
             for (size_t i = 0; i < nsegs; i++) {
-                auto& seg = segs[i];
+                auto &seg = segs[i];
                 ::memcpy(p, seg->payload, seg->len);
                 p += seg->len;
-                buflen += seg->len;
             }
+
+            return p - buf;
         }
 
-        rcv_nxt_ = nxt;
-        return buflen;
+        return 0;
     }
 
 
