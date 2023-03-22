@@ -12,7 +12,7 @@ namespace net {
 
 constexpr size_t   UDX_HEAD_SIZE = 24;
 constexpr size_t   UDX_MSS = 88 * 16;
-constexpr size_t   UDX_MTU = UDX_MSS + UDX_HEAD_SIZE;
+constexpr size_t   UDX_MTU = UDX_MSS + UDX_HEAD_SIZE + 2;
 constexpr size_t   UDX_SEG_SIZE = 93;
 constexpr size_t   UDX_MAX_DATA_SIZE = UDX_SEG_SIZE * UDX_MSS;
 constexpr uint8_t  UDX_CMD_PSH = 0x11;
@@ -25,7 +25,7 @@ constexpr uint32_t UDX_MAX_RID = 100000;
 constexpr uint64_t UDX_MAX_SN = 281474976710656;
 constexpr uint64_t UDX_MAX_TS = 281474976710656;
 constexpr uint16_t UDX_RCV_WND = 256;
-constexpr uint32_t UDX_MIN_RTO = 50;
+constexpr uint32_t UDX_MIN_RTO = 100;
 constexpr uint32_t UDX_MAX_RTO = 45000;
 constexpr uint32_t UDX_INTERVAL = 0;
 constexpr uint32_t UDX_CWND_INIT = 4;
@@ -58,6 +58,7 @@ public:
         uint16_t len;
         uint32_t fastack;
         uint32_t xmit;
+        uint64_t resend_ts;
 
         uint8_t  payload[UDX_MSS];
 
@@ -68,7 +69,7 @@ public:
 
 
         void reset() {
-            len = fastack = xmit = 0;
+            com = len = fastack = resend_ts = xmit = 0;
         }
 
 
@@ -250,26 +251,38 @@ public:
     }
 
 
+    ~Udx() {
+        snd_buf_.clear();
+        inf_buf_.clear();
+        rcv_buf_.clear();
+        ack_que_.clear();
+    }
+
+
     void set_addr(sockaddr *addr, socklen_t addrlen) {
         ::memcpy(&addr_, addr, addrlen);
         addrlen_ = addrlen;
     }
 
 
-    int input(const uint8_t* data, size_t datalen, int64_t now_ts) {
+    void set_addr(const std::string& remote) {
+        assert(xq::net::str2addr(remote, &addr_, &addrlen_));
+    }
+
+
+    int input(const uint8_t* data, size_t datalen, int64_t now_ms) {
         if (datalen < UDX_HEAD_SIZE) {
             return -100;
         }
 
         size_t nleft = datalen;
         const uint8_t* p = data;
-        int n;
 
-        current_ts_ = now_ts;
+        int cur_ts = now_ms - on_ms_;
 
         while (nleft > 0) {
             Segment::Ptr seg = Segment::get();
-            n = Segment::decode(seg, p, nleft);
+            int n = Segment::decode(seg, p, nleft);
             if (n < 0) {
                 return n;
             }
@@ -281,7 +294,7 @@ public:
 
             switch (seg->cmd) {
                 case UDX_CMD_PSH: n = _update_push(seg); break;
-                case UDX_CMD_ACK:  n = _update_ack(seg); break;
+                case UDX_CMD_ACK:  n = _update_ack(seg, cur_ts); break;
                 case UDX_CMD_PIN: n = _update_ping(seg); break;
                 case UDX_CMD_PON: n = _update_pong(seg); break;
                 default: n = -101; break;
@@ -324,9 +337,7 @@ public:
 
         if (com) {
             rcv_nxt_ = nxt;
-            std::printf("rcv_nxt: %lu\n", rcv_nxt_);
             rcv_buf_.erase(rcv_buf_.begin(), itr);
-            std::printf("%lu\n", rcv_buf_.size());
 
             uint8_t *p = buf;
             for (size_t i = 0; i < nsegs; i++) {
@@ -345,19 +356,24 @@ public:
     int send(const uint8_t* data, size_t datalen) {
         assert(data && datalen > 0 && datalen <= UDX_MAX_DATA_SIZE);
 
-        int ncount = datalen > UDX_MSS ? (datalen + UDX_MSS - 1) / UDX_MSS : 1;
+        int n = datalen > UDX_MSS ? (datalen + UDX_MSS - 1) / UDX_MSS : 1;
         int nrcv = rcv_buf_.size();
 
-        for (int i = 0, n = ncount - 1; i < n; i++) {
+        for (int i = 0; i < n; i++) {
             Segment::Ptr seg = Segment::get();
             seg->reset();
-            seg->com = 0;
+            bool is_last = i + 1 == n;
+
+            if (is_last) {
+                seg->com = 1;
+            }
+
             seg->cmd = UDX_CMD_PSH;
             seg->rid = rid_;
             seg->sn = snd_nxt_++;
             seg->una = rcv_nxt_;
             seg->wnd = nrcv < UDX_RCV_WND ? nrcv : 0;
-            seg->len = UDX_MSS;
+            seg->len = is_last ? datalen : UDX_MSS;
             ::memcpy(seg->payload, data, UDX_MSS);
 
             snd_buf_.insert(std::make_pair(seg->sn, seg));
@@ -366,37 +382,26 @@ public:
             datalen -= UDX_MSS;
         }
 
-        Segment::Ptr seg = Segment::get();
-        seg->reset();
-        seg->com = 0;
-        seg->cmd = UDX_CMD_PSH;
-        seg->rid = rid_;
-        seg->sn = snd_nxt_++;
-        seg->una = rcv_nxt_;
-        seg->wnd = nrcv < UDX_RCV_WND ? nrcv : 0;
-        seg->len = datalen;
-        ::memcpy(seg->payload, data, UDX_MSS);
-
-        snd_buf_.insert(std::make_pair(seg->sn, seg));
         return 0;
     }
 
 
-    void flush(int64_t now_ts) {
-        current_ts_ = now_ts;
-
+    void flush(int64_t now_ms) {
         UdpSession::Segment::Ptr udp_seg = _get_udp_seg();
 
         uint8_t* p = udp_seg->data;
         size_t nbuf = UDX_MTU;
+        uint64_t cur_ts = now_ms - on_ms_;
 
+        // ACK 响应
         if (!ack_que_.empty()) {
             for (auto &ack: ack_que_) {
-                udp_seg->datalen = p - udp_seg->data;
-                if (udp_seg->datalen + UDX_HEAD_SIZE > UDX_MTU) {
+                udp_seg->datalen = UDX_MTU - nbuf;
+                if (nbuf < UDX_HEAD_SIZE) {
                     sess_->send(udp_seg);
                     udp_seg = _get_udp_seg();
                     p = udp_seg->data;
+                    nbuf = UDX_MTU;
                 }
 
                 int nrcv = rcv_buf_.size();
@@ -422,11 +427,30 @@ public:
             ack_que_.clear();
         }
 
-        if (inf_buf_.size() >= cwnd_) {
-            snd_buf_.clear();
+        // 数据发送
+        for (auto itr = snd_buf_.begin(); itr != snd_buf_.end();) {
+            auto seg = itr->second;
+
+            udp_seg->datalen = UDX_MTU - nbuf;
+            if (nbuf < UDX_HEAD_SIZE) {
+                sess_->send(udp_seg);
+                udp_seg = _get_udp_seg();
+                p = udp_seg->data;
+                nbuf = UDX_MTU;
+            }
+
+            seg->ts = cur_ts;
+            if (seg->resend_ts == 0) {
+                seg->resend_ts = (rto_ == 0 ? UDX_MIN_RTO : rto_) + cur_ts;
+                int n = Segment::encode(seg, udp_seg->data, nbuf);
+                p += n;
+                nbuf -= n;
+                snd_buf_.erase(itr++);
+                inf_buf_.insert(std::make_pair(seg->sn, seg));
+            }
         }
 
-        udp_seg->datalen = p - udp_seg->data;
+        udp_seg->datalen = UDX_MTU - nbuf;
         if (udp_seg->datalen > 0) {
             sess_->send(udp_seg);
         }
@@ -445,7 +469,7 @@ private:
         , srtt_(0)
         , rttvar_(0)
         , rto_(0)
-        , current_ts_(0)
+        , on_ms_(xq::tools::now_ms())
         , rcv_nxt_(0)
         , snd_nxt_(0)
     {}
@@ -471,6 +495,7 @@ private:
         uint64_t sn = nseg->sn;
 
         if (sn >= rcv_nxt_ + UDX_RCV_WND) {
+            std::printf("sn: %lu >= rcv_nxt[%lu] + 256", sn, rcv_nxt_);
             return -102;
         }
 
@@ -497,16 +522,17 @@ private:
     }
 
 
-    int _update_ack(const Segment::Ptr& seg) {
-        uint64_t ack_sn = seg->sn;
-        uint64_t ack_ts = seg->ts;
-
-        auto itr = inf_buf_.find(ack_sn);
+    int _update_ack(const Segment::Ptr& seg, int64_t cur_ts) {
+        auto itr = inf_buf_.find(seg->sn);
         if (itr != inf_buf_.end()) {
             inf_buf_.erase(itr);
         }
 
-        uint32_t rtt = current_ts_ - ack_ts;
+        int32_t rtt = cur_ts - seg->ts;
+        if (rtt < 0) {
+            return -1;
+        }
+
         if (srtt_ == 0) {
             srtt_ = rtt;
             rttvar_ = rtt / 2;
@@ -527,6 +553,7 @@ private:
 
         uint32_t tmp = srtt_ + xq::tools::MAX(UDX_INTERVAL, 4 * rttvar_);
         rto_ = xq::tools::MID(UDX_MIN_RTO, tmp, UDX_MAX_RTO);
+        std::printf("> SN: %lu, RTT: %u, SRTT: %u, RTO: %u --------------- inf_buf: %lu\n", seg->sn, rtt, srtt_, rto_, inf_buf_.size());
         return 0;
     }
 
@@ -556,7 +583,7 @@ private:
 
     uint16_t cwnd_;
     uint32_t rid_, srtt_, rttvar_, rto_;
-    uint64_t current_ts_;
+    uint64_t on_ms_;
     uint64_t rcv_nxt_, snd_nxt_;
 
     std::map<uint64_t, uint64_t> ack_que_;

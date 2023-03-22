@@ -60,7 +60,7 @@ inline int64_t now() {
 /// 获取当前时间戳(毫秒)
 /// </summary>
 /// <returns></returns>
-inline int64_t now_milli() {
+inline int64_t now_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
@@ -68,7 +68,7 @@ inline int64_t now_milli() {
 /// 获取当前时间戳(微秒)
 /// </summary>
 /// <returns></returns>
-inline int64_t now_micro() {
+inline int64_t now_us() {
     return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
@@ -76,7 +76,7 @@ inline int64_t now_micro() {
 /// 获取当前时间戳(纳秒)
 /// </summary>
 /// <returns></returns>
-inline int64_t now_nano() {
+inline int64_t now_ns() {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
@@ -456,9 +456,12 @@ public:
 
 
     ~ObjectPool() {
-        T* p;
-        while (que_.try_dequeue(p)) {
-            delete p;
+        T* p[16];
+        int n;
+        while (n = que_.try_dequeue_bulk(p, 16), n > 0) {
+            for (int i = 0; i < n; i++) {
+                delete p[i];
+            }
         }
     }
 
@@ -488,11 +491,14 @@ private:
         que_.enqueue_bulk(objs, 16);
     }
 
+
     static void __free_(T* p) {
         if (p) {
-            instance()->que_.enqueue(p);
+            auto& q = instance()->que_;
+            q.enqueue(p);
         }
     }
+
 
     moodycamel::ConcurrentQueue<T*> que_;
 
@@ -549,7 +555,7 @@ public:
 
         while (running_) {
             std::this_thread::sleep_for(std::chrono::milliseconds(interval));
-            int64_t now_ms = xq::tools::now_milli();
+            int64_t now_ms = xq::tools::now_ms();
             mtx_.lock();
             for (auto itr = slotm_.begin(); itr != slotm_.end();) {
                 if (itr->first > now_ms) {
@@ -568,7 +574,7 @@ public:
 
 
     Timer::Ptr create_timer_at(int64_t expir_ms, TimerHandler handler, void* arg) {
-        if (expir_ms <= xq::tools::now_milli()) {
+        if (expir_ms <= xq::tools::now_ms()) {
             handler(arg);
             return nullptr;
         }
@@ -600,7 +606,7 @@ public:
             return nullptr;
         }
 
-        return create_timer_at(xq::tools::now_milli() + delay_ms, handler, arg);
+        return create_timer_at(xq::tools::now_ms() + delay_ms, handler, arg);
     }
 
 

@@ -134,7 +134,7 @@ public:
 
             seg->datalen = n;
             seg->sess = this;
-            seg->time_ms = xq::tools::now_milli();
+            seg->time_ms = xq::tools::now_ms();
             if (rcv_cb(seg) < 0) {
                 break;
             }
@@ -204,7 +204,7 @@ public:
                     break;
                 }
 
-                int64_t now_ms = xq::tools::now_milli();
+                int64_t now_ms = xq::tools::now_ms();
 
                 for (int i = 0; i < n; i++) {
                     msg = &msgs[i];
