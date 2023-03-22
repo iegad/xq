@@ -11,6 +11,8 @@
 
 #include <atomic>
 #include <chrono>
+#include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -18,10 +20,31 @@
 #include <unordered_map>
 #include <vector>
 
+#include <iostream>
+
 #include "xq/third/concurrentqueue.h"
+#include "xq/net/net.hpp"
 
 namespace xq {
 namespace tools {
+
+
+template<typename T> 
+T MAX(const T &a, const T &b) {
+    return a > b ? a : b;
+}
+
+
+template<typename T>
+T MIN(const T& a, const T& b) {
+    return a < b ? a : b;
+}
+
+
+template<typename T>
+T MID(const T& a, const T& b, const T& c) {
+    return MIN(MAX(a, b), c);
+}
 
 // ---------------------------------------------------------------------------- 时间 ----------------------------------------------------------------------------
 
@@ -85,7 +108,7 @@ inline int64_t now_nano() {
 #define X_MUST_ALIGN 0
 #elif defined(_M_IX86) || defined(_X86_) || defined(__x86_64__)
 #define X_MUST_ALIGN 0
-#elif defined(__amd64) || defined(__amd64__)
+#elif defined(__amd64) || defined(__amd64__) || defined(_AMD64_)
 #define X_MUST_ALIGN 0
 #else
 #define X_MUST_ALIGN 1
@@ -429,8 +452,8 @@ private:
 template <typename T>
 class ObjectPool {
 public:
-    ObjectPool(const ObjectPool &) = delete;
-    ObjectPool& operator=(const ObjectPool &) = delete;
+    typedef std::shared_ptr<T> Ptr;
+
 
     ~ObjectPool() {
         T* p;
@@ -445,35 +468,191 @@ public:
         return &instance_;
     }
 
-    T* get() {
+
+     Ptr get() {
         T* p;
         if (!que_.try_dequeue(p)) {
             p = new T;
             assert(p);
         }
 
-        return p;
-    }
-
-    void put(T* p) {
-        if (p) {
-            que_.enqueue(p);
-        }
-    }
-
-    void put(T** p, size_t n) {
-        if (p && n > 0) {
-            que_.enqueue_bulk(p, n);
-        }
+        return Ptr(p, __free_);
     }
 
 private:
-    ObjectPool() {}
+    ObjectPool() {
+        T* objs[16];
+        for (int i = 0; i < 16; i++) {
+            objs[i] = new T;
+        }
+        que_.enqueue_bulk(objs, 16);
+    }
+
+    static void __free_(T* p) {
+        if (p) {
+            instance()->que_.enqueue(p);
+        }
+    }
 
     moodycamel::ConcurrentQueue<T*> que_;
+
+
+    ObjectPool(const ObjectPool&) = delete;
+    ObjectPool(const ObjectPool&&) = delete;
+    ObjectPool& operator=(const ObjectPool&) = delete;
+    ObjectPool& operator=(const ObjectPool&&) = delete;
 }; // class ObjectPool;
+
+
+// ---------------------------------------------------------------------------- BTreeTimer  ----------------------------------------------------------------------------
+
+typedef void(*TimerHandler)(void* arg);
+
+class BTreeTimer final {
+public:
+    // ------------------------------------------------------------------ BEG Timer  ------------------------------------------------------------------
+    struct Timer {
+        typedef std::shared_ptr<Timer> Ptr;
+
+
+        static Ptr get() {
+            return xq::tools::ObjectPool<Timer>::instance()->get();
+        }
+
+
+        uint64_t id;
+        int64_t time_ms;
+        TimerHandler handler;
+        void* arg;
+
+        void action() {
+            if (handler) {
+                handler(arg);
+            }
+        }
+    };
+    // ------------------------------------------------------------------ END Timer  ------------------------------------------------------------------
+
+
+    typedef std::shared_ptr<BTreeTimer> Ptr;
+    typedef std::unordered_map<uint64_t, Timer::Ptr> Slot;
+    typedef std::shared_ptr<Slot> SlotPtr;
+
+
+    static Ptr create() {
+        return Ptr(new BTreeTimer);
+    }
+
+
+    void start(int interval = 15) {
+        running_ = true;
+
+        while (running_) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(interval));
+            int64_t now_ms = xq::tools::now_milli();
+            mtx_.lock();
+            for (auto itr = slotm_.begin(); itr != slotm_.end();) {
+                if (itr->first > now_ms) {
+                    break;
+                }
+
+                auto &slot = *itr->second;
+                for (auto& timer : slot) {
+                    timer.second->action();
+                }
+                slotm_.erase(itr++);
+            }
+            mtx_.unlock();
+        }
+    }
+
+
+    Timer::Ptr create_timer_at(int64_t expir_ms, TimerHandler handler, void* arg) {
+        if (expir_ms <= xq::tools::now_milli()) {
+            handler(arg);
+            return nullptr;
+        }
+
+        Timer::Ptr timer = Timer::get();
+        timer->id = id_gen_++;
+        timer->time_ms = expir_ms;
+        timer->handler = handler;
+        timer->arg = arg;
+
+        mtx_.lock();
+        auto itr = slotm_.find(expir_ms);
+        if (itr != slotm_.end()) {
+            itr->second->insert(std::make_pair(timer->id, timer));
+        }
+        else {
+            SlotPtr slot = xq::tools::ObjectPool<Slot>::instance()->get();
+            slot->insert(std::make_pair(timer->id, timer));
+            slotm_.insert(std::make_pair(expir_ms, slot));
+        }
+        mtx_.unlock();
+
+        return timer;
+    }
+
+
+    Timer::Ptr create_timer_after(int64_t delay_ms, TimerHandler handler, void* arg) {
+        if (delay_ms <= 0) {
+            return nullptr;
+        }
+
+        return create_timer_at(xq::tools::now_milli() + delay_ms, handler, arg);
+    }
+
+
+    void remove_timer(Timer::Ptr timer) {
+        mtx_.lock();
+        auto itr_slot = slotm_.find(timer->time_ms);
+        if (itr_slot != slotm_.end()) {
+            SlotPtr& slot = itr_slot->second;
+            auto itr_timer = slot->find(timer->id);
+            if (itr_timer != slot->end()) {
+                slot->erase(itr_timer);
+            }
+
+            if (slot->empty()) {
+                slotm_.erase(itr_slot);
+            }
+        }
+        mtx_.unlock();
+    }
+
+
+    void stop() {
+        mtx_.lock();
+        running_ = false;
+        slotm_.clear();
+        mtx_.unlock();
+    }
+
+
+
+private:
+    BTreeTimer()
+        : running_(false)
+    {}
+
+
+    bool running_;
+    std::atomic<uint64_t> id_gen_;
+    std::mutex mtx_;
+    std::map<int64_t, SlotPtr> slotm_;
+
+
+    BTreeTimer(const BTreeTimer&) = delete;
+    BTreeTimer(const BTreeTimer&&) = delete;
+    BTreeTimer& operator=(const BTreeTimer&) = delete;
+    BTreeTimer& operator=(const BTreeTimer&&) = delete;
+}; // class TimerScheduler;
 
 } // namespace tools
 } // namespace xq
+
+
+
 
 #endif // __TOOLS_HPP__

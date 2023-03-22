@@ -35,9 +35,14 @@ namespace net {
 
 // ------------------------------------------------------------------------ 常量 ------------------------------------------------------------------------
 
-constexpr int      IO_RBUF_SIZE      = 1500;                            // 读缓冲区大小
-constexpr int      IO_MSG_SIZE       = 256;                             // recvmmsg mmsghdr 大小
-constexpr int      IO_TIMEOUT        = 5000;                            // IO 读超时 5000毫秒
+constexpr int IPV4_HEAD_SIZE = 20;
+constexpr int IPV6_HEAD_SIZE = 40;
+constexpr int UDP_HEAD_SIZE = 8;
+constexpr int TCP_HEAD_SIZE = 20;
+constexpr int ETH_FRAME_SIZE = 1500;
+constexpr int UDP_RBUF_SIZE = ETH_FRAME_SIZE - IPV6_HEAD_SIZE - UDP_HEAD_SIZE; // 读缓冲区大小
+constexpr int IO_MSG_SIZE = 256;                             // recvmmsg mmsghdr 大小
+constexpr int IO_TIMEOUT = 5000;                            // IO 读超时 5000毫秒
 
 constexpr char REG_IPV4[] = "^((25[0-5]|(2[0-4]|1\\d|[1-9]|)\\d)\\.?\\b){4}$";
 constexpr char REG_IPV6[] = "^\\[(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))\\]$";
@@ -120,24 +125,11 @@ inline int error() {
 /// @return 成功返回创建好的 UDP sockfd, 则返回 INVALID_SOCKET
 /// @note   只有当addr和addrlen两个参数同时传递时, 才能获取绑定的sockaddr.
 /// @exception 当local为无效地址时.
-SOCKET udp_bind(const std::string &local, sockaddr* addr = nullptr, socklen_t* addrlen = nullptr) {
+SOCKET udp_bind(const char *ip, const char *port, sockaddr* addr = nullptr, socklen_t* addrlen = nullptr) {
     constexpr int ON = 1;
 
-    assert(local.size() > 0 && "local is invalid");
+    assert(ip && port);
     SOCKET fd = INVALID_SOCKET;
-
-    // 本端地址用于udp 套接字绑定
-    size_t pos = local.rfind(':');
-    if (pos == std::string::npos) {
-        return INVALID_SOCKET;
-    }
-
-    std::string ip = local.substr(0, pos);
-    if (ip.empty()) {
-        ip = "0.0.0.0";
-    }
-
-    std::string port = local.substr(pos + 1);
 
     addrinfo hints;
     addrinfo *result = nullptr, *rp = nullptr;
@@ -147,7 +139,7 @@ SOCKET udp_bind(const std::string &local, sockaddr* addr = nullptr, socklen_t* a
     hints.ai_socktype = SOCK_DGRAM;
     hints.ai_flags = AI_PASSIVE;
 
-    if (::getaddrinfo(ip.c_str(), port.c_str(), &hints, &result)) {
+    if (::getaddrinfo(ip, port, &hints, &result)) {
         return INVALID_SOCKET;
     }
 

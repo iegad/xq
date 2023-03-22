@@ -21,8 +21,8 @@ constexpr int KCP_MTU           = 1448;   // KCP TODO: 目前为1448, KCP_MSS为
 constexpr int KCP_HEAD_SIZE     = 24;     // KCP 消息头长度
 constexpr int KCP_MSS           = KCP_MTU - KCP_HEAD_SIZE;
 constexpr int KCP_MAX_DATA_SIZE = KCP_MSS * KCP_MAX_SEG;   // KCP 单包最大字节
-constexpr int KCP_TIMEOUT       = 60000;                   // KCP 默认超时(毫秒)
-constexpr int KCP_UPDATE_MS     = 100;                     // KCP UPDATE 间隔(毫秒)
+constexpr int KCP_TIMEOUT       = 60000;  // KCP 默认超时(毫秒)
+constexpr int KCP_UPDATE_MS     = 10;                     // KCP UPDATE 间隔(毫秒)
 constexpr int KCP_RTO_MIN       = 100;    // normal min rto
 constexpr int KCP_RTO_DEF       = 200;
 constexpr int KCP_RTO_MAX       = 60000;
@@ -45,10 +45,13 @@ constexpr int KCP_FASTACK_LIMIT = 5;      // max times to trigger fastack
 class Kcp final {
 public:
     struct Segment {
+        typedef std::shared_ptr<Segment> Ptr;
 
-        static xq::tools::ObjectPool<Segment>* pool() {
-            return xq::tools::ObjectPool<Segment>::instance();
+
+        static Ptr get() {
+            return xq::tools::ObjectPool<Segment>::instance()->get();
         }
+
 
         uint32_t conv;
         uint8_t  cmd;
@@ -115,27 +118,9 @@ public:
 
 
     ~Kcp() {
-        Segment* seg;
-        for (auto& itr : snd_buf_) {
-            seg = itr.second;
-            Segment::pool()->put(seg);
-        }
         snd_buf_.clear();
-
-        for (auto &itr : rcv_buf_) {
-            seg = itr.second;
-            Segment::pool()->put(seg);
-        }
         rcv_buf_.clear();
-
-        for (auto itr : snd_que_) {
-            Segment::pool()->put(itr);
-        }
         snd_que_.clear();
-
-        for (auto itr : rcv_que_) {
-            Segment::pool()->put(itr);
-        }
         rcv_que_.clear();
         
         if (buffer_) {
@@ -203,7 +188,6 @@ public:
     int recv(uint8_t* buf, size_t len) {
         assert(buf);
 
-        Segment* seg;
         int recover = 0;
 
         if (_check_rcv_que()) {
@@ -217,7 +201,7 @@ public:
         // merge fragment
         len = 0;
         for (auto itr = rcv_que_.begin(); itr != rcv_que_.end(); ) {
-            seg = *itr;
+            Segment::Ptr &seg = *itr;
 
             ::memcpy(buf, seg->data, seg->len);
             buf += seg->len;
@@ -226,7 +210,6 @@ public:
             int fragment = seg->frg;
 
             rcv_que_.erase(itr++);
-            Segment::pool()->put(seg);
 
             if (fragment == 0) {
                 break;
@@ -240,7 +223,7 @@ public:
         // move available data from rcv_buf -> rcv_queue
         while (!rcv_buf_.empty()) {
             auto itr = rcv_buf_.begin();
-            seg = itr->second;
+            Segment::Ptr &seg = itr->second;
             if (seg->sn == rcv_nxt_ && rcv_que_.size() < KCP_RCV_WND) {
                 rcv_buf_.erase(itr);
                 rcv_que_.emplace_back(seg);
@@ -267,7 +250,6 @@ public:
     /// @param len 
     /// @return 成功返回0, 否则返回!0
     int send(const uint8_t* buf, size_t len) {
-        Segment* seg;
 
         assert(buf && len > 0);
 
@@ -283,7 +265,7 @@ public:
         // fragment
         for (int i = 0; i < count; i++) {
             int size = len > KCP_MSS ? KCP_MSS : len;
-            seg = Segment::pool()->get();
+            Segment::Ptr &seg = Segment::get();
             assert(seg);
 
             memcpy(seg->data, buf, size);
@@ -352,7 +334,6 @@ public:
             uint32_t ts, sn, len, una, conv;
             uint16_t wnd;
             uint8_t cmd, frg;
-            Segment* seg;
 
             if (size < KCP_HEAD_SIZE) {
                 return -2;
@@ -415,7 +396,7 @@ public:
                 if (sn < rcv_nxt_ + KCP_RCV_WND) {
                     acklist_.emplace_back(std::make_pair(sn, ts));
                     if (sn >= rcv_nxt_) {
-                        seg = Segment::pool()->get();
+                        Segment::Ptr &seg = Segment::get();
                         assert(seg);
                         seg->conv = conv_;
                         seg->cmd = cmd;
@@ -499,14 +480,14 @@ public:
         uint32_t rtomin;
         int change = 0;
         int lost = 0;
-        Segment seg;
-        seg.conv = conv_;
-        seg.wnd = (uint32_t)_wnd_unused();
-        seg.una = rcv_nxt_;
+        Segment::Ptr seg = Segment::get();
+        seg->conv = conv_;
+        seg->wnd = (uint32_t)_wnd_unused();
+        seg->una = rcv_nxt_;
 
         // flush acknowledges
         if (acklist_.size() > 0) {
-            seg.cmd = KCP_CMD_ACK;
+            seg->cmd = KCP_CMD_ACK;
 
             for (auto &ack: acklist_) {
                 size = (int)(ptr - buf);
@@ -516,9 +497,9 @@ public:
                     }
                     ptr = buf;
                 }
-                seg.sn = ack.first;
-                seg.ts = ack.second;
-                ptr = _encode_seg(ptr, &seg);
+                seg->sn = ack.first;
+                seg->ts = ack.second;
+                ptr = _encode_seg(ptr, seg);
             }
 
             acklist_.clear();
@@ -553,7 +534,7 @@ public:
 
         // flush window probing commands
         if (probe_ & KCP_ASK_SEND) {
-            seg.cmd = KCP_CMD_WASK;
+            seg->cmd = KCP_CMD_WASK;
             size = (int)(ptr - buf);
             if (size + (int)KCP_HEAD_SIZE > (int)KCP_MTU) {
                 if (_output(buf, size) > 0) {
@@ -561,12 +542,12 @@ public:
                 }
                 ptr = buf;
             }
-            ptr = _encode_seg(ptr, &seg);
+            ptr = _encode_seg(ptr, seg);
         }
 
         // flush window probing commands
         if (probe_ & KCP_ASK_TELL) {
-            seg.cmd = KCP_CMD_WINS;
+            seg->cmd = KCP_CMD_WINS;
             size = (int)(ptr - buf);
             if (size + (int)KCP_HEAD_SIZE > (int)KCP_MTU) {
                 if (_output(buf, size) > 0) {
@@ -574,7 +555,7 @@ public:
                 }
                 ptr = buf;
             }
-            ptr = _encode_seg(ptr, &seg);
+            ptr = _encode_seg(ptr, seg);
         }
 
         probe_ = 0;
@@ -589,12 +570,12 @@ public:
                 break;
             }
 
-            Segment* newseg = snd_que_.front();
+            Segment::Ptr& newseg = snd_que_.front();
             snd_que_.pop_front();
 
             newseg->conv = conv_;
             newseg->cmd = KCP_CMD_PUSH;
-            newseg->wnd = seg.wnd;
+            newseg->wnd = seg->wnd;
             newseg->ts = now_ms;
             newseg->sn = snd_nxt_;
             newseg->una = rcv_nxt_;
@@ -610,7 +591,7 @@ public:
 
         // flush data segments
         for (auto & itr : snd_buf_) {
-            Segment* segment = itr.second;
+            Segment::Ptr& segment = itr.second;
             int needsend = 0;
             if (segment->xmit == 0) {
                 needsend = 1;
@@ -646,7 +627,7 @@ public:
             if (needsend) {
                 int need;
                 segment->ts = now_ms;
-                segment->wnd = seg.wnd;
+                segment->wnd = seg->wnd;
                 segment->una = rcv_nxt_;
 
                 size = (int)(ptr - buf);
@@ -712,30 +693,10 @@ public:
 
     /// @brief 重置KCP
     void reset(uint32_t conv) {
-        Segment* seg;
-
-        for (auto& itr : snd_buf_) {
-            seg = itr.second;
-            Segment::pool()->put(seg);
-        }
         snd_buf_.clear();
-
-        for (auto &itr : rcv_buf_) {
-            seg = itr.second;
-            Segment::pool()->put(seg);
-        }
         rcv_buf_.clear();
-
-        for (auto itr : snd_que_) {
-            Segment::pool()->put(itr);
-        }
         snd_que_.clear();
-
-        for (auto itr : rcv_que_) {
-            Segment::pool()->put(itr);
-        }
         rcv_que_.clear();
-
         acklist_.clear();
 
         conv_ = conv;
@@ -784,7 +745,7 @@ public:
         tm_flush = -slap;
 
         for (auto &itr: snd_buf_) {
-            const Segment* seg = itr.second;
+            Segment::Ptr& seg = itr.second;
             int32_t diff = (int32_t)(seg->resendts - now_ms);
             if (diff <= 0) {
                 return 0;
@@ -813,7 +774,7 @@ private:
     }
 
 
-    static uint8_t* _encode_seg(uint8_t* ptr, const Segment* seg) {
+    static uint8_t* _encode_seg(uint8_t* ptr, Segment::Ptr& seg) {
         ptr = _encode32u(ptr, seg->conv);
         ptr = _encode8u(ptr, (uint8_t)seg->cmd);
         ptr = _encode8u(ptr, (uint8_t)seg->frg);
@@ -912,7 +873,6 @@ private:
     void _parse_una(uint32_t una) {
         auto end = snd_buf_.find(una);
         for (auto itr = snd_buf_.begin(); itr != end;) {
-            Segment::pool()->put(itr->second);
             snd_buf_.erase(itr++);
         }
     }
@@ -967,11 +927,10 @@ private:
     }
 
 
-    void _parse_data(Segment* newseg) {
+    void _parse_data(Segment::Ptr &newseg) {
         uint32_t sn = newseg->sn;
 
         if (sn >= rcv_nxt_ + KCP_RCV_WND || sn < rcv_nxt_) {
-            Segment::pool()->put(newseg);
             return;
         }
 
@@ -979,14 +938,11 @@ private:
         if (itr == rcv_buf_.end()) {
             rcv_buf_.insert(std::make_pair(newseg->sn, newseg));
         }
-        else {
-            Segment::pool()->put(newseg);
-        }
 
         // move available data from rcv_buf -> rcv_queue
         while (!rcv_buf_.empty()) {
             auto itr = rcv_buf_.begin();
-            Segment* seg = itr->second;
+            Segment::Ptr& seg = itr->second;
             if (seg->sn == rcv_nxt_ && rcv_que_.size() < KCP_RCV_WND) {
                 rcv_buf_.erase(itr);
                 rcv_que_.emplace_back(seg);
@@ -1005,7 +961,7 @@ private:
             return;
 
         for (auto &itr: snd_buf_) {
-            Segment* seg = itr.second;
+            Segment::Ptr& seg = itr.second;
             if (sn < seg->sn) {
                 break;
             }
@@ -1022,7 +978,7 @@ private:
             return -1;
         }
 
-        Segment* seg = rcv_que_.front();
+        Segment::Ptr &seg = rcv_que_.front();
         if (seg->frg == 0) {
             return 0;
         }
@@ -1046,10 +1002,10 @@ private:
     uint32_t ts_probe_, probe_wait_;
     uint32_t incr_;
     int64_t last_rcv_ts_, last_snd_ts_;
-    std::list<Segment*> snd_que_;
-    std::list<Segment*> rcv_que_;
-    std::map<uint32_t, Segment*> snd_buf_;
-    std::map<uint32_t, Segment*> rcv_buf_;
+    std::list<Segment::Ptr> snd_que_;
+    std::list<Segment::Ptr> rcv_que_;
+    std::map<uint32_t, Segment::Ptr> snd_buf_;
+    std::map<uint32_t, Segment::Ptr> rcv_buf_;
     std::vector<Ack> acklist_;
     void* user_;
     uint8_t* buffer_;
