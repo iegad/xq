@@ -1,5 +1,5 @@
-#include "xq/net/udp_session.hpp"
-#include "xq/net/udx.hpp"
+ #include "xq/net/udp_session.hpp"
+ #include "xq/net/udx.hpp"
 
 
 using UdpSession = xq::net::UdpSession;
@@ -10,7 +10,7 @@ static UdpSession::Ptr sess;
 static Udx::Ptr udx;
 
 
-int rcv_cb(UdpSession::Segment::Ptr &udp_seg) {
+int rcv_cb(UdpSession::Segment* udp_seg) {
 	int n = udx->input(udp_seg->data, udp_seg->datalen, udp_seg->time_ms);
 	if (n < 0) {
 		std::printf("%d\n", n);
@@ -24,14 +24,13 @@ void send_wkr() {
 	udx->set_addr("1.15.81.179:6688");
 	char buf[xq::net::UDX_MSS] = { 0 };
 
-	for (int i = 0; i < 1; i++) {
+	for (int i = 0; i < 10000; i++) {
 		sprintf(buf, "Hello world: %d", i);
 		udx->send((uint8_t*)buf, strlen(buf));
 		udx->flush(xq::tools::now_ms());
 		std::this_thread::sleep_for(std::chrono::milliseconds(20));
 	}
 }
-
 
 
 int main(int argc, char** argv) {

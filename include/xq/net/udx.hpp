@@ -40,14 +40,6 @@ public:
     // ------------------------------------------------------------------ BEG Segment  ------------------------------------------------------------------
     // COM: 1 | CMD: 7 | RID: 24 | SN: 48 | TS: 48 | UNA: 48  | WND: 16 | @LEN: 16 | @PAYLOAD: n |
     struct Segment {
-        typedef std::shared_ptr<Segment> Ptr;
-
-
-        static Ptr get() {
-            return xq::tools::ObjectPool<Segment>::instance()->get();
-        }
-
-
         uint8_t  com;
         uint8_t  cmd;
         uint32_t rid;
@@ -68,12 +60,7 @@ public:
         }
 
 
-        void reset() {
-            com = len = fastack = resend_ts = xmit = 0;
-        }
-
-
-        static int decode(Segment::Ptr& seg, const uint8_t* data, size_t datalen) {
+        static int decode(Segment* seg, const uint8_t* data, size_t datalen) {
             if (datalen < UDX_HEAD_SIZE) {
                 return -1;
             }
@@ -121,7 +108,7 @@ public:
         }
 
 
-        static int encode(const Segment::Ptr& seg, uint8_t* data, size_t datalen) {
+        static int encode(const Segment* seg, uint8_t* data, size_t datalen) {
             assert(data && datalen > 0);
 
             int len = seg->len;
@@ -281,9 +268,11 @@ public:
         int cur_ts = now_ms - on_ms_;
 
         while (nleft > 0) {
-            Segment::Ptr seg = Segment::get();
+            // 该 seg堆对象会在 CMD处理函数中被删除或移动.
+            Segment* seg = new Segment;
             int n = Segment::decode(seg, p, nleft);
             if (n < 0) {
+                delete seg;
                 return n;
             }
 
@@ -313,7 +302,7 @@ public:
         assert(buf && buflen > 0);
 
         bool com = false;
-        Segment::Ptr segs[UDX_SEG_SIZE];
+        Segment* segs[UDX_SEG_SIZE];
         size_t nsegs = 0;
 
         uint64_t nxt = rcv_nxt_;
@@ -341,9 +330,10 @@ public:
 
             uint8_t *p = buf;
             for (size_t i = 0; i < nsegs; i++) {
-                auto &seg = segs[i];
+                Segment* seg = segs[i];
                 ::memcpy(p, seg->payload, seg->len);
                 p += seg->len;
+                delete seg;
             }
 
             return p - buf;
@@ -360,8 +350,7 @@ public:
         int nrcv = rcv_buf_.size();
 
         for (int i = 0; i < n; i++) {
-            Segment::Ptr seg = Segment::get();
-            seg->reset();
+            Segment* seg = new Segment;
             bool is_last = i + 1 == n;
 
             if (is_last) {
@@ -387,7 +376,7 @@ public:
 
 
     void flush(int64_t now_ms) {
-        UdpSession::Segment::Ptr udp_seg = _get_udp_seg();
+        UdpSession::Segment *udp_seg = new UdpSession::Segment(&addr_, addrlen_);
 
         uint8_t* p = udp_seg->data;
         size_t nbuf = UDX_MTU;
@@ -399,42 +388,41 @@ public:
                 udp_seg->datalen = UDX_MTU - nbuf;
                 if (nbuf < UDX_HEAD_SIZE) {
                     sess_->send(udp_seg);
-                    udp_seg = _get_udp_seg();
+                    udp_seg = new UdpSession::Segment(&addr_, addrlen_);
                     p = udp_seg->data;
                     nbuf = UDX_MTU;
                 }
 
                 int nrcv = rcv_buf_.size();
 
-                Segment::Ptr seg = Segment::get();
-                seg->reset();
-                seg->com = 1;
-                seg->cmd = UDX_CMD_ACK;
-                seg->rid = rid_;
-                seg->sn = ack.first;
-                seg->ts = ack.second;
-                seg->una = rcv_nxt_;
+                Segment seg;
+                seg.com = 1;
+                seg.cmd = UDX_CMD_ACK;
+                seg.rid = rid_;
+                seg.sn = ack.first;
+                seg.ts = ack.second;
+                seg.una = rcv_nxt_;
                 int wnd = UDX_RCV_WND - nrcv;
                 if (wnd < 0) {
                     wnd = 0;
                 }
-                seg->wnd = wnd;
+                seg.wnd = wnd;
 
-                int n = Segment::encode(seg, p, nbuf);
+                int n = Segment::encode(&seg, p, nbuf);
                 p += n;
                 nbuf -= n;
             }
             ack_que_.clear();
         }
 
-        // 数据发送
+        // Udx数据发送
         for (auto itr = snd_buf_.begin(); itr != snd_buf_.end();) {
             auto seg = itr->second;
 
             udp_seg->datalen = UDX_MTU - nbuf;
             if (nbuf < UDX_HEAD_SIZE) {
                 sess_->send(udp_seg);
-                udp_seg = _get_udp_seg();
+                udp_seg = new UdpSession::Segment(&addr_, addrlen_);
                 p = udp_seg->data;
                 nbuf = UDX_MTU;
             }
@@ -453,9 +441,11 @@ public:
         udp_seg->datalen = UDX_MTU - nbuf;
         if (udp_seg->datalen > 0) {
             sess_->send(udp_seg);
+            sess_->flush();
         }
-
-        sess_->flush();
+        else {
+            delete udp_seg;
+        }
     }
 
 
@@ -475,14 +465,6 @@ private:
     {}
 
 
-    UdpSession::Segment::Ptr _get_udp_seg() {
-        UdpSession::Segment::Ptr seg = UdpSession::Segment::get();
-        seg->reset();
-        seg->set_name(&addr_, addrlen_);
-        return seg;
-    }
-
-
     void _update_una(uint64_t una) {
         auto end = inf_buf_.find(una);
         if (end != inf_buf_.end()) {
@@ -491,90 +473,150 @@ private:
     }
 
 
-    int _update_push(const Segment::Ptr& nseg) {
-        uint64_t sn = nseg->sn;
+    int _update_push(Segment* new_seg) {
+        uint64_t sn = new_seg->sn;
+        int ret = 0;
 
-        if (sn >= rcv_nxt_ + UDX_RCV_WND) {
-            std::printf("sn: %lu >= rcv_nxt[%lu] + 256", sn, rcv_nxt_);
-            return -102;
-        }
-
-        auto ack_itr = ack_que_.find(sn - 1);
-        if (ack_itr != ack_que_.end()) {
-            ack_que_.erase(ack_itr);
-        }
-
-        ack_itr = ack_que_.find(sn + 1);
-        if (ack_itr == ack_que_.end()) {
-            ack_que_[sn] = nseg->ts;
-        }
-
-        if (sn < rcv_nxt_) {
-            return 0;
-        }
-
-        auto itr = rcv_buf_.find(sn);
-        if (itr == rcv_buf_.end()) {
-            rcv_buf_.insert(std::make_pair(sn, nseg));
-        }
-
-        return 0;
-    }
-
-
-    int _update_ack(const Segment::Ptr& seg, int64_t cur_ts) {
-        auto itr = inf_buf_.find(seg->sn);
-        if (itr != inf_buf_.end()) {
-            inf_buf_.erase(itr);
-        }
-
-        int32_t rtt = cur_ts - seg->ts;
-        if (rtt < 0) {
-            return -1;
-        }
-
-        if (srtt_ == 0) {
-            srtt_ = rtt;
-            rttvar_ = rtt / 2;
-        }
-        else {
-            int32_t delta = rtt - srtt_;
-            if (delta < 0) {
-                delta = -delta;
+        do {
+            if (sn >= rcv_nxt_ + UDX_RCV_WND) {
+                std::printf("sn: %lu >= rcv_nxt[%lu] + 256", sn, rcv_nxt_);
+                ret = -102;
+                break;
             }
 
-            rttvar_ = (3 * rttvar_ + delta) / 4;
-            srtt_ = (7 * srtt_ + rtt) / 8;
-
-            if (srtt_ < 1) {
-                srtt_ = 1;
+            auto ack_itr = ack_que_.find(sn - 1);
+            if (ack_itr != ack_que_.end()) {
+                ack_que_.erase(ack_itr);
             }
+
+            ack_itr = ack_que_.find(sn + 1);
+            if (ack_itr == ack_que_.end()) {
+                ack_que_[sn] = new_seg->ts;
+            }
+
+            if (sn < rcv_nxt_) {
+                ret = 0;
+                break;
+            }
+
+            auto itr = rcv_buf_.find(sn);
+            if (itr == rcv_buf_.end()) {
+                rcv_buf_.insert(std::make_pair(sn, new_seg));
+                new_seg = nullptr;
+            }
+        } while (0);
+
+        if (new_seg) {
+            delete new_seg;
         }
 
-        uint32_t tmp = srtt_ + xq::tools::MAX(UDX_INTERVAL, 4 * rttvar_);
-        rto_ = xq::tools::MID(UDX_MIN_RTO, tmp, UDX_MAX_RTO);
-        std::printf("> SN: %lu, RTT: %u, SRTT: %u, RTO: %u --------------- inf_buf: %lu\n", seg->sn, rtt, srtt_, rto_, inf_buf_.size());
-        return 0;
+        return ret;
     }
 
 
-    int _update_ping(const Segment::Ptr& ) {
-        return 0;
+    int _update_ack(const Segment* seg, int64_t cur_ts) {
+        int ret = 0;
+
+        do {
+            auto itr = inf_buf_.find(seg->sn);
+            if (itr != inf_buf_.end()) {
+                inf_buf_.erase(itr);
+            }
+
+            int32_t rtt = cur_ts - seg->ts;
+            if (rtt < 0) {
+                ret = -1;
+                break;
+            }
+
+            if (srtt_ == 0) {
+                srtt_ = rtt;
+                rttvar_ = rtt / 2;
+            }
+            else {
+                int32_t delta = rtt - srtt_;
+                if (delta < 0) {
+                    delta = -delta;
+                }
+
+                rttvar_ = (3 * rttvar_ + delta) / 4;
+                srtt_ = (7 * srtt_ + rtt) / 8;
+
+                if (srtt_ < 1) {
+                    srtt_ = 1;
+                }
+            }
+
+            uint32_t tmp = srtt_ + xq::tools::MAX(UDX_INTERVAL, 4 * rttvar_);
+            rto_ = xq::tools::MID(UDX_MIN_RTO, tmp, UDX_MAX_RTO);
+            std::printf("> SN: %lu, RTT: %u, SRTT: %u, RTO: %u --------------- inf_buf: %lu\n", seg->sn, rtt, srtt_, rto_, inf_buf_.size());
+        } while (0);
+
+        if (seg) {
+            delete seg;
+        }
+
+        return ret;
     }
 
 
-    int _update_pong(const Segment::Ptr& ) {
-        return 0;
+    int _update_ping(const Segment* seg) {
+        int ret = 0;
+
+        do {
+
+        } while (0);
+
+        if (seg) {
+            delete seg;
+        }
+
+        return ret;
     }
 
 
-    int _update_on(const Segment::Ptr& ) {
-        return 0;
+    int _update_pong(const Segment* seg) {
+        int ret = 0;
+
+        do {
+
+        } while (0);
+
+        if (seg) {
+            delete seg;
+        }
+
+        return ret;
     }
 
 
-    int _update_off(const Segment::Ptr& ) {
-        return 0;
+    int _update_on(const Segment* seg) {
+        int ret = 0;
+
+        do {
+
+        } while (0);
+
+        if (seg) {
+            delete seg;
+        }
+
+        return ret;
+    }
+
+
+    int _update_off(const Segment* seg) {
+        int ret = 0;
+
+        do {
+
+        } while (0);
+
+        if (seg) {
+            delete seg;
+        }
+
+        return ret;
     }
 
     UdpSession::Ptr sess_;
@@ -587,9 +629,9 @@ private:
     uint64_t rcv_nxt_, snd_nxt_;
 
     std::map<uint64_t, uint64_t> ack_que_;
-    std::map<uint64_t, Segment::Ptr> rcv_buf_;
-    std::map<uint64_t, Segment::Ptr> snd_buf_;
-    std::map<uint64_t, Segment::Ptr> inf_buf_;
+    std::map<uint64_t, Segment*> rcv_buf_;
+    std::map<uint64_t, Segment*> snd_buf_;
+    std::map<uint64_t, Segment*> inf_buf_;
 }; // class Xdg;
 
 

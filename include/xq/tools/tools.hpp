@@ -48,34 +48,37 @@ T MID(const T& a, const T& b, const T& c) {
 
 // ---------------------------------------------------------------------------- 时间 ----------------------------------------------------------------------------
 
-/// <summary>
-/// 获取当前时间戳(秒)
-/// </summary>
-/// <returns></returns>
+/* --------------------------------------------------------------------- */
+/// @brief
+/// @return
+///
 inline int64_t now() {
     return std::chrono::duration_cast<std::chrono::seconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
-/// <summary>
-/// 获取当前时间戳(毫秒)
-/// </summary>
-/// <returns></returns>
+
+/* --------------------------------------------------------------------- */
+/// @brief
+/// @return
+///
 inline int64_t now_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
-/// <summary>
-/// 获取当前时间戳(微秒)
-/// </summary>
-/// <returns></returns>
+
+/* --------------------------------------------------------------------- */
+/// @brief
+/// @return
+///
 inline int64_t now_us() {
     return std::chrono::duration_cast<std::chrono::microseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 }
 
-/// <summary>
-/// 获取当前时间戳(纳秒)
-/// </summary>
-/// <returns></returns>
+
+/* --------------------------------------------------------------------- */
+/// @brief
+/// @return
+///
 inline int64_t now_ns() {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(std::chrono::system_clock::now().time_since_epoch()).count();
 }
@@ -115,54 +118,70 @@ inline int64_t now_ns() {
 #endif
 #endif
 
-/// <summary>
-/// uint16_t 反转字节序
-/// </summary>
-/// <param name="v"></param>
-/// <returns></returns>
+
+/* --------------------------------------------------------------------- */
+/// @brief
+///
+/// @param v
+///
+/// @return
+///
 inline uint16_t __rvs_u16(uint16_t v) {
     return (v << 8) | (v >> 8);
 }
 
-/// <summary>
-/// uint32_t 反转字节序
-/// </summary>
-/// <param name="v"></param>
-/// <returns></returns>
+
+/* --------------------------------------------------------------------- */
+/// @brief
+///
+/// @param v
+///
+/// @return
+///
 inline uint32_t __rvs_u32(uint32_t v) {
     return (((uint32_t)(__rvs_u16(v)) << 16)) | (__rvs_u16(v >> 16));
 }
 
-/// <summary>
-/// uint64_t 反转字节序
-/// </summary>
-/// <param name="v"></param>
-/// <returns></returns>
+
+/* --------------------------------------------------------------------- */
+/// @brief
+///
+/// @param v
+///
+/// @return
+///
 inline uint64_t __rvs_u64(uint64_t v) {
     return (((uint64_t)(__rvs_u32(v)) << 32)) | (__rvs_u32(v >> 32));
 }
 
-/// <summary>
-/// 当前机器字节序是否为小端序
-/// </summary>
-/// <returns></returns>
+
+/* --------------------------------------------------------------------- */
+/// @brief
+///
+/// @return
+///
 inline bool is_le() {
     return !X_BIG_ENDIAN;
 }
 
-/// <summary>
-/// 当前机器字节序是否为大端序
-/// </summary>
-/// <returns></returns>
+
+/* --------------------------------------------------------------------- */
+/// @brief
+///
+/// @return
+///
 inline bool is_be() {
     return X_BIG_ENDIAN;
 }
 
-/// <summary>
-/// 另 v 为小端序
-/// </summary>
-/// <param name="v"></param>
-/// <returns></returns>
+
+/* --------------------------------------------------------------------- */
+/// @brief
+///
+/// @param v
+///
+/// @return
+///
 inline uint16_t to_le_u16(uint16_t v) {
 #if X_BIG_ENDIAN
     return __rvs_u16(v);
@@ -172,11 +191,14 @@ inline uint16_t to_le_u16(uint16_t v) {
 
 }
 
-/// <summary>
-/// 另 v 为大端序
-/// </summary>
-/// <param name="v"></param>
-/// <returns></returns>
+
+/* --------------------------------------------------------------------- */
+/// @brief
+///
+/// @param v
+///
+/// @return
+///
 inline uint16_t to_be_u16(uint16_t v) {
 #if X_BIG_ENDIAN
     return v;
@@ -185,11 +207,14 @@ inline uint16_t to_be_u16(uint16_t v) {
 #endif // X_BIG_ENDIAN
 }
 
-/// <summary>
-/// 另 v 为小端序
-/// </summary>
-/// <param name="v"></param>
-/// <returns></returns>
+
+/* --------------------------------------------------------------------- */
+/// @brief
+///
+/// @param v
+///
+/// @return
+///
 inline uint32_t to_le_u32(uint32_t v) {
 #if X_BIG_ENDIAN
     return __rvs_u32(v);
@@ -198,11 +223,14 @@ inline uint32_t to_le_u32(uint32_t v) {
 #endif // X_BIG_ENDIAN
 }
 
-/// <summary>
-/// 另 v 为大端序
-/// </summary>
-/// <param name="v"></param>
-/// <returns></returns>
+
+/* --------------------------------------------------------------------- */
+/// @brief
+///
+/// @param v
+///
+/// @return
+///
 inline uint32_t to_be_u32(uint32_t v) {
 #if X_BIG_ENDIAN
     return v;
@@ -211,11 +239,14 @@ inline uint32_t to_be_u32(uint32_t v) {
 #endif // X_BIG_ENDIAN
 }
 
-/// <summary>
-/// 另 v 为小端序
-/// </summary>
-/// <param name="v"></param>
-/// <returns></returns>
+
+/* --------------------------------------------------------------------- */
+/// @brief
+///
+/// @param v
+///
+/// @return
+///
 inline uint64_t to_le_u64(uint64_t v) {
 #if X_BIG_ENDIAN
     return __rvs_u64(v);
@@ -224,11 +255,14 @@ inline uint64_t to_le_u64(uint64_t v) {
 #endif // X_BIG_ENDIAN
 }
 
-/// <summary>
-/// 另 v 为大端序
-/// </summary>
-/// <param name="v"></param>
-/// <returns></returns>
+
+/* --------------------------------------------------------------------- */
+/// @brief
+///
+/// @param v
+///
+/// @return
+///
 inline uint64_t to_be_u64(uint64_t v) {
 #if X_BIG_ENDIAN
     return v;
@@ -237,12 +271,14 @@ inline uint64_t to_be_u64(uint64_t v) {
 #endif // X_BIG_ENDIAN
 }
 
-/// <summary>
-/// 将二进制码流转为16进制字符串
-/// </summary>
-/// <param name="data">二进制码流</param>
-/// <param name="data_len">码流长度</param>
-/// <returns>16进制字符串</returns>
+
+/* --------------------------------------------------------------------- */
+/// @brief
+///
+/// @param v
+///
+/// @return
+///
 std::string bin2hex(const uint8_t* data, size_t data_len) {
     assert(data);
 
@@ -269,19 +305,13 @@ std::string bin2hex(const uint8_t* data, size_t data_len) {
 }
 
 
-/// <summary>
-/// 将16进制字符串转为二进制码流
-/// </summary>
-/// <param name="hex">有效的16进制字符串</param>
-/// <param name="data">接收缓冲区</param>
-/// <param name="data_len">in: 缓冲区长度, out: 码流长度</param>
-/// <returns>
-///     成功返回码流长度, 否则返回-1
-///     可能错误的原因: 
-///         * hex 为空串 或并不是有效的16进制;
-///         * data 为nullptr;
-///         * data_len 为nullptr 或缓冲区没有足够存放码流的空间;
-/// </returns>
+/* --------------------------------------------------------------------- */
+/// @brief
+///
+/// @param v
+///
+/// @return
+///
 int hex2bin(const std::string& hex, uint8_t *data, size_t *data_len) {
     size_t nhex = hex.empty();
     size_t n = nhex / 2;
@@ -310,6 +340,7 @@ int hex2bin(const std::string& hex, uint8_t *data, size_t *data_len) {
 }
 
 // ---------------------------------------------------------------------------- spin lock  ----------------------------------------------------------------------------
+
 class SpinLock {
 public:
     void lock() {
@@ -448,67 +479,6 @@ private:
     std::unordered_map<TKey, TVal> m_;
 };
 
-// ---------------------------------------------------------------------------- safe object pool  ----------------------------------------------------------------------------
-template <typename T>
-class ObjectPool {
-public:
-    typedef std::shared_ptr<T> Ptr;
-
-
-    ~ObjectPool() {
-        T* p[16];
-        int n;
-        while (n = que_.try_dequeue_bulk(p, 16), n > 0) {
-            for (int i = 0; i < n; i++) {
-                delete p[i];
-            }
-        }
-    }
-
-    static ObjectPool*
-    instance() {
-        static ObjectPool instance_;
-        return &instance_;
-    }
-
-
-     Ptr get() {
-        T* p;
-        if (!que_.try_dequeue(p)) {
-            p = new T;
-            assert(p);
-        }
-
-        return Ptr(p, __free_);
-    }
-
-private:
-    ObjectPool() {
-        T* objs[16];
-        for (int i = 0; i < 16; i++) {
-            objs[i] = new T;
-        }
-        que_.enqueue_bulk(objs, 16);
-    }
-
-
-    static void __free_(T* p) {
-        if (p) {
-            auto& q = instance()->que_;
-            q.enqueue(p);
-        }
-    }
-
-
-    moodycamel::ConcurrentQueue<T*> que_;
-
-
-    ObjectPool(const ObjectPool&) = delete;
-    ObjectPool(const ObjectPool&&) = delete;
-    ObjectPool& operator=(const ObjectPool&) = delete;
-    ObjectPool& operator=(const ObjectPool&&) = delete;
-}; // class ObjectPool;
-
 
 // ---------------------------------------------------------------------------- BTreeTimer  ----------------------------------------------------------------------------
 
@@ -518,14 +488,6 @@ class BTreeTimer final {
 public:
     // ------------------------------------------------------------------ BEG Timer  ------------------------------------------------------------------
     struct Timer {
-        typedef std::shared_ptr<Timer> Ptr;
-
-
-        static Ptr get() {
-            return xq::tools::ObjectPool<Timer>::instance()->get();
-        }
-
-
         uint64_t id;
         int64_t time_ms;
         TimerHandler handler;
@@ -541,12 +503,22 @@ public:
 
 
     typedef std::shared_ptr<BTreeTimer> Ptr;
-    typedef std::unordered_map<uint64_t, Timer::Ptr> Slot;
-    typedef std::shared_ptr<Slot> SlotPtr;
+    typedef std::unordered_map<uint64_t, Timer*> Slot;
 
 
     static Ptr create() {
         return Ptr(new BTreeTimer);
+    }
+
+
+    ~BTreeTimer() {
+        for (auto& slot_itr : slotm_) {
+            Slot* slot = slot_itr.second;
+            for (auto& timer : *slot) {
+                delete timer.second;
+            }
+            delete slot;
+        }
     }
 
 
@@ -557,29 +529,33 @@ public:
             std::this_thread::sleep_for(std::chrono::milliseconds(interval));
             int64_t now_ms = xq::tools::now_ms();
             mtx_.lock();
-            for (auto itr = slotm_.begin(); itr != slotm_.end();) {
-                if (itr->first > now_ms) {
+            for (auto slot_itr = slotm_.begin(); slot_itr != slotm_.end();) {
+                if (slot_itr->first > now_ms) {
                     break;
                 }
 
-                auto &slot = *itr->second;
-                for (auto& timer : slot) {
-                    timer.second->action();
+                Slot *slot = slot_itr->second;
+                for (auto& timer_itr : *slot) {
+                    Timer* timer = timer_itr.second;
+                    timer->action();
+                    delete timer;
                 }
-                slotm_.erase(itr++);
+
+                delete slot;
+                slotm_.erase(slot_itr++);
             }
             mtx_.unlock();
         }
     }
 
 
-    Timer::Ptr create_timer_at(int64_t expir_ms, TimerHandler handler, void* arg) {
+    Timer* create_timer_at(int64_t expir_ms, TimerHandler handler, void* arg) {
         if (expir_ms <= xq::tools::now_ms()) {
             handler(arg);
             return nullptr;
         }
 
-        Timer::Ptr timer = Timer::get();
+        Timer* timer = new Timer;
         timer->id = id_gen_++;
         timer->time_ms = expir_ms;
         timer->handler = handler;
@@ -591,7 +567,7 @@ public:
             itr->second->insert(std::make_pair(timer->id, timer));
         }
         else {
-            SlotPtr slot = xq::tools::ObjectPool<Slot>::instance()->get();
+            Slot* slot = new Slot;
             slot->insert(std::make_pair(timer->id, timer));
             slotm_.insert(std::make_pair(expir_ms, slot));
         }
@@ -601,7 +577,7 @@ public:
     }
 
 
-    Timer::Ptr create_timer_after(int64_t delay_ms, TimerHandler handler, void* arg) {
+    Timer* create_timer_after(int64_t delay_ms, TimerHandler handler, void* arg) {
         if (delay_ms <= 0) {
             return nullptr;
         }
@@ -610,18 +586,21 @@ public:
     }
 
 
-    void remove_timer(Timer::Ptr timer) {
+    void remove_timer(Timer* timer) {
         mtx_.lock();
-        auto itr_slot = slotm_.find(timer->time_ms);
-        if (itr_slot != slotm_.end()) {
-            SlotPtr& slot = itr_slot->second;
+        auto slot_itr = slotm_.find(timer->time_ms);
+
+        if (slot_itr != slotm_.end()) {
+            Slot* slot = slot_itr->second;
             auto itr_timer = slot->find(timer->id);
             if (itr_timer != slot->end()) {
+                delete itr_timer->second;
                 slot->erase(itr_timer);
             }
 
             if (slot->empty()) {
-                slotm_.erase(itr_slot);
+                delete slot;
+                slotm_.erase(slot_itr);
             }
         }
         mtx_.unlock();
@@ -636,7 +615,6 @@ public:
     }
 
 
-
 private:
     BTreeTimer()
         : running_(false)
@@ -646,7 +624,7 @@ private:
     bool running_;
     std::atomic<uint64_t> id_gen_;
     std::mutex mtx_;
-    std::map<int64_t, SlotPtr> slotm_;
+    std::map<int64_t, Slot*> slotm_;
 
 
     BTreeTimer(const BTreeTimer&) = delete;
