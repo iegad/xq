@@ -1,5 +1,5 @@
-#ifndef __TOOLS_HPP__
-#define __TOOLS_HPP__
+#ifndef __XQ_TOOLS_HPP__
+#define __XQ_TOOLS_HPP__
 
 
 #ifdef _WIN32
@@ -486,14 +486,16 @@ public:
     /// @brief 定时任务
     ///
     struct Timer {
+        int32_t ntimes;       // 执行次数
         int64_t expire_ms;    // 超时值
         int64_t interval;     // 时间间隔
         TimerHandler handler; // 定时器事件
         void* arg;            // 事件参数
 
 
-        Timer(int64_t expire_ms, TimerHandler handler, void* arg, int64_t interval = 0)
-            : expire_ms(expire_ms)
+        Timer(int64_t expire_ms, TimerHandler handler, void* arg, int64_t interval = 0, int32_t ntimes = 0)
+            : ntimes(ntimes)
+            , expire_ms(expire_ms)
             , interval(interval)
             , handler(handler)
             , arg(arg)
@@ -525,8 +527,13 @@ public:
 
 
     ~BTreeTimer() {
-        stop();
-        wait();
+        if (running_) {
+            stop();
+        }
+
+        if (sch_.joinable()) {
+            wait();
+        }
     }
 
 
@@ -562,12 +569,16 @@ public:
                         timer->handler(timer->arg);
                     }
 
-                    if (timer->interval > 0) {
-                        timer->expire_ms += timer->interval;
-                        _create_timer_at(timer);
+                    if (timer->ntimes > 0) {
+                        timer->ntimes--;
+                    }
+
+                    if (timer->interval == 0 || timer->ntimes == 0) {
+                        delete timer;
                     }
                     else {
-                        delete timer;
+                        timer->expire_ms += timer->interval;
+                        _create_timer_at(timer);
                     }
                 }
 
@@ -586,6 +597,7 @@ public:
     /// @param interval 调度间隔
     ///
     void run(int interval = 10) {
+        running_ = true;
         sch_ = std::thread(std::bind(&BTreeTimer::start, this, interval));
     }
 
@@ -594,9 +606,7 @@ public:
     /// @brief 停止调度
     ///
     void stop() {
-        mtx_.lock();
         running_ = false;
-        mtx_.unlock();
     }
 
 
@@ -657,18 +667,25 @@ public:
     /// @param arg 事件参数
     ///
     /// @param loop 是否循环执行; loop 为真时, 将每隔delay_ms 执行一次定时任务. 否则只执行一次.
+    /// 
+    /// @param ntimes 执行次数, 当该loop 为真时忽略该值.
     ///
     /// @return 返回创建好的定器指针
     ///
     /// @note 返回的定时器指针由调度器管理
     ///
-    Timer* create_timer_after(int64_t delay_ms, TimerHandler handler, void* arg, bool loop = false) {
+    Timer* create_timer_after(int64_t delay_ms, TimerHandler handler, void* arg, bool loop = false, int32_t ntimes = 0) {
         if (delay_ms <= 0) {
             return nullptr;
         }
 
-        int64_t expire_ms = xq::tools::now_ms() + delay_ms;
-        return loop ? _create_timer_at(new Timer(expire_ms, handler, arg, delay_ms)) : _create_timer_at(new Timer(expire_ms, handler, arg));
+        if (loop) {
+            ntimes = -1;
+        }
+
+        return _create_timer_at(
+            new Timer(xq::tools::now_ms() + delay_ms, handler, arg, delay_ms, ntimes)
+        );
     }
 
 
@@ -695,7 +712,7 @@ private:
     }
 
 
-    bool running_;
+    volatile bool running_;
     std::thread sch_;
     std::mutex mtx_;
     std::map<int64_t, Slot*> slotm_;
@@ -705,12 +722,11 @@ private:
     BTreeTimer(const BTreeTimer&&) = delete;
     BTreeTimer& operator=(const BTreeTimer&) = delete;
     BTreeTimer& operator=(const BTreeTimer&&) = delete;
-}; // class TimerScheduler;
+}; // class BTreeTimer;
+
 
 } // namespace tools
 } // namespace xq
 
 
-
-
-#endif // __TOOLS_HPP__
+#endif // __XQ_TOOLS_HPP__

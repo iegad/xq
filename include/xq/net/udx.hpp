@@ -376,7 +376,7 @@ public:
 
 
     void flush(int64_t now_ms) {
-        UdpSession::Segment *udp_seg = new UdpSession::Segment(&addr_, addrlen_);
+        UdpSession::Segment *udp_seg = new UdpSession::Segment(sess_.get(), &addr_, addrlen_);
 
         uint8_t* p = udp_seg->data;
         size_t nbuf = UDX_MTU;
@@ -388,7 +388,7 @@ public:
                 udp_seg->datalen = UDX_MTU - nbuf;
                 if (nbuf < UDX_HEAD_SIZE) {
                     sess_->send(udp_seg);
-                    udp_seg = new UdpSession::Segment(&addr_, addrlen_);
+                    udp_seg = new UdpSession::Segment(sess_.get(), &addr_, addrlen_);
                     p = udp_seg->data;
                     nbuf = UDX_MTU;
                 }
@@ -422,7 +422,7 @@ public:
             udp_seg->datalen = UDX_MTU - nbuf;
             if (nbuf < UDX_HEAD_SIZE) {
                 sess_->send(udp_seg);
-                udp_seg = new UdpSession::Segment(&addr_, addrlen_);
+                udp_seg = new UdpSession::Segment(sess_.get(), &addr_, addrlen_);
                 p = udp_seg->data;
                 nbuf = UDX_MTU;
             }

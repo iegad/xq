@@ -24,15 +24,19 @@ public:
         uint8_t data[xq::net::UDP_RBUF_SIZE];
 
 
-        Segment()
-            : namelen(sizeof(sockaddr)) {
-            ::memset((uint8_t*)this + offsetof(Segment, datalen), 0, sizeof(Segment) - offsetof(Segment, datalen));
-        }
-
-
-        Segment(const sockaddr *name, socklen_t namelen) {
+        explicit Segment(UdpSession* sess, const sockaddr* name = nullptr, socklen_t namelen = sizeof(sockaddr), const uint8_t* data = nullptr, int datalen = 0)
+            : namelen(namelen)
+            , datalen(datalen)
+            , time_ms(0)
+            , sess(sess) {
             ::memcpy(&name, name, namelen);
-            this->namelen = namelen;
+            if (data && datalen > 0) {
+                assert(datalen < xq::net::UDP_RBUF_SIZE);
+                ::memcpy(this->data, data, datalen);
+            }
+            else {
+                ::memset(this->data, 0, xq::net::UDP_RBUF_SIZE);
+            }
         }
 
 
@@ -52,6 +56,12 @@ public:
             ::memcpy(this->data, data, datalen);
             this->datalen = datalen;
         }
+
+
+        Segment(const Segment&) = delete;
+        Segment(const Segment&&) = delete;
+        Segment& operator=(const Segment&) = delete;
+        Segment& operator=(const Segment&&) = delete;
     };
     // ------------------------------------------------------------------- END Segment -------------------------------------------------------------------
 
@@ -111,7 +121,7 @@ public:
     /// 
     /// @return 成功返回 0, 否则返回 -1
     ///
-    int send(Segment* seg, bool force = false) {
+    int send(const Segment* seg, bool force = false) {
         if (force) {
             assert(sockfd_ != INVALID_SOCKET && "udp session is invalid");
             int ret = ::sendto(sockfd_, (char*)seg->data, seg->datalen, 0, &seg->name, seg->namelen);
@@ -123,22 +133,29 @@ public:
     }
 
 
+    int send(const uint8_t* data, size_t datalen, const sockaddr* remote, socklen_t remotelen, bool force = false) {
+        if (force) {
+            return ::sendto(sockfd_, (const char*)data, datalen, 0, remote, remotelen);
+        }
+
+        Segment* seg = new Segment(this, remote, remotelen, data, datalen);
+        return this->send(seg);
+    }
+
+
 #ifdef WIN32
     void start_rcv(RcvCallback rcv_cb) {
         assert(sockfd_ != INVALID_SOCKET && "udp session is invalid");
         assert(rcv_cb && "rcv_cb cannot be null");
 
-        
-
         while (1) {
-            Segment* seg = new Segment;
+            Segment* seg = new Segment(this);
             int n = ::recvfrom(sockfd_, (char*)seg->data, UDP_RBUF_SIZE, 0, &seg->name, &seg->namelen);
             if (n < 0 && error() != 10060) {
                 break;
             }
 
             seg->datalen = n;
-            seg->sess = this;
             seg->time_ms = xq::tools::now_ms();
             n = rcv_cb(seg);
             if (n <= 0) {
