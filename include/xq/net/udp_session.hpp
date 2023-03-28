@@ -35,7 +35,7 @@ public:
             }
 
             if (data && datalen > 0) {
-                assert(datalen < xq::net::UDP_RBUF_SIZE);
+                ASSERT(datalen < xq::net::UDP_RBUF_SIZE);
                 ::memcpy(this->data, data, datalen);
             }
             else {
@@ -45,7 +45,7 @@ public:
 
 
         void set_name(const std::string& remote) {
-            assert(xq::net::str2addr(remote, &name, (socklen_t*)&namelen));
+            ASSERT(xq::net::str2addr(remote, &name, (socklen_t*)&namelen));
         }
 
 
@@ -56,7 +56,7 @@ public:
 
 
         void set_data(const uint8_t* data, int datalen) {
-            assert(data && datalen > 0 && datalen <= xq::net::UDP_RBUF_SIZE);
+            ASSERT(data && datalen > 0 && datalen <= xq::net::UDP_RBUF_SIZE);
             ::memcpy(this->data, data, datalen);
             this->datalen = datalen;
         }
@@ -141,8 +141,8 @@ public:
 
 #ifdef WIN32
     void start_rcv(RcvCallback rcv_cb) {
-        assert(sockfd_ != INVALID_SOCKET && "udp session is invalid");
-        assert(rcv_cb && "rcv_cb cannot be null");
+        ASSERT(sockfd_ != INVALID_SOCKET && "udp session is invalid");
+        ASSERT(rcv_cb && "rcv_cb cannot be null");
 
         while (1) {
             Segment* seg = new Segment(this);
@@ -171,7 +171,7 @@ public:
 
 
     int flush() {
-        assert(sockfd_ != INVALID_SOCKET && "udp session is invalid");
+        ASSERT(sockfd_ != INVALID_SOCKET && "udp session is invalid");
 
         if (!snd_buf_.empty()) {
             for (auto itr = snd_buf_.begin(); itr != snd_buf_.end();) {
@@ -190,8 +190,8 @@ public:
 #else
 
     void start_rcv(RcvCallback rcv_cb) {
-        assert(sockfd_ != INVALID_SOCKET && "udp session is invalid");
-        assert(rcv_cb && "rcv_cb cannot be null");
+        ASSERT(sockfd_ != INVALID_SOCKET && "udp session is invalid");
+        ASSERT(rcv_cb && "rcv_cb cannot be null");
 
         mmsghdr msgs[IO_RMSG_SIZE];
         ::memset(msgs, 0, sizeof(msgs));
@@ -270,7 +270,7 @@ public:
 
 
     int flush() {
-        assert(sockfd_ != INVALID_SOCKET && "udp session is invalid");
+        ASSERT(sockfd_ != INVALID_SOCKET && "udp session is invalid");
 
         mmsghdr msgs[IO_SMSG_SIZE];
         ::memset(msgs, 0, sizeof(msgs));
@@ -328,8 +328,8 @@ public:
     /// @return 成功返回 0, 否则返回 -1
     ///
     int send(const Segment* seg, bool force = false) {
+        ASSERT(sockfd_ != INVALID_SOCKET && "udp session is invalid");
         if (force) {
-            assert(sockfd_ != INVALID_SOCKET && "udp session is invalid");
             int ret = ::sendto(sockfd_, (char*)seg->data, seg->datalen, 0, &seg->name, seg->namelen);
             delete seg;
             return ret;
@@ -340,7 +340,9 @@ public:
 
 
     int send(const uint8_t* data, size_t datalen, const sockaddr* remote, socklen_t remotelen, bool force = false) {
+        ASSERT(sockfd_ != INVALID_SOCKET && "udp session is invalid");
         if (force) {
+            
             return ::sendto(sockfd_, (const char*)data, datalen, 0, remote, remotelen);
         }
 
