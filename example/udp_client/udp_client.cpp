@@ -20,13 +20,11 @@ void send_wkr() {
     socklen_t addrlen = sizeof(addr);
     ASSERT(xq::net::str2addr("192.168.0.101:6688", &addr, &addrlen));
 
-    for (int i = 0; i < 1000; i++) {
+    for (int i = 0; i < 100000; i++) {
         sprintf(buf, "Hello world: %d", i);
-        int n = sess->send((uint8_t*)buf, strlen(buf), &addr, addrlen, true);
-        if (n < 0) {
-            std::printf("send failed: %d\n", xq::net::error());
-        }
+        sess->send((uint8_t*)buf, strlen(buf), &addr, addrlen);
     }
+    sess->flush();
 }
 
 
@@ -37,10 +35,8 @@ int main(int argc, char** argv) {
         exit(EXIT_FAILURE);
     }
 #endif // WIN32
-
     sess = UdpSession::create();
     std::thread t(send_wkr);
-    //sess->start_rcv(rcv_cb);
     t.join();
 
 #ifdef WIN32

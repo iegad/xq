@@ -128,6 +128,15 @@ public:
 
 
     void stop() {
+#ifndef WIN32
+        constexpr char buf[1] = { 'X' };
+
+        if (wp_ != -1) {
+            ASSERT(::write(wp_, buf, 1) == 1);
+            ::close(wp_);
+            wp_ = -1;
+        }
+#endif // WIN32
         close();
     }
 
@@ -173,15 +182,14 @@ public:
     int flush() {
         ASSERT(sockfd_ != INVALID_SOCKET && "udp session is invalid");
 
-        if (!snd_buf_.empty()) {
-            for (auto itr = snd_buf_.begin(); itr != snd_buf_.end();) {
-                Segment* seg = *itr;
-                int n = ::sendto(sockfd_, (char*)seg->data, seg->datalen, 0, &seg->name, seg->namelen);
-                delete seg;
-                snd_buf_.erase(itr++);
-                if (n < 0) {
-                    return n;
-                }
+        while (!snd_buf_.empty()) {
+            auto itr = snd_buf_.begin();
+            Segment* seg = *itr;
+            int n = ::sendto(sockfd_, (char*)seg->data, seg->datalen, 0, &seg->name, seg->namelen);
+            delete seg;
+            snd_buf_.erase(itr++);
+            if (n < 0) {
+                // TODO: error handle
             }
         }
 
@@ -193,6 +201,11 @@ public:
         ASSERT(sockfd_ != INVALID_SOCKET && "udp session is invalid");
         ASSERT(rcv_cb && "rcv_cb cannot be null");
 
+        int p[2];
+        ASSERT(!pipe(p));
+        int rp = p[0];
+        wp_ = p[1];
+
         mmsghdr msgs[IO_RMSG_SIZE];
         ::memset(msgs, 0, sizeof(msgs));
 
@@ -202,6 +215,11 @@ public:
         msghdr* hdr;
 
         int n = IO_RMSG_SIZE, err;
+
+        fd_set fds, rfds;
+        FD_ZERO(&fds);
+        FD_SET(sockfd_, &fds);
+        FD_SET(rp, &fds);
 
         while(1) {
             for (int i = 0; i < n; i++) {
@@ -217,6 +235,18 @@ public:
                 hdr->msg_iovlen = 1;
                 iovecs[i].iov_base = seg->data;
                 iovecs[i].iov_len = UDP_RBUF_SIZE;
+            }
+
+            rfds = fds;
+            n = ::select(FD_SETSIZE, &rfds, nullptr, nullptr, nullptr);
+            if (n < 1) {
+                continue;
+            }
+
+            if (FD_ISSET(rp, &rfds)) {
+                char buf[1];
+                ASSERT(::read(rp, buf, 1) == 1 && buf[0] == 'X');
+                break;
             }
 
             n = ::recvmmsg(sockfd_, msgs, IO_RMSG_SIZE, MSG_WAITFORONE, nullptr);
@@ -266,6 +296,8 @@ public:
             delete* itr;
             snd_buf_.erase(itr);
         }
+
+        ::close(rp);
     }
 
 
@@ -354,6 +386,9 @@ public:
 private:
     UdpSession(SOCKET sockfd, const sockaddr *addr, socklen_t addrlen)
         : sockfd_(sockfd)
+#ifndef WIN32
+        , wp_(-1)
+#endif // !WIN32
         , addr_({ 0, {0} })
         , addrlen_(sizeof(addr_)) {
         ::memcpy(&addr_, addr, addrlen);
@@ -362,10 +397,14 @@ private:
 
 
     SOCKET sockfd_;
+#ifndef WIN32
+    int wp_;
+#endif // WIN32
     sockaddr addr_;
     socklen_t addrlen_;
     std::thread thread_;
     std::list<Segment*> snd_buf_;
+
 
 
     UdpSession(const UdpSession&) = delete;

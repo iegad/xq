@@ -20,9 +20,6 @@ int rcv_cb(const UdpSession::Segment* seg) {
     static int count = 0;
     count++;
     std::printf("%d => %s\n", count, seg->to_string().c_str());
-    if (count == 1000) {
-        seg->sess->stop();
-    }
     return 0;
 }
 
