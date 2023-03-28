@@ -15,10 +15,8 @@
 #include <jemalloc/jemalloc.h>
 #endif
 
-#include <assert.h>
 #include <errno.h>
 #include <memory.h>
-
 #include <atomic>
 #include <chrono>
 #include <functional>
@@ -27,6 +25,7 @@
 #include <regex>
 #include <thread>
 #include <vector>
+#include "xq//tools/tools.hpp"
 
 
 namespace xq {
@@ -126,12 +125,12 @@ inline int error() {
 /// @return 成功返回创建好的 UDP sockfd, 则返回 INVALID_SOCKET
 /// @note   只有当addr和addrlen两个参数同时传递时, 才能获取绑定的sockaddr.
 /// @exception 当local为无效地址时.
-SOCKET udp_bind(const char *ip, const char *port, sockaddr* addr = nullptr, socklen_t* addrlen = nullptr) {
+SOCKET udp_bind(const char *host, const char *svc, sockaddr* addr = nullptr, socklen_t* addrlen = nullptr) {
     constexpr int ON = 1;
 
-    assert(ip && port);
-    SOCKET fd = INVALID_SOCKET;
+    ASSERT(host && svc);
 
+    SOCKET fd = INVALID_SOCKET;
     addrinfo hints;
     addrinfo *result = nullptr, *rp = nullptr;
 
@@ -140,7 +139,7 @@ SOCKET udp_bind(const char *ip, const char *port, sockaddr* addr = nullptr, sock
     hints.ai_socktype = SOCK_DGRAM;
     hints.ai_flags = AI_PASSIVE;
 
-    if (::getaddrinfo(ip, port, &hints, &result)) {
+    if (::getaddrinfo(host, svc, &hints, &result)) {
         return INVALID_SOCKET;
     }
 
@@ -174,7 +173,9 @@ SOCKET udp_bind(const char *ip, const char *port, sockaddr* addr = nullptr, sock
         fd = INVALID_SOCKET;
     }
 
-    assert(rp);
+    if (!rp) {
+        fd = INVALID_SOCKET;
+    }
 
     ::freeaddrinfo(result);
 
@@ -182,66 +183,51 @@ SOCKET udp_bind(const char *ip, const char *port, sockaddr* addr = nullptr, sock
 }
 
 
-/// @brief 将sockaddr 转换成字符串形式
-/// @param addr 需要获取的sockaddr
-/// @return 成功返回 sockaddr字符串表达示, 否则返回空串.
-std::string addr2str(const sockaddr *addr) {
-    assert(addr && "addr is invalid");
+int addr2str(const sockaddr* addr, char* buf, size_t nbuf) {
+    ASSERT(addr && buf && nbuf >= 48 && "parameter is invalid");
 
-    std::string rzt;
-    char buf[38] = { 0 };
+    int ret = -1;
 
     switch (addr->sa_family) {
+        case AF_INET: {
+            sockaddr_in* ra = (sockaddr_in*)addr;
+            if (::inet_ntop(AF_INET, &ra->sin_addr, buf, nbuf)) {
+                char* tmpbuf = buf + strlen(buf);
+                snprintf(tmpbuf, nbuf, ":%d", ntohs(ra->sin_port));
+                ret = strlen(buf);
+            }
+        } break;
 
-    case AF_INET: {
-        sockaddr_in* ra = (sockaddr_in*)addr;
-        assert(::inet_ntop(AF_INET, &ra->sin_addr, buf, sizeof(buf)) && "inet_ntop failed");
-        rzt = std::string(buf) + ":" + std::to_string(ntohs(ra->sin_port));
-    } break;
-
-    case AF_INET6: {
-        sockaddr_in6* ra = (sockaddr_in6*)addr;
-        assert(::inet_ntop(AF_INET6, &ra->sin6_addr, buf, sizeof(buf)) && "inet_ntop failed");
-        rzt = std::string(buf) + ":" + std::to_string(ntohs(ra->sin6_port));
-    } break;
-
-    default: break;
+        case AF_INET6: {
+            sockaddr_in6* ra = (sockaddr_in6*)addr;
+            if (::inet_ntop(AF_INET, &ra->sin6_addr, buf, nbuf)) {
+                buf[0] = '[';
+                int len = strlen(buf);
+                buf[len] = ']';
+                char* tmpbuf = buf + len + 1;
+                snprintf(tmpbuf, nbuf, ":%d", ntohs(ra->sin6_port));
+                ret = strlen(buf);
+            }
+        } break;
     } // switch (addr_.sa_family);
 
-    return rzt;
+    return ret;
 }
 
 
-int addr2str(const sockaddr* addr, char* buf, size_t nbuf = 48) {
-    assert(addr && "addr is invalid");
-    assert(buf && nbuf >= 48 && "buf is invalid");
+/// @brief 将sockaddr 转换成字符串形式
+/// @param addr 需要获取的sockaddr
+/// @return 成功返回 sockaddr字符串表达示, 否则返回空串.
+std::string addr2str(const sockaddr* addr) {
+    ASSERT(addr && "addr is invalid");
 
-    ::memset(buf, 0, nbuf);
+    char buf[48];
+    int n = addr2str(addr, buf, 48);
+    if (n < 0) {
+        return "";
+    }
 
-    switch (addr->sa_family) {
-
-    case AF_INET: {
-        sockaddr_in* ra = (sockaddr_in*)addr;
-        assert(::inet_ntop(AF_INET, &ra->sin_addr, buf, nbuf) && "inet_ntop failed");
-        char* tmpbuf = buf + strlen(buf);
-        snprintf(tmpbuf, nbuf, ":%d", ntohs(ra->sin_port));
-    } break;
-
-    case AF_INET6: {
-        sockaddr_in6* ra = (sockaddr_in6*)addr;
-        assert(::inet_ntop(AF_INET6, &ra->sin6_addr, buf + 1, nbuf) && "inet_ntop failed");
-        buf[0] = '[';
-        int len = strlen(buf);
-        buf[len] = ']';
-        char* tmpbuf = buf + len + 1;
-        snprintf(tmpbuf, nbuf, ":%d", ntohs(ra->sin6_port));
-    } break;
-
-    default:
-        return -1;
-    } // switch (addr_.sa_family);
-
-    return strlen(buf);
+    return std::string(buf, n);
 }
 
 
@@ -251,8 +237,8 @@ int addr2str(const sockaddr* addr, char* buf, size_t nbuf = 48) {
 /// @param addrlen OUT sockaddr length
 /// @return 成功转换返回true, 否则返回false
 bool str2addr(const std::string& str, sockaddr *addr, socklen_t *addrlen) {
-    static std::regex r6(REG_IPV6);
-    static std::regex r4(REG_IPV4);
+    static const std::regex r6(REG_IPV6);
+    static const std::regex r4(REG_IPV4);
 
     if (!addr || !addrlen) {
         return false;

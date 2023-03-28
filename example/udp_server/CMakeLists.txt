@@ -1,6 +1,6 @@
-project(server)
+project(udp_server)
 
-add_executable(${PROJECT_NAME} server.cpp)
+add_executable(${PROJECT_NAME} udp_server.cpp)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

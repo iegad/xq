@@ -26,6 +26,9 @@
 #include "xq/net/net.hpp"
 
 
+#define ASSERT(expr) if (!(expr)){std::printf("%s:%d %s", __FILE__, __LINE__, #expr); std::terminate();}
+
+
 namespace xq {
 namespace tools {
 
@@ -61,6 +64,7 @@ template<typename T>
 T MID(const T& a, const T& b, const T& c) {
     return MIN(MAX(a, b), c);
 }
+
 
 // ---------------------------------------------------------------------------- 时间 ----------------------------------------------------------------------------
 
@@ -376,7 +380,7 @@ public:
     ///
     size_t as_vec(std::vector<T> &vec) {
         mtx_.lock();
-        std::copy(m_.begin(), m_.end(); std::back_inserter(vec));
+        std::copy(m_.begin(), m_.end(), std::back_inserter(vec));
         mtx_.unlock();
         return vec.size();
     }
@@ -398,6 +402,7 @@ private:
     Set& operator=(const Set&) = delete;
     Set& operator=(const Set&&) = delete;
 }; // class Set;
+
 
 // ---------------------------------------------------------------------------- safe hash map ----------------------------------------------------------------------------
 
@@ -485,6 +490,9 @@ public:
     /* -------------------------------------- */
     /// @brief 定时任务
     ///
+    /// @note 该类型由BTreeTimer 内部维护, 所以构造函数为私有, 并且通过 new运算符 创建
+    ///       的对象由 BTreeTimer内部维护, 外部函数千万不要 delete 该对象.
+    ///
     struct Timer {
         int32_t ntimes;       // 执行次数
         int64_t expire_ms;    // 超时值
@@ -493,6 +501,19 @@ public:
         void* arg;            // 事件参数
 
 
+        /* -------------------------------------- */
+        /// @brief 取消定时任务
+        ///
+        void cancel() {
+            handler = nullptr;
+        }
+
+
+    private:
+
+        /* -------------------------------------- */
+        /// @brief Timer私有构造函数, 是为了不让在外部创建该Timer
+        ///
         Timer(int64_t expire_ms, TimerHandler handler, void* arg, int64_t interval = 0, int32_t ntimes = 0)
             : ntimes(ntimes)
             , expire_ms(expire_ms)
@@ -502,13 +523,7 @@ public:
         {}
 
 
-        /* -------------------------------------- */
-        /// @brief 取消定时任务
-        void cancel() {
-            handler = nullptr;
-        }
-
-
+        friend class BTreeTimer;
         Timer(const Timer&) = delete;
         Timer(const Timer&&) = delete;
         Timer& operator=(const Timer&) = delete;

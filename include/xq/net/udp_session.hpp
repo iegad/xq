@@ -28,8 +28,12 @@ public:
             : namelen(namelen)
             , datalen(datalen)
             , time_ms(0)
-            , sess(sess) {
-            ::memcpy(&name, name, namelen);
+            , sess(sess)
+            , name({0,{0}}) {
+            if (name) {
+                ::memcpy(&this->name, name, namelen);
+            }
+
             if (data && datalen > 0) {
                 assert(datalen < xq::net::UDP_RBUF_SIZE);
                 ::memcpy(this->data, data, datalen);
@@ -58,6 +62,13 @@ public:
         }
 
 
+        std::string to_string() const {
+            char buf[xq::net::UDP_HEAD_SIZE * 2 + 500] = {0};
+            sprintf(buf, "[%s]:[%s]", net::addr2str(&this->name).c_str(), xq::tools::bin2hex(this->data, this->datalen).c_str());
+            return buf;
+        }
+
+
         Segment(const Segment&) = delete;
         Segment(const Segment&&) = delete;
         Segment& operator=(const Segment&) = delete;
@@ -67,7 +78,7 @@ public:
 
 
     typedef std::shared_ptr<UdpSession> Ptr;
-    typedef int (*RcvCallback)(Segment*);
+    typedef int (*RcvCallback)(const Segment*);
 
 
     static Ptr create(const std::string& local_addr = "") {
@@ -99,47 +110,32 @@ public:
 
 
     ~UdpSession() {
-        if (sockfd_ != INVALID_SOCKET) {
-            xq::net::close(sockfd_);
-        }
+        close();
     }
 
 
     void close() {
-        xq::net::close(sockfd_);
-        sockfd_ = INVALID_SOCKET;
+        if (sockfd_ != INVALID_SOCKET) {
+            xq::net::close(sockfd_);
+            sockfd_ = INVALID_SOCKET;
+        }
     }
 
 
-    /* --------------------------------------------------------------------- */
-    /// @brief 发送数据, 
-    ///        参数seg 在主调函数中必需是 new 运算符创建. 
-    ///        主调函数无需调用 delete 删除该对象, 该对象将由 该方法接管.
-    /// 
-    /// @param seg   需要发送的UdpSession::Segment
-    /// @param force 立即发送数据
-    /// 
-    /// @return 成功返回 0, 否则返回 -1
-    ///
-    int send(const Segment* seg, bool force = false) {
-        if (force) {
-            assert(sockfd_ != INVALID_SOCKET && "udp session is invalid");
-            int ret = ::sendto(sockfd_, (char*)seg->data, seg->datalen, 0, &seg->name, seg->namelen);
-            delete seg;
-            return ret;
-        }
-        snd_buf_.emplace_back(seg);
-        return 0;
+    void run(RcvCallback rcv_cb) {
+        thread_ = std::thread(std::bind(&UdpSession::start_rcv, this, rcv_cb));
     }
 
 
-    int send(const uint8_t* data, size_t datalen, const sockaddr* remote, socklen_t remotelen, bool force = false) {
-        if (force) {
-            return ::sendto(sockfd_, (const char*)data, datalen, 0, remote, remotelen);
-        }
+    void stop() {
+        close();
+    }
 
-        Segment* seg = new Segment(this, remote, remotelen, data, datalen);
-        return this->send(seg);
+
+    void wait() {
+        if (thread_.joinable()) {
+            thread_.join();
+        }
     }
 
 
@@ -164,6 +160,12 @@ public:
                     break;
                 }
             }
+        }
+
+        while (!snd_buf_.empty()) {
+            auto itr = snd_buf_.begin();
+            delete* itr;
+            snd_buf_.erase(itr);
         }
     }
 
@@ -204,7 +206,7 @@ public:
         while(1) {
             for (int i = 0; i < n; i++) {
                 if (!segs[i]) {
-                    segs[i] = new Segment;
+                    segs[i] = new Segment(this);
                 }
                 seg = segs[i];
 
@@ -258,6 +260,12 @@ public:
                 delete segs[i];
             }
         }
+
+        while (!snd_buf_.empty()) {
+            auto itr = snd_buf_.begin();
+            delete* itr;
+            snd_buf_.erase(itr);
+        }
     }
 
 
@@ -309,6 +317,38 @@ public:
 #endif // WIN32
 
 
+    /* --------------------------------------------------------------------- */
+    /// @brief 发送数据, 
+    ///        参数seg 在主调函数中必需是 new 运算符创建. 
+    ///        主调函数无需调用 delete 删除该对象, 该对象将由 该方法接管.
+    /// 
+    /// @param seg   需要发送的UdpSession::Segment
+    /// @param force 立即发送数据
+    /// 
+    /// @return 成功返回 0, 否则返回 -1
+    ///
+    int send(const Segment* seg, bool force = false) {
+        if (force) {
+            assert(sockfd_ != INVALID_SOCKET && "udp session is invalid");
+            int ret = ::sendto(sockfd_, (char*)seg->data, seg->datalen, 0, &seg->name, seg->namelen);
+            delete seg;
+            return ret;
+        }
+        snd_buf_.emplace_back(const_cast<Segment*>(seg));
+        return 0;
+    }
+
+
+    int send(const uint8_t* data, size_t datalen, const sockaddr* remote, socklen_t remotelen, bool force = false) {
+        if (force) {
+            return ::sendto(sockfd_, (const char*)data, datalen, 0, remote, remotelen);
+        }
+
+        Segment* seg = new Segment(this, remote, remotelen, data, datalen);
+        return this->send(seg);
+    }
+
+
 private:
     UdpSession(SOCKET sockfd, const sockaddr *addr, socklen_t addrlen)
         : sockfd_(sockfd)
@@ -322,6 +362,7 @@ private:
     SOCKET sockfd_;
     sockaddr addr_;
     socklen_t addrlen_;
+    std::thread thread_;
     std::list<Segment*> snd_buf_;
 
 
