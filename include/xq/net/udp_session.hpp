@@ -13,8 +13,8 @@ namespace net {
 
 class UdpSession {
 public:
-    // ------------------------------------------------------------------- BEG Segment -------------------------------------------------------------------
-    // Udp 传输分组
+    // ------------------------------------------------------------------- UDP 分组 -------------------------------------------------------------------
+    /// 
     struct Segment {
         int namelen;
         int datalen;
@@ -24,6 +24,19 @@ public:
         uint8_t data[xq::net::UDP_RBUF_SIZE];
 
 
+        /* -------------------------------------- */
+        /// @brief 构造函数
+        ///
+        /// @param sess 
+        ///
+        /// @param name 
+        ///
+        /// @param namelen 
+        ///
+        /// @param data 
+        ///
+        /// @param datalen 
+        ///
         explicit Segment(UdpSession* sess, const sockaddr* name = nullptr, socklen_t namelen = sizeof(sockaddr), const uint8_t* data = nullptr, int datalen = 0)
             : namelen(namelen)
             , datalen(datalen)
@@ -50,6 +63,7 @@ public:
 
 
         void set_name(const sockaddr *addr, socklen_t addrlen) {
+            ASSERT(addr && addrlen > 0);
             ::memcpy(&name, addr, addrlen);
             namelen = addrlen;
         }
@@ -115,6 +129,16 @@ public:
 
 
     void close() {
+#ifndef WIN32
+        constexpr char buf[1] = { 'X' };
+
+        if (wp_ != -1) {
+            ASSERT(::write(wp_, buf, 1) == 1);
+            ::close(wp_);
+            wp_ = -1;
+        }
+#endif // WIN32
+
         if (sockfd_ != INVALID_SOCKET) {
             xq::net::close(sockfd_);
             sockfd_ = INVALID_SOCKET;
@@ -128,15 +152,6 @@ public:
 
 
     void stop() {
-#ifndef WIN32
-        constexpr char buf[1] = { 'X' };
-
-        if (wp_ != -1) {
-            ASSERT(::write(wp_, buf, 1) == 1);
-            ::close(wp_);
-            wp_ = -1;
-        }
-#endif // WIN32
         close();
     }
 

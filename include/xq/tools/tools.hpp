@@ -22,7 +22,6 @@
 #include <vector>
 
 
-#include "xq/third/concurrentqueue.h"
 #include "xq/net/net.hpp"
 
 
@@ -261,7 +260,7 @@ inline uint64_t to_be_u64(uint64_t v) {
 /// @brief 二进制数据转换为16进制字符串
 ///
 std::string bin2hex(const uint8_t* data, size_t data_len) {
-    assert(data);
+    ASSERT(data);
 
     if (!data_len)
         return "";
@@ -423,12 +422,15 @@ public:
 
     /* -------------------------------------- */
     /// @brief 获取map中所有的值到 vals中
-    /// @param vals 
+    ///
+    /// @param vals
+    ///
     /// @param n 
+    ///
     size_t get_all_vals(TVal* vals, size_t n) {
         size_t i = 0;
         std::lock_guard<TLock> lk(mtx_);
-        assert(n >= m_.size());
+        ASSERT(n >= m_.size());
 
         for (auto &itr: m_) {
             vals[i++] = itr.second;
@@ -485,10 +487,8 @@ public:
     typedef void(*TimerHandler)(void* arg);
 
 
-    // ------------------------------------------------------------------ BEG Timer  ------------------------------------------------------------------
-
-    /* -------------------------------------- */
-    /// @brief 定时任务
+    // ------------------------------------------------------------------ 定时任务 ------------------------------------------------------------------
+    /// @brief 
     ///
     /// @note 该类型由BTreeTimer 内部维护, 所以构造函数为私有, 并且通过 new运算符 创建
     ///       的对象由 BTreeTimer内部维护, 外部函数千万不要 delete 该对象.
@@ -510,7 +510,6 @@ public:
 
 
     private:
-
         /* -------------------------------------- */
         /// @brief Timer私有构造函数, 是为了不让在外部创建该Timer
         ///
@@ -529,7 +528,7 @@ public:
         Timer& operator=(const Timer&) = delete;
         Timer& operator=(const Timer&&) = delete;
     };
-    // ------------------------------------------------------------------ END Timer  ------------------------------------------------------------------
+    // ------------------------------------------------------------------ 定时任务 ------------------------------------------------------------------
 
 
     typedef std::shared_ptr<BTreeTimer> Ptr;
