@@ -20,7 +20,7 @@ void send_wkr() {
     socklen_t addrlen = sizeof(addr);
     ASSERT(xq::net::str2addr("192.168.0.101:6688", &addr, &addrlen));
 
-    for (int i = 0; i < 100000; i++) {
+    for (int i = 0; i < 1000; i++) {
         sprintf(buf, "Hello world: %d", i);
         sess->send((uint8_t*)buf, strlen(buf), &addr, addrlen);
     }

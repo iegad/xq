@@ -128,6 +128,17 @@ public:
     }
 
 
+    void set_reuse() {
+        constexpr int ON = 1;
+        ASSERT(sockfd_ != INVALID_SOCKET);
+        ASSERT(!setsockopt(sockfd_, SOL_SOCKET, SO_REUSEADDR, (char *)&ON, sizeof(ON)));
+#ifndef WIN32
+        ASSERT(!setsockopt(sockfd_, SOL_SOCKET, SO_REUSEADDR, &ON, sizeof(ON)));
+        ASSERT(!setsockopt(sockfd_, SOL_SOCKET, SO_REUSEPORT, &ON, sizeof(ON)));
+#endif // !WIN32
+    }
+
+
     void close() {
 #ifndef WIN32
         constexpr char buf[1] = { 'X' };
@@ -137,7 +148,7 @@ public:
             ::close(wp_);
             wp_ = -1;
         }
-#endif // WIN32
+#endif // !WIN32
 
         if (sockfd_ != INVALID_SOCKET) {
             xq::net::close(sockfd_);
@@ -215,10 +226,11 @@ public:
     void start_rcv(RcvCallback rcv_cb) {
         ASSERT(sockfd_ != INVALID_SOCKET && "udp session is invalid");
         ASSERT(rcv_cb && "rcv_cb cannot be null");
+        ASSERT(!xq::net::make_nonblocking(sockfd_));
 
         int p[2];
         ASSERT(!pipe(p));
-        int rp = p[0];
+        int rpfd = p[0];
         wp_ = p[1];
 
         mmsghdr msgs[IO_RMSG_SIZE];
@@ -234,48 +246,46 @@ public:
         fd_set fds, rfds;
         FD_ZERO(&fds);
         FD_SET(sockfd_, &fds);
-        FD_SET(rp, &fds);
+        FD_SET(rpfd, &fds);
+
+        for (int i = 0; i < n; i++) {
+            if (!segs[i]) {
+                segs[i] = new Segment(this);
+            }
+            seg = segs[i];
+
+            hdr = &msgs[i].msg_hdr;
+            hdr->msg_name = &seg->name;
+            hdr->msg_namelen = seg->namelen;
+            hdr->msg_iov = &iovecs[i];
+            hdr->msg_iovlen = 1;
+            iovecs[i].iov_base = seg->data;
+            iovecs[i].iov_len = UDP_RBUF_SIZE;
+        }
 
         while(1) {
-            for (int i = 0; i < n; i++) {
-                if (!segs[i]) {
-                    segs[i] = new Segment(this);
-                }
-                seg = segs[i];
-
-                hdr = &msgs[i].msg_hdr;
-                hdr->msg_name = &seg->name;
-                hdr->msg_namelen = seg->namelen;
-                hdr->msg_iov = &iovecs[i];
-                hdr->msg_iovlen = 1;
-                iovecs[i].iov_base = seg->data;
-                iovecs[i].iov_len = UDP_RBUF_SIZE;
-            }
-
             rfds = fds;
             n = ::select(FD_SETSIZE, &rfds, nullptr, nullptr, nullptr);
-            if (n < 1) {
+            if (n <= 0) {
                 continue;
             }
 
-            if (FD_ISSET(rp, &rfds)) {
+            if (FD_ISSET(rpfd, &rfds)) {
                 char buf[1];
-                ASSERT(::read(rp, buf, 1) == 1 && buf[0] == 'X');
+                ASSERT(::read(rpfd, buf, 1) == 1 && buf[0] == 'X');
                 break;
             }
 
-            n = ::recvmmsg(sockfd_, msgs, IO_RMSG_SIZE, MSG_WAITFORONE, nullptr);
-
             do {
+                n = ::recvmmsg(sockfd_, msgs, IO_RMSG_SIZE, MSG_WAITFORONE, nullptr);
                 if (n < 0) {
                     err = error();
-                    if (err != EAGAIN && err != EINTR) {
+                    if (err != EAGAIN && err != EWOULDBLOCK && err != EINTR) {
                         // TODO: error
                     }
                     break;
                 }
-
-                if (n == 0) {
+                else if (n == 0) {
                     break;
                 }
 
@@ -289,21 +299,26 @@ public:
 
                     int res = rcv_cb(seg);
                     segs[i] = nullptr;
-
                     if (res <= 0) {
                         delete seg;
-                        if (res < 0) {
-                            break;
-                        }
                     }
+
+                    seg = segs[i] = new Segment(this);
+                    hdr = &msgs[i].msg_hdr;
+                    hdr->msg_name = &seg->name;
+                    hdr->msg_namelen = seg->namelen;
+                    hdr->msg_iov = &iovecs[i];
+                    hdr->msg_iovlen = 1;
+                    iovecs[i].iov_base = seg->data;
+                    iovecs[i].iov_len = UDP_RBUF_SIZE;
                 }
-            } while(0);
+            } while(1);
         }
 
+        ::close(rpfd);
+
         for (int i = 0; i < IO_RMSG_SIZE; i++) {
-            if (segs[i]) {
-                delete segs[i];
-            }
+            if (segs[i]) delete segs[i];
         }
 
         while (!snd_buf_.empty()) {
@@ -311,8 +326,6 @@ public:
             delete* itr;
             snd_buf_.erase(itr);
         }
-
-        ::close(rp);
     }
 
 

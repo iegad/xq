@@ -109,7 +109,7 @@ public:
 
 
         static int encode(const Segment* seg, uint8_t* data, size_t datalen) {
-            assert(data && datalen > 0);
+            ASSERT(data && datalen > 0);
 
             int len = seg->len;
 
@@ -253,7 +253,7 @@ public:
 
 
     void set_addr(const std::string& remote) {
-        assert(xq::net::str2addr(remote, &addr_, &addrlen_));
+        ASSERT(xq::net::str2addr(remote, &addr_, &addrlen_));
     }
 
 
@@ -299,7 +299,7 @@ public:
 
 
     int recv(uint8_t* buf, size_t buflen) {
-        assert(buf && buflen > 0);
+        ASSERT(buf && buflen > 0);
 
         bool com = false;
         Segment* segs[UDX_SEG_SIZE];
@@ -344,7 +344,7 @@ public:
 
 
     int send(const uint8_t* data, size_t datalen) {
-        assert(data && datalen > 0 && datalen <= UDX_MAX_DATA_SIZE);
+        ASSERT(data && datalen > 0 && datalen <= UDX_MAX_DATA_SIZE);
 
         int n = datalen > UDX_MSS ? (datalen + UDX_MSS - 1) / UDX_MSS : 1;
         int nrcv = rcv_buf_.size();

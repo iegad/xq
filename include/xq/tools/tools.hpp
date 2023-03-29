@@ -8,21 +8,18 @@
 #include <arpa/inet.h>
 #endif // !_WIN32
 
-#include <stdint.h>
-
 #include <atomic>
 #include <chrono>
 #include <functional>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <stdint.h>
 #include <string>
+#include <thread>
 #include <unordered_set>
 #include <unordered_map>
 #include <vector>
-
-
-#include "xq/net/net.hpp"
 
 
 #define ASSERT(expr) if (!(expr)){std::printf("%s:%d %s", __FILE__, __LINE__, #expr); std::terminate();}

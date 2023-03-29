@@ -8,18 +8,19 @@
 #include <WS2tcpip.h>
 #else
 #include <arpa/inet.h>
+#include <fcntl.h>
+#include <jemalloc/jemalloc.h>
 #include <netdb.h>
-#include <unistd.h>
 #include <sys/socket.h>
 #include <sys/types.h>
-#include <jemalloc/jemalloc.h>
+#include <unistd.h>
 #endif
 
-#include <errno.h>
-#include <memory.h>
 #include <atomic>
 #include <chrono>
+#include <errno.h>
 #include <functional>
+#include <memory.h>
 #include <memory>
 #include <mutex>
 #include <regex>
@@ -287,6 +288,18 @@ bool str2addr(const std::string& str, sockaddr *addr, socklen_t *addrlen) {
     }
 
     return false;
+}
+
+
+inline int make_nonblocking(SOCKET sockfd) {
+#ifndef WIN32
+    int opts = fcntl(sockfd, F_GETFL);
+    return opts < 0 ? -1 : fcntl(sockfd, F_SETFL, opts | O_NONBLOCK);
+#else
+    u_long ON = 1;
+    return ::ioctlsocket(sockfd, FIONBIO, &ON);
+#endif // !WIN32
+    return 0;
 }
 
 
