@@ -17,12 +17,12 @@
 #include <stdint.h>
 #include <string>
 #include <thread>
-#include <unordered_set>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 
-#define ASSERT(expr) if (!(expr)){std::printf("%s:%d %s", __FILE__, __LINE__, #expr); std::terminate();}
+#define ASSERT(expr) if (!(expr)){ std::fprintf(stderr, "%s:%d %s", __FILE__, __LINE__, #expr); std::abort(); }
 
 
 namespace xq {

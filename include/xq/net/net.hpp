@@ -299,7 +299,6 @@ inline int make_nonblocking(SOCKET sockfd) {
     u_long ON = 1;
     return ::ioctlsocket(sockfd, FIONBIO, &ON);
 #endif // !WIN32
-    return 0;
 }
 
 
