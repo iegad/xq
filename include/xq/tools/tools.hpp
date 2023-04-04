@@ -510,7 +510,7 @@ public:
         /* -------------------------------------- */
         /// @brief Timer私有构造函数, 是为了不让在外部创建该Timer
         ///
-        Timer(int64_t expire_ms, TimerHandler handler, void* arg, int64_t interval = 0, int32_t ntimes = 0)
+        Timer(int64_t expire_ms, TimerHandler handler, void* arg, int64_t interval, int32_t ntimes)
             : ntimes(ntimes)
             , expire_ms(expire_ms)
             , interval(interval)
@@ -584,7 +584,7 @@ public:
                         timer->ntimes--;
                     }
 
-                    if (timer->interval == 0 || timer->ntimes == 0) {
+                    if (timer->ntimes == 0) {
                         delete timer;
                     }
                     else {
@@ -664,7 +664,7 @@ public:
             return nullptr;
         }
 
-        return _create_timer_at(new Timer(expir_ms, handler, arg));
+        return _create_timer_at(new Timer(expir_ms, handler, arg, 0, 1));
     }
 
 
@@ -677,21 +677,15 @@ public:
     ///
     /// @param arg 事件参数
     ///
-    /// @param loop 是否循环执行; loop 为真时, 将每隔delay_ms 执行一次定时任务. 否则只执行一次.
-    /// 
-    /// @param ntimes 执行次数, 当该loop 为真时忽略该值.
+    /// @param ntimes 执行次数, 当该参数为 -1 时, 将永远执行.
     ///
-    /// @return 返回创建好的定器指针
+    /// @return 成功返回创建好的定器指针, 否则返回nullptr
     ///
-    /// @note 返回的定时器指针由调度器管理
+    /// @note 返回的定时器指针由调度器管理, 请不要在BTreeTimer以外的地外将其 delete
     ///
-    Timer* create_timer_after(int64_t delay_ms, TimerHandler handler, void* arg, bool loop = false, int32_t ntimes = 0) {
-        if (delay_ms <= 0) {
+    Timer* create_timer_after(int64_t delay_ms, TimerHandler handler, void* arg, int32_t ntimes = 1) {
+        if (delay_ms <= 0 && ntimes == 0) {
             return nullptr;
-        }
-
-        if (loop) {
-            ntimes = -1;
         }
 
         return _create_timer_at(

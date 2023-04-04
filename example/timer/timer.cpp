@@ -14,31 +14,31 @@ int main(int, char**) {
 
     btmr->create_timer_after(2000, [](void*) {
         std::printf("---------------------------------------------------------------------: %lld\n", xq::tools::now());
-    }, nullptr, true);
+    }, nullptr, -1);
 
     btmr->create_timer_after(10000, [](void*) {
         std::printf("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++: %lld\n", xq::tools::now());
-    }, nullptr, false, 10);
+    }, nullptr, 10);
 
     for (int i = 1; i <= NTIMES; i++) {
         btmr->create_timer_after((i + 1) * 20, [](void* num) {
             int n = (int)num;
             std::printf(">>> %d <<<\n", (int)n);
-        }, (void*)i);
+        }, (void*)i, -1);
     }
 
     for (int i = 1; i <= NTIMES; i++) {
         btmr->create_timer_after((i + 1) * 20, [](void* num) {
             int n = (int)num;
             std::printf("+++ %d +++\n", (int)n);
-            }, (void*)i);
+            }, (void*)i, -1);
     }
 
     for (int i = 1; i <= NTIMES; i++) {
         btmr->create_timer_after((i + 1) * 20, [](void* num) {
             int n = (int)num;
             std::printf("=== %d ===\n", (int)n);
-            }, (void*)i);
+            }, (void*)i, -1);
     }
 
     for (int i = 1; i <= NTIMES; i++) {
@@ -49,7 +49,7 @@ int main(int, char**) {
                 std::printf("take %lld ms\n", xq::tools::now_ms() - beg);
                 btmr->stop();
             }
-        }, (void*)i);
+        }, (void*)i, -1);
     }
 
     btmr->wait();
