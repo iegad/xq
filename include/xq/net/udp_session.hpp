@@ -21,7 +21,7 @@ public:
         int64_t time_ms;
         UdpSession* sess;
         sockaddr name;
-        uint8_t data[xq::net::UDP_RBUF_SIZE];
+        uint8_t data[xq::net::UDP_RBUF_SIZE + 1];
 
 
         /* -------------------------------------- */
@@ -77,7 +77,7 @@ public:
 
 
         std::string to_string() const {
-            char buf[xq::net::UDP_HEAD_SIZE * 2 + 500] = {0};
+            char buf[xq::net::UDP_RBUF_SIZE * 2 + 500] = {0};
             sprintf(buf, "[%s]:[%s]", net::addr2str(&this->name).c_str(), xq::tools::bin2hex(this->data, this->datalen).c_str());
             return buf;
         }
@@ -183,6 +183,7 @@ public:
             Segment* seg = new Segment(this);
             int n = ::recvfrom(sockfd_, (char*)seg->data, UDP_RBUF_SIZE, 0, &seg->name, &seg->namelen);
             if (n < 0 && error() != 10060) {
+                std::printf("recv failed: %d\n", xq::net::error());
                 break;
             }
 
@@ -260,7 +261,7 @@ public:
             hdr->msg_iov = &iovecs[i];
             hdr->msg_iovlen = 1;
             iovecs[i].iov_base = seg->data;
-            iovecs[i].iov_len = UDP_RBUF_SIZE;
+            iovecs[i].iov_len = sizeof(seg->data);
         }
 
         while(1) {
@@ -282,6 +283,7 @@ public:
                     err = error();
                     if (err != EAGAIN && err != EWOULDBLOCK && err != EINTR) {
                         // TODO: error
+                        std::printf("recvmmsg failed: %d\n", xq::net::error());
                     }
                     break;
                 }
@@ -292,6 +294,11 @@ public:
                 int64_t now_ms = xq::tools::now_ms();
 
                 for (int i = 0; i < n; i++) {
+                    seg->datalen = msgs[i].msg_len;
+                    if (seg->datalen > UDP_RBUF_SIZE) {
+                        continue;
+                    }
+
                     seg = segs[i];
                     seg->sess = this;
                     seg->datalen = msgs[i].msg_len;
