@@ -551,9 +551,13 @@ public:
     /* -------------------------------------- */
     /// @brief 开启定时调度
     ///
-    /// @param interval 调度间隔
+    /// @param interval 调度间隔, 该值最小为 5ms
     ///
     void start(int interval = 10) {
+        if (interval < 5) {
+            interval = 5;
+        }
+
         running_ = true;
 
         while (running_) {
