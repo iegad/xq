@@ -491,7 +491,7 @@ public:
     ///       的对象由 BTreeTimer内部维护, 外部函数千万不要 delete 该对象.
     ///
     struct Timer {
-        int32_t ntimes;       // 执行次数
+        int64_t ntimes;       // 执行次数
         int64_t expire_ms;    // 超时值
         int64_t interval;     // 时间间隔
         TimerHandler handler; // 定时器事件
@@ -510,7 +510,7 @@ public:
         /* -------------------------------------- */
         /// @brief Timer私有构造函数, 是为了不让在外部创建该Timer
         ///
-        Timer(int64_t expire_ms, TimerHandler handler, void* arg, int64_t interval, int32_t ntimes)
+        Timer(int64_t expire_ms, TimerHandler handler, void* arg, int64_t interval, int64_t ntimes)
             : ntimes(ntimes)
             , expire_ms(expire_ms)
             , interval(interval)
@@ -560,8 +560,20 @@ public:
 
         running_ = true;
 
+#ifndef WIN32
+        struct timeval timeout = {0, 0};
+        interval = interval * 1000;
+#endif // !WIN32
+
         while (running_) {
+#ifdef WIN32
             std::this_thread::sleep_for(std::chrono::milliseconds(interval));
+#else
+            timeout.tv_usec = interval;
+            int n = ::select(0, nullptr, nullptr, nullptr, &timeout);
+            ASSERT(n == 0);
+#endif // WIN32
+
             int64_t now_ms = xq::tools::now_ms();
 
             while (1) {

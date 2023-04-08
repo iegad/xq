@@ -9,7 +9,7 @@ int64_t beg;
 constexpr int NTIMES = 200000;
 
 int main(int, char**) {
-    btmr->run();
+    btmr->run(5);
     beg = xq::tools::now_ms();
 
     btmr->create_timer_after(2000, [](void*) {
