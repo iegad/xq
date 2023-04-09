@@ -21,35 +21,30 @@ int main(int, char**) {
     }, nullptr, 10);
 
     for (int i = 1; i <= NTIMES; i++) {
-        btmr->create_timer_after((i + 1) * 20, [](void* num) {
+        int64_t delay_ms = (i + 1) * 20;
+        btmr->create_timer_after(delay_ms, [](void* num) {
             int n = (int)num;
             std::printf(">>> %d <<<\n", (int)n);
-        }, (void*)i, -1);
-    }
+        }, (void*)i);
 
-    for (int i = 1; i <= NTIMES; i++) {
-        btmr->create_timer_after((i + 1) * 20, [](void* num) {
+        btmr->create_timer_after(delay_ms, [](void* num) {
             int n = (int)num;
             std::printf("+++ %d +++\n", (int)n);
-            }, (void*)i, -1);
-    }
+        }, (void*)i);
 
-    for (int i = 1; i <= NTIMES; i++) {
-        btmr->create_timer_after((i + 1) * 20, [](void* num) {
+        btmr->create_timer_after(delay_ms, [](void* num) {
             int n = (int)num;
-            std::printf("=== %d ===\n", (int)n);
-            }, (void*)i, -1);
-    }
+            std::printf("@@@ %d @@@\n", (int)n);
+        }, (void*)i);
 
-    for (int i = 1; i <= NTIMES; i++) {
-        btmr->create_timer_after((i + 1) * 20, [](void* num) {
+        btmr->create_timer_after(delay_ms, [](void* num) {
             int n = (int)num;
-            std::printf("--- %d ---\n", (int)n);
+            std::printf("--- %d ---\n", n);
             if (n == NTIMES) {
                 std::printf("take %lld ms\n", xq::tools::now_ms() - beg);
                 btmr->stop();
             }
-        }, (void*)i, -1);
+        }, (void*)i);
     }
 
     btmr->wait();

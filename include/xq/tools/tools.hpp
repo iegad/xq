@@ -570,8 +570,7 @@ public:
             std::this_thread::sleep_for(std::chrono::milliseconds(interval));
 #else
             timeout.tv_usec = interval;
-            int n = ::select(0, nullptr, nullptr, nullptr, &timeout);
-            ASSERT(n == 0);
+            ASSERT(::select(0, nullptr, nullptr, nullptr, &timeout) == 0);
 #endif // WIN32
 
             int64_t now_ms = xq::tools::now_ms();
@@ -592,21 +591,27 @@ public:
                 Slot* slot = slot_itr->second;
                 for (auto& timer_itr : *slot) {
                     Timer* timer = timer_itr;
-                    if (timer->handler) {
+
+                    do {
+                        if (!timer->handler) {
+                            delete timer;
+                            break;
+                        }
+
                         timer->handler(timer->arg);
-                    }
 
-                    if (timer->ntimes > 0) {
-                        timer->ntimes--;
-                    }
+                        if (timer->ntimes > 0) {
+                            timer->ntimes--;
+                        }
 
-                    if (timer->ntimes == 0) {
-                        delete timer;
-                    }
-                    else {
+                        if (timer->ntimes == 0) {
+                            delete timer;
+                            break;
+                        }
+
                         timer->expire_ms += timer->interval;
                         _create_timer_at(timer);
-                    }
+                    } while (0);
                 }
 
                 delete slot;
@@ -735,7 +740,7 @@ private:
 
     volatile bool running_;
     std::thread sch_;
-    std::mutex mtx_;
+    SpinLock mtx_;
     std::map<int64_t, Slot*> slotm_;
 
 
