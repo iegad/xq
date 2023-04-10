@@ -16,7 +16,7 @@ void signal_handler(int signal) {
 }
 
 
-int rcv_cb(const UdpSession::Segment* seg) {
+int rcv_cb(const UdpSession::Frame* seg) {
     static int count = 0;
     count++;
     std::printf("%d => %s\n", count, seg->to_string().c_str());
@@ -34,6 +34,7 @@ int main(int, char**) {
 
     std::signal(SIGINT, signal_handler);
     server = UdpSession::create(":6688");
+    server->join_multi_addr("224.0.0.10", "192.168.0.201");
     server->run(rcv_cb);
     server->wait();
     std::printf("EXIT.!!!\n");

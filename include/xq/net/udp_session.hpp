@@ -13,15 +13,15 @@ namespace net {
 
 class UdpSession {
 public:
-    // ------------------------------------------------------------------- UDP 分组 -------------------------------------------------------------------
+    /* ------------------------------------------------------------------- BEG Frame ------------------------------------------------------------------- */
     /// 
-    struct Segment {
+    struct Frame {
         int namelen;
         int datalen;
         int64_t time_ms;
         UdpSession* sess;
         sockaddr name;
-        uint8_t data[xq::net::UDP_RBUF_SIZE + 1];
+        uint8_t data[xq::net::UDP_FRAME_SIZE + 1];
 
 
         /* -------------------------------------- */
@@ -35,9 +35,9 @@ public:
         ///
         /// @param data 
         ///
-        /// @param datalen 
+        /// @param datalen
         ///
-        explicit Segment(UdpSession* sess, const sockaddr* name = nullptr, socklen_t namelen = sizeof(sockaddr), const uint8_t* data = nullptr, int datalen = 0)
+        explicit Frame(UdpSession* sess, const sockaddr* name = nullptr, socklen_t namelen = sizeof(sockaddr), const uint8_t* data = nullptr, int datalen = 0)
             : namelen(namelen)
             , datalen(datalen)
             , time_ms(0)
@@ -48,11 +48,11 @@ public:
             }
 
             if (data && datalen > 0) {
-                ASSERT(datalen < xq::net::UDP_RBUF_SIZE);
+                ASSERT(datalen < xq::net::UDP_FRAME_SIZE);
                 ::memcpy(this->data, data, datalen);
             }
             else {
-                ::memset(this->data, 0, xq::net::UDP_RBUF_SIZE);
+                ::memset(this->data, 0, xq::net::UDP_FRAME_SIZE);
             }
         }
 
@@ -70,29 +70,29 @@ public:
 
 
         void set_data(const uint8_t* data, int datalen) {
-            ASSERT(data && datalen > 0 && datalen <= xq::net::UDP_RBUF_SIZE);
+            ASSERT(data && datalen > 0 && datalen <= xq::net::UDP_FRAME_SIZE);
             ::memcpy(this->data, data, datalen);
             this->datalen = datalen;
         }
 
 
         std::string to_string() const {
-            char buf[xq::net::UDP_RBUF_SIZE * 2 + 500] = {0};
+            char buf[xq::net::UDP_FRAME_SIZE * 2 + 500] = {0};
             sprintf(buf, "[%s]:[%s]", net::addr2str(&this->name).c_str(), xq::tools::bin2hex(this->data, this->datalen).c_str());
             return buf;
         }
 
 
-        Segment(const Segment&) = delete;
-        Segment(const Segment&&) = delete;
-        Segment& operator=(const Segment&) = delete;
-        Segment& operator=(const Segment&&) = delete;
+        Frame(const Frame&) = delete;
+        Frame(const Frame&&) = delete;
+        Frame& operator=(const Frame&) = delete;
+        Frame& operator=(const Frame&&) = delete;
     };
-    // ------------------------------------------------------------------- END Segment -------------------------------------------------------------------
+    /* ------------------------------------------------------------------- END Frame ------------------------------------------------------------------- */
 
 
     typedef std::shared_ptr<UdpSession> Ptr;
-    typedef int (*RcvCallback)(const Segment*);
+    typedef int (*RcvCallback)(const Frame*);
 
 
     static Ptr create(const std::string& local_addr = "") {
@@ -174,14 +174,26 @@ public:
     }
 
 
+    void join_multi_addr(const std::string &multi_ip, const std::string &local_ip) {
+        int af = xq::net::check_ip_type(multi_ip);
+        ASSERT(af == AF_INET/* || af == AF_INET6*/);
+
+        ip_mreq mreq;
+        ::memset(&mreq, 0, sizeof(mreq));
+        ASSERT(::inet_pton(af, multi_ip.c_str(), &mreq.imr_multiaddr) == 1);
+        ASSERT(::inet_pton(af, local_ip.c_str(), &mreq.imr_interface) == 1);
+        ASSERT(!::setsockopt(sockfd_, IPPROTO_IP, IP_ADD_MEMBERSHIP, (char *)&mreq, sizeof(mreq)));
+    }
+
+
 #ifdef WIN32
     void start_rcv(RcvCallback rcv_cb) {
         ASSERT(sockfd_ != INVALID_SOCKET && "udp session is invalid");
         ASSERT(rcv_cb && "rcv_cb cannot be null");
 
         while (1) {
-            Segment* seg = new Segment(this);
-            int n = ::recvfrom(sockfd_, (char*)seg->data, UDP_RBUF_SIZE, 0, &seg->name, &seg->namelen);
+            Frame* seg = new Frame(this);
+            int n = ::recvfrom(sockfd_, (char*)seg->data, UDP_FRAME_SIZE, 0, &seg->name, &seg->namelen);
             if (n < 0 && error() != 10060) {
                 std::printf("recv failed: %d\n", xq::net::error());
                 break;
@@ -211,7 +223,7 @@ public:
 
         while (!snd_buf_.empty()) {
             auto itr = snd_buf_.begin();
-            Segment* seg = *itr;
+            Frame* seg = *itr;
             int n = ::sendto(sockfd_, (char*)seg->data, seg->datalen, 0, &seg->name, seg->namelen);
             delete seg;
             snd_buf_.erase(itr++);
@@ -394,14 +406,14 @@ public:
     /// 
     /// @return 成功返回 0, 否则返回 -1
     ///
-    int send(const Segment* seg, bool force = false) {
+    int send(const Frame* seg, bool force = false) {
         ASSERT(sockfd_ != INVALID_SOCKET && "udp session is invalid");
         if (force) {
             int ret = ::sendto(sockfd_, (char*)seg->data, seg->datalen, 0, &seg->name, seg->namelen);
             delete seg;
             return ret;
         }
-        snd_buf_.emplace_back(const_cast<Segment*>(seg));
+        snd_buf_.emplace_back(const_cast<Frame*>(seg));
         return 0;
     }
 
@@ -413,7 +425,7 @@ public:
             return ::sendto(sockfd_, (const char*)data, datalen, 0, remote, remotelen);
         }
 
-        Segment* seg = new Segment(this, remote, remotelen, data, datalen);
+        Frame* seg = new Frame(this, remote, remotelen, data, datalen);
         return this->send(seg);
     }
 
@@ -438,7 +450,7 @@ private:
     sockaddr addr_;
     socklen_t addrlen_;
     std::thread thread_;
-    std::list<Segment*> snd_buf_;
+    std::list<Frame*> snd_buf_;
 
 
 

@@ -9,7 +9,7 @@ using Udx = xq::net::Udx;
 static UdpSession::Ptr sess;
 
 
-int rcv_cb(const UdpSession::Segment* udp_seg) {
+int rcv_cb(const UdpSession::Frame* udp_seg) {
     return 0;
 }
 
@@ -18,7 +18,7 @@ void send_wkr() {
     char buf[xq::net::UDX_MSS] = { 0 };
     sockaddr addr = { 0,{0} };
     socklen_t addrlen = sizeof(addr);
-    ASSERT(xq::net::str2addr("192.168.0.101:6688", &addr, &addrlen));
+    ASSERT(xq::net::str2addr("224.0.0.10:6688", &addr, &addrlen));
 
     for (int i = 0; i < 1000; i++) {
         sprintf(buf, "Hello world: %d", i);
@@ -35,7 +35,7 @@ int main(int argc, char** argv) {
         exit(EXIT_FAILURE);
     }
 #endif // WIN32
-    sess = UdpSession::create();
+    sess = UdpSession::create("192.168.0.201:0");
     std::thread t(send_wkr);
     t.join();
 

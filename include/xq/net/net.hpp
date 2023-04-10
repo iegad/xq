@@ -40,7 +40,7 @@ constexpr int IPV6_HEAD_SIZE = 40;
 constexpr int UDP_HEAD_SIZE = 8;
 constexpr int TCP_HEAD_SIZE = 20;
 constexpr int ETH_FRAME_SIZE = 1500;
-constexpr int UDP_RBUF_SIZE = ETH_FRAME_SIZE - IPV6_HEAD_SIZE - UDP_HEAD_SIZE; // 读缓冲区大小
+constexpr int UDP_FRAME_SIZE = ETH_FRAME_SIZE - IPV6_HEAD_SIZE - UDP_HEAD_SIZE; // 读缓冲区大小
 constexpr int IO_RMSG_SIZE = 256;                 // recvmmsg mmsghdr 大小
 constexpr int IO_SMSG_SIZE = 70;
 constexpr int IO_TIMEOUT = 5000;                    // IO 读超时 5000毫秒
@@ -288,6 +288,21 @@ bool str2addr(const std::string& str, sockaddr *addr, socklen_t *addrlen) {
     }
 
     return false;
+}
+
+
+int check_ip_type(const std::string& ip) {
+    static const std::regex REG_V6(REG_IPV6);
+    static const std::regex REG_V4(REG_IPV4);
+
+    if (std::regex_match(ip, REG_V6)) {
+        return AF_INET6;
+    }
+    else if (std::regex_match(ip, REG_V4)) {
+        return AF_INET;
+    }
+    
+    return -1;
 }
 
 
