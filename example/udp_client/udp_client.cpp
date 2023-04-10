@@ -9,7 +9,7 @@ using Udx = xq::net::Udx;
 static UdpSession::Ptr sess;
 
 
-int rcv_cb(const UdpSession::Frame* udp_seg) {
+int rcv_cb(const UdpSession::Datagram* udp_seg) {
     return 0;
 }
 

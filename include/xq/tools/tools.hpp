@@ -14,6 +14,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <random>
 #include <stdint.h>
 #include <string>
 #include <thread>
@@ -749,6 +750,32 @@ private:
     BTreeTimer& operator=(const BTreeTimer&) = delete;
     BTreeTimer& operator=(const BTreeTimer&&) = delete;
 }; // class BTreeTimer;
+
+
+// ---------------------------------------------------------------------------- Random  ----------------------------------------------------------------------------
+
+
+class Random64 {
+public:
+    explicit Random64(int64_t seed)
+        : rng_(seed)
+    {}
+
+
+    int64_t i64(int64_t min = INT64_MIN, int64_t max = INT64_MAX) {
+        std::uniform_int_distribution<int64_t> dist(min, max);
+        return dist(rng_);
+    }
+
+    uint64_t u64(uint64_t min = 0, uint64_t max = UINT64_MAX) {
+        std::uniform_int_distribution<uint64_t> dist(min, max);
+        return dist(rng_);
+    }
+
+
+private:
+    std::mt19937_64 rng_;
+}; // class Random64;
 
 
 } // namespace tools

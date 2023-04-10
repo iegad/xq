@@ -376,20 +376,20 @@ public:
 
 
     void flush(int64_t now_ms) {
-        UdpSession::Frame *udp_seg = new UdpSession::Frame(sess_.get(), &addr_, addrlen_);
+        UdpSession::Datagram *dg = UdpSession::Datagram::get(sess_.get(), &addr_, addrlen_);
 
-        uint8_t* p = udp_seg->data;
+        uint8_t* p = dg->data;
         size_t nbuf = UDX_MTU;
         uint64_t cur_ts = now_ms - on_ms_;
 
         // ACK 响应
         if (!ack_que_.empty()) {
             for (auto &ack: ack_que_) {
-                udp_seg->datalen = UDX_MTU - nbuf;
+                dg->datalen = UDX_MTU - nbuf;
                 if (nbuf < UDX_HEAD_SIZE) {
-                    sess_->send(udp_seg);
-                    udp_seg = new UdpSession::Frame(sess_.get(), &addr_, addrlen_);
-                    p = udp_seg->data;
+                    sess_->send(dg);
+                    dg = UdpSession::Datagram::get(sess_.get(), &addr_, addrlen_);
+                    p = dg->data;
                     nbuf = UDX_MTU;
                 }
 
@@ -419,18 +419,18 @@ public:
         for (auto itr = snd_buf_.begin(); itr != snd_buf_.end();) {
             auto seg = itr->second;
 
-            udp_seg->datalen = UDX_MTU - nbuf;
+            dg->datalen = UDX_MTU - nbuf;
             if (nbuf < UDX_HEAD_SIZE) {
-                sess_->send(udp_seg);
-                udp_seg = new UdpSession::Frame(sess_.get(), &addr_, addrlen_);
-                p = udp_seg->data;
+                sess_->send(dg);
+                dg = UdpSession::Datagram::get(sess_.get(), &addr_, addrlen_);
+                p = dg->data;
                 nbuf = UDX_MTU;
             }
 
             seg->ts = cur_ts;
             if (seg->resend_ts == 0) {
                 seg->resend_ts = (rto_ == 0 ? UDX_MIN_RTO : rto_) + cur_ts;
-                int n = Segment::encode(seg, udp_seg->data, nbuf);
+                int n = Segment::encode(seg, dg->data, nbuf);
                 p += n;
                 nbuf -= n;
                 snd_buf_.erase(itr++);
@@ -438,13 +438,13 @@ public:
             }
         }
 
-        udp_seg->datalen = UDX_MTU - nbuf;
-        if (udp_seg->datalen > 0) {
-            sess_->send(udp_seg);
+        dg->datalen = UDX_MTU - nbuf;
+        if (dg->datalen > 0) {
+            sess_->send(dg);
             sess_->flush();
         }
         else {
-            delete udp_seg;
+            delete dg;
         }
     }
 

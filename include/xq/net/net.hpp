@@ -35,17 +35,25 @@ namespace net {
 
 // ------------------------------------------------------------------------ 常量 ------------------------------------------------------------------------
 
+// IPv4消息头长度
 constexpr int IPV4_HEAD_SIZE = 20;
+// IPv6消息头长度
 constexpr int IPV6_HEAD_SIZE = 40;
+// UDP消息头长度
 constexpr int UDP_HEAD_SIZE = 8;
-constexpr int TCP_HEAD_SIZE = 20;
+// 以太网帧payload长度
 constexpr int ETH_FRAME_SIZE = 1500;
-constexpr int UDP_FRAME_SIZE = ETH_FRAME_SIZE - IPV6_HEAD_SIZE - UDP_HEAD_SIZE; // 读缓冲区大小
-constexpr int IO_RMSG_SIZE = 256;                 // recvmmsg mmsghdr 大小
+// User datagram extern 长度, 用于UdpSession的数据收发
+constexpr int UDP_DGX_SIZE = ETH_FRAME_SIZE - IPV6_HEAD_SIZE - UDP_HEAD_SIZE; // 读缓冲区大小
+// recvmmsg 大小, 用于linux下
+constexpr int IO_RMSG_SIZE = 256;
+// sendmmsg 大小, 用于linux下
 constexpr int IO_SMSG_SIZE = 70;
-constexpr int IO_TIMEOUT = 5000;                    // IO 读超时 5000毫秒
+//constexpr int IO_TIMEOUT = 5000;
 
+// IPv4正则
 constexpr char REG_IPV4[] = "^((25[0-5]|(2[0-4]|1\\d|[1-9]|)\\d)\\.?\\b){4}$";
+// IPv6正则
 constexpr char REG_IPV6[] = "^\\[(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,7}:|([0-9a-fA-F]{1,4}:){1,6}:[0-9a-fA-F]{1,4}|([0-9a-fA-F]{1,4}:){1,5}(:[0-9a-fA-F]{1,4}){1,2}|([0-9a-fA-F]{1,4}:){1,4}(:[0-9a-fA-F]{1,4}){1,3}|([0-9a-fA-F]{1,4}:){1,3}(:[0-9a-fA-F]{1,4}){1,4}|([0-9a-fA-F]{1,4}:){1,2}(:[0-9a-fA-F]{1,4}){1,5}|[0-9a-fA-F]{1,4}:((:[0-9a-fA-F]{1,4}){1,6})|:((:[0-9a-fA-F]{1,4}){1,7}|:)|fe80:(:[0-9a-fA-F]{0,4}){0,4}%[0-9a-zA-Z]{1,}|::(ffff(:0{1,4}){0,1}:){0,1}((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])|([0-9a-fA-F]{1,4}:){1,4}:((25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9])\\.){3,3}(25[0-5]|(2[0-4]|1{0,1}[0-9]){0,1}[0-9]))\\]$";
 
 // ------------------------------------------------------------------------ 类型与符号 ------------------------------------------------------------------------
@@ -59,6 +67,7 @@ typedef int SOCKET;
 #endif
 
 
+// 网络错误类型
 enum class ErrType {
     IO_RECV,     // IO 读失败
     IO_SEND,     // IO 写失败
@@ -92,10 +101,13 @@ enum class State {
 
 // ------------------------------------------------------------------------ 函数 ------------------------------------------------------------------------
 
-
+/* ----------------------------------------------- */
 /// @brief 关闭 sockfd
+///
 /// @param sockfd 需要关闭的sockfd
+///
 /// @return 成功返回 0, 否则返回 !0. 通过 error() 查询错误码.
+///
 inline int close(SOCKET sockfd) {
     if (sockfd == INVALID_SOCKET) {
         return 0;
@@ -119,13 +131,21 @@ inline int error() {
 }
 
 
+/* ----------------------------------------------- */
 /// @brief 创建udp sockfd 并绑定local地址
+///
 /// @param local    需要绑定的地址
+///
 /// @param addr     OUT 参数, 用于接收sockaddr
+///
 /// @param addrlen  OUT 参数, 用于接收sockaddr length
+///
 /// @return 成功返回创建好的 UDP sockfd, 则返回 INVALID_SOCKET
+///
 /// @note   只有当addr和addrlen两个参数同时传递时, 才能获取绑定的sockaddr.
+///
 /// @exception 当local为无效地址时.
+///
 SOCKET udp_bind(const char *host, const char *svc, sockaddr* addr = nullptr, socklen_t* addrlen = nullptr) {
     constexpr int ON = 1;
 

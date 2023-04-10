@@ -11,49 +11,42 @@ namespace xq {
 namespace net {
 
 
+/* -------------------------------------- */
+/// @brief UDP会话 该UDP会话为Udp协议的扩展IO
+///
+/// @note  1, UdpSession 只允许接收 UDP_DGX_SIZE 大小的数据;
+///        2, 支持IPV4组播;
+///
 class UdpSession {
 public:
-    /* ------------------------------------------------------------------- BEG Frame ------------------------------------------------------------------- */
-    /// 
-    struct Frame {
-        int namelen;
-        int datalen;
+    /* ------------------------------------------------------------------- BEG Datagram ------------------------------------------------------------------- */
+    /// @brief UdpSession 数据报
+    ///
+    struct Datagram {
+        /* ------------------- META 字段 ------------------- */
+        // 数据接收时间
         int64_t time_ms;
+        // 数据所属会话
         UdpSession* sess;
+        
+        /* ------------------- 数据相关 字段 ------------------- */
+        // 地址长度
+        int namelen;
+        // 数据长度
+        int datalen;
+        // 数据来源地址
         sockaddr name;
-        uint8_t data[xq::net::UDP_FRAME_SIZE + 1];
+        // 数据
+        uint8_t data[xq::net::UDP_DGX_SIZE + 1];
 
 
-        /* -------------------------------------- */
-        /// @brief 构造函数
-        ///
-        /// @param sess 
-        ///
-        /// @param name 
-        ///
-        /// @param namelen 
-        ///
-        /// @param data 
-        ///
-        /// @param datalen
-        ///
-        explicit Frame(UdpSession* sess, const sockaddr* name = nullptr, socklen_t namelen = sizeof(sockaddr), const uint8_t* data = nullptr, int datalen = 0)
-            : namelen(namelen)
-            , datalen(datalen)
-            , time_ms(0)
-            , sess(sess)
-            , name({0,{0}}) {
-            if (name) {
-                ::memcpy(&this->name, name, namelen);
-            }
+        static Datagram* get(UdpSession* sess = nullptr, const sockaddr* name = nullptr, socklen_t namelen = sizeof(sockaddr), const uint8_t* data = nullptr, int datalen = 0) {
+            return new Datagram(sess, name, namelen, data, datalen);
+        }
 
-            if (data && datalen > 0) {
-                ASSERT(datalen < xq::net::UDP_FRAME_SIZE);
-                ::memcpy(this->data, data, datalen);
-            }
-            else {
-                ::memset(this->data, 0, xq::net::UDP_FRAME_SIZE);
-            }
+
+        static void put(Datagram* dg) {
+            delete dg;
         }
 
 
@@ -70,29 +63,63 @@ public:
 
 
         void set_data(const uint8_t* data, int datalen) {
-            ASSERT(data && datalen > 0 && datalen <= xq::net::UDP_FRAME_SIZE);
+            ASSERT(data && datalen > 0 && datalen <= xq::net::UDP_DGX_SIZE);
             ::memcpy(this->data, data, datalen);
             this->datalen = datalen;
         }
 
 
         std::string to_string() const {
-            char buf[xq::net::UDP_FRAME_SIZE * 2 + 500] = {0};
+            char buf[xq::net::UDP_DGX_SIZE * 2 + 500] = {0};
             sprintf(buf, "[%s]:[%s]", net::addr2str(&this->name).c_str(), xq::tools::bin2hex(this->data, this->datalen).c_str());
             return buf;
         }
 
 
-        Frame(const Frame&) = delete;
-        Frame(const Frame&&) = delete;
-        Frame& operator=(const Frame&) = delete;
-        Frame& operator=(const Frame&&) = delete;
+    private:
+        /* -------------------------------------- */
+        /// @brief 构造函数
+        ///
+        /// @param sess 所属会话(META字段)
+        ///
+        /// @param name 
+        ///
+        /// @param namelen 
+        ///
+        /// @param data 
+        ///
+        /// @param datalen
+        ///
+        explicit Datagram(UdpSession* sess, const sockaddr* name, socklen_t namelen, const uint8_t* data, int datalen)
+            : namelen(namelen)
+            , datalen(datalen)
+            , time_ms(0)
+            , sess(sess)
+            , name({0,{0}}) {
+            if (name) {
+                ::memcpy(&this->name, name, namelen);
+            }
+
+            if (data && datalen > 0) {
+                ASSERT(datalen < xq::net::UDP_DGX_SIZE);
+                ::memcpy(this->data, data, datalen);
+            }
+            else {
+                ::memset(this->data, 0, xq::net::UDP_DGX_SIZE);
+            }
+        }
+
+
+        Datagram(const Datagram&) = delete;
+        Datagram(const Datagram&&) = delete;
+        Datagram& operator=(const Datagram&) = delete;
+        Datagram& operator=(const Datagram&&) = delete;
     };
-    /* ------------------------------------------------------------------- END Frame ------------------------------------------------------------------- */
+    /* ------------------------------------------------------------------- END Datagram ------------------------------------------------------------------- */
 
 
     typedef std::shared_ptr<UdpSession> Ptr;
-    typedef int (*RcvCallback)(const Frame*);
+    typedef int (*RcvCallback)(const Datagram*);
 
 
     static Ptr create(const std::string& local_addr = "") {
@@ -192,8 +219,8 @@ public:
         ASSERT(rcv_cb && "rcv_cb cannot be null");
 
         while (1) {
-            Frame* seg = new Frame(this);
-            int n = ::recvfrom(sockfd_, (char*)seg->data, UDP_FRAME_SIZE, 0, &seg->name, &seg->namelen);
+            Datagram* seg = Datagram::get(this);
+            int n = ::recvfrom(sockfd_, (char*)seg->data, UDP_DGX_SIZE, 0, &seg->name, &seg->namelen);
             if (n < 0 && error() != 10060) {
                 std::printf("recv failed: %d\n", xq::net::error());
                 break;
@@ -223,7 +250,7 @@ public:
 
         while (!snd_buf_.empty()) {
             auto itr = snd_buf_.begin();
-            Frame* seg = *itr;
+            Datagram* seg = *itr;
             int n = ::sendto(sockfd_, (char*)seg->data, seg->datalen, 0, &seg->name, seg->namelen);
             delete seg;
             snd_buf_.erase(itr++);
@@ -250,8 +277,8 @@ public:
         ::memset(msgs, 0, sizeof(msgs));
 
         iovec iovecs[IO_RMSG_SIZE];
-        Segment* segs[IO_RMSG_SIZE] = {nullptr};
-        Segment* seg;
+        Datagram* segs[IO_RMSG_SIZE] = {nullptr};
+        Datagram* seg;
         msghdr* hdr;
 
         int n = IO_RMSG_SIZE, err;
@@ -263,7 +290,7 @@ public:
 
         for (int i = 0; i < n; i++) {
             if (!segs[i]) {
-                segs[i] = new Segment(this);
+                segs[i] = new Datagram(this);
             }
             seg = segs[i];
 
@@ -322,7 +349,7 @@ public:
                         delete seg;
                     }
 
-                    seg = segs[i] = new Segment(this);
+                    seg = segs[i] = new Datagram(this);
                     hdr = &msgs[i].msg_hdr;
                     hdr->msg_name = &seg->name;
                     hdr->msg_namelen = seg->namelen;
@@ -356,7 +383,7 @@ public:
 
         iovec iovecs[IO_SMSG_SIZE];
         msghdr *hdr;
-        Segment* seg;
+        Datagram* seg;
 
         size_t n = 0;
         int res = 0;
@@ -401,19 +428,19 @@ public:
     ///        参数seg 在主调函数中必需是 new 运算符创建. 
     ///        主调函数无需调用 delete 删除该对象, 该对象将由 该方法接管.
     /// 
-    /// @param seg   需要发送的UdpSession::Segment
+    /// @param seg   需要发送的UdpSession::Datagram
     /// @param force 立即发送数据
     /// 
     /// @return 成功返回 0, 否则返回 -1
     ///
-    int send(const Frame* seg, bool force = false) {
+    int send(const Datagram* seg, bool force = false) {
         ASSERT(sockfd_ != INVALID_SOCKET && "udp session is invalid");
         if (force) {
             int ret = ::sendto(sockfd_, (char*)seg->data, seg->datalen, 0, &seg->name, seg->namelen);
             delete seg;
             return ret;
         }
-        snd_buf_.emplace_back(const_cast<Frame*>(seg));
+        snd_buf_.emplace_back(const_cast<Datagram*>(seg));
         return 0;
     }
 
@@ -425,7 +452,7 @@ public:
             return ::sendto(sockfd_, (const char*)data, datalen, 0, remote, remotelen);
         }
 
-        Frame* seg = new Frame(this, remote, remotelen, data, datalen);
+        Datagram* seg = Datagram::get(this, remote, remotelen, data, datalen);
         return this->send(seg);
     }
 
@@ -450,8 +477,7 @@ private:
     sockaddr addr_;
     socklen_t addrlen_;
     std::thread thread_;
-    std::list<Frame*> snd_buf_;
-
+    std::list<Datagram*> snd_buf_;
 
 
     UdpSession(const UdpSession&) = delete;

@@ -16,7 +16,7 @@ void signal_handler(int signal) {
 }
 
 
-int rcv_cb(const UdpSession::Frame* seg) {
+int rcv_cb(const UdpSession::Datagram* seg) {
     static int count = 0;
     count++;
     std::printf("%d => %s\n", count, seg->to_string().c_str());
