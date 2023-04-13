@@ -433,14 +433,18 @@ public:
     /// 
     /// @return 成功返回 0, 否则返回 -1
     ///
-    int send(const Datagram* seg, bool force = false) {
+    int send(const Datagram* dg, bool force = false) {
         ASSERT(sockfd_ != INVALID_SOCKET && "udp session is invalid");
-        if (force) {
-            int ret = ::sendto(sockfd_, (char*)seg->data, seg->datalen, 0, &seg->name, seg->namelen);
-            delete seg;
-            return ret;
+
+        if (dg->datalen > 0) {   
+            if (force) {
+                int ret = ::sendto(sockfd_, (char*)dg->data, dg->datalen, 0, &dg->name, dg->namelen);
+                delete dg;
+                return ret;
+            }
+            snd_buf_.emplace_back(const_cast<Datagram*>(dg));
         }
-        snd_buf_.emplace_back(const_cast<Datagram*>(seg));
+
         return 0;
     }
 

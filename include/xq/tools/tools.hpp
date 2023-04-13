@@ -26,6 +26,16 @@
 #define ASSERT(expr) if (!(expr)){ std::fprintf(stderr, "%s:%d %s", __FILE__, __LINE__, #expr); std::abort(); }
 
 
+#ifdef WIN32
+#define __inline__ __forceinline
+#elif defined __GNUC__
+#define __inline__ __attribute__((always_inline))
+#else
+#define __inline__
+#endif // WIN32
+
+
+
 namespace xq {
 namespace tools {
 
@@ -752,12 +762,12 @@ private:
 }; // class BTreeTimer;
 
 
-// ---------------------------------------------------------------------------- Random  ----------------------------------------------------------------------------
+// ---------------------------------------------------------------------------- Rand  ----------------------------------------------------------------------------
 
 
-class Random64 {
+class Rand64 {
 public:
-    explicit Random64(int64_t seed)
+    explicit Rand64(int64_t seed)
         : rng_(seed)
     {}
 
@@ -767,6 +777,7 @@ public:
         return dist(rng_);
     }
 
+
     uint64_t u64(uint64_t min = 0, uint64_t max = UINT64_MAX) {
         std::uniform_int_distribution<uint64_t> dist(min, max);
         return dist(rng_);
@@ -775,6 +786,12 @@ public:
 
 private:
     std::mt19937_64 rng_;
+
+
+    Rand64(const Rand64&) = delete;
+    Rand64(const Rand64&&) = delete;
+    Rand64& operator=(const Rand64&) = delete;
+    Rand64& operator=(const Rand64&&) = delete;
 }; // class Random64;
 
 

@@ -1,11 +1,13 @@
- #include "xq/net/udp_session.hpp"
-
+#include "xq/net/udp_session.hpp"
+#include "xq/net/udx.hpp"
 
 
 using UdpSession = xq::net::UdpSession;
+using Udx = xq::net::Udx;
 
 
 static UdpSession::Ptr sess;
+static Udx::Ptr udx;
 
 
 int rcv_cb(const UdpSession::Datagram* udp_seg) {
@@ -14,16 +16,18 @@ int rcv_cb(const UdpSession::Datagram* udp_seg) {
 
 
 void send_wkr() {
-    char buf[xq::net::UDP_DGX_SIZE] = { 0 };
+    char buf[xq::net::UDX_MSS] = { 0 };
     sockaddr addr = { 0,{0} };
     socklen_t addrlen = sizeof(addr);
-    ASSERT(xq::net::str2addr("224.0.0.10:6688", &addr, &addrlen));
 
-    for (int i = 0; i < 1000; i++) {
+    for (int i = 0; i < 1; i++) {
         sprintf(buf, "Hello world: %d", i);
-        sess->send((uint8_t*)buf, strlen(buf), &addr, addrlen);
+        int n = udx->send((uint8_t*)buf, strlen(buf));
+        if (n < 0) {
+            std::printf("send failed: %d\n", n);
+        }
+        udx->flush(xq::tools::now_ms());
     }
-    sess->flush();
 }
 
 
@@ -35,6 +39,8 @@ int main(int argc, char** argv) {
     }
 #endif // WIN32
     sess = UdpSession::create("192.168.0.201:0");
+    udx = Udx::create(1, sess);
+    udx->set_addr("192.168.0.201:6688");
     std::thread t(send_wkr);
     t.join();
 
