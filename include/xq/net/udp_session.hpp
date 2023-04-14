@@ -255,7 +255,7 @@ public:
             delete seg;
             snd_buf_.erase(itr++);
             if (n < 0) {
-                // TODO: error handle
+                return -1;
             }
         }
 
@@ -442,7 +442,7 @@ public:
                 delete dg;
                 return ret;
             }
-            snd_buf_.emplace_back(const_cast<Datagram*>(dg));
+            snd_buf_.emplace_back(*(Datagram**)&dg);
         }
 
         return 0;

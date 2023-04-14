@@ -21,8 +21,9 @@ void signal_handler(int signal) {
 
 
 int rcv_cb(const UdpSession::Datagram* dg) {
-    std::printf("%s\n", xq::tools::bin2hex(dg->data, dg->datalen).c_str());
-    int n = udx->input(dg->data, dg->datalen, xq::tools::now_ms());
+    std::printf("[%lld]:%s\n", dg->time_ms, xq::tools::bin2hex(dg->data, dg->datalen).c_str());
+    
+    int n = udx->input(dg->data, dg->datalen, dg->time_ms);
     if (n < 0) {
         std::printf("%d\n", n);
     }
@@ -34,6 +35,9 @@ int rcv_cb(const UdpSession::Datagram* dg) {
 
     rbuf[n] = 0;
     std::printf("%s\n", (char*)rbuf);
+
+    udx->set_addr(&dg->name, dg->namelen);
+    udx->flush_ack(dg->time_ms);
 
     return 0;
 }

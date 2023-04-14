@@ -10,7 +10,14 @@ static UdpSession::Ptr sess;
 static Udx::Ptr udx;
 
 
-int rcv_cb(const UdpSession::Datagram* udp_seg) {
+int rcv_cb(const UdpSession::Datagram* dg) {
+    std::printf("[%lld]:%s\n", dg->time_ms, xq::tools::bin2hex(dg->data, dg->datalen).c_str());
+
+    int n = udx->input(dg->data, dg->datalen, dg->time_ms);
+    if (n < 0) {
+        std::printf("input failed: %d\n", n);
+    }
+
     return 0;
 }
 
@@ -20,7 +27,7 @@ void send_wkr() {
     sockaddr addr = { 0,{0} };
     socklen_t addrlen = sizeof(addr);
 
-    for (int i = 0; i < 1; i++) {
+    for (int i = 0; i < 1000; i++) {
         sprintf(buf, "Hello world: %d", i);
         int n = udx->send((uint8_t*)buf, strlen(buf));
         if (n < 0) {
@@ -41,8 +48,8 @@ int main(int argc, char** argv) {
     sess = UdpSession::create("192.168.0.201:0");
     udx = Udx::create(1, sess);
     udx->set_addr("192.168.0.201:6688");
-    std::thread t(send_wkr);
-    t.join();
+    std::thread(send_wkr).detach();
+    sess->start_rcv(rcv_cb);
 
 #ifdef WIN32
     WSACleanup();
