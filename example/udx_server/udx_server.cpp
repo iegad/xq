@@ -27,18 +27,21 @@ int rcv_cb(const UdpSession::Datagram* dg) {
     if (n < 0) {
         std::printf("%d\n", n);
     }
+
     uint8_t* rbuf = new uint8_t[xq::net::UDX_MSG_MAX];
     n = udx->recv(rbuf, xq::net::UDX_MSG_MAX);
     if (n < 0) {
         std::printf("%d\n", n);
     }
+    else if (n > 0) {
+        rbuf[n] = 0;
+        std::printf("%s\n", (char*)rbuf);
 
-    rbuf[n] = 0;
-    std::printf("%s\n", (char*)rbuf);
-
-    udx->set_addr(&dg->name, dg->namelen);
-    udx->flush_ack(dg->time_ms);
-
+        udx->set_addr(&dg->name, dg->namelen);
+        ASSERT(!udx->send(rbuf, n));
+        udx->flush(dg->time_ms);
+    }
+    delete[] rbuf;
     return 0;
 }
 

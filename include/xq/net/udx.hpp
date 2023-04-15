@@ -698,6 +698,8 @@ private:
 
 
     int _update_ack(const Segment* seg, uint64_t now_ts) {
+        std::printf("recv ack: %d\n", seg->sn);
+
         auto itr = snd_buf_.find(seg->sn);
         if (itr != snd_buf_.end()) {
             if (seg->acc) {
@@ -707,7 +709,6 @@ private:
         }
 
         uint64_t rtt = now_ts - seg->ts;
-        std::printf("SN[%llu] rtt[%llu] = now_ts[%llu] - seg->ts[%llu]\n", seg->sn, rtt, now_ts, seg->ts);
         if (rtt < 0) {
             Segment::put(seg);
             return -1;

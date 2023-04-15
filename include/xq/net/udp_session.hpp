@@ -91,10 +91,10 @@ public:
         /// @param datalen
         ///
         explicit Datagram(UdpSession* sess, const sockaddr* name, socklen_t namelen, const uint8_t* data, int datalen)
-            : namelen(namelen)
-            , datalen(datalen)
-            , time_ms(0)
+            : time_ms(0)
             , sess(sess)
+            , namelen(namelen)
+            , datalen(datalen)
             , name({0,{0}}) {
             if (name) {
                 ::memcpy(&this->name, name, namelen);
@@ -167,15 +167,7 @@ public:
 
 
     void close() {
-#ifndef WIN32
-        constexpr char buf[1] = { 'X' };
-
-        if (wp_ != -1) {
-            ASSERT(::write(wp_, buf, 1) == 1);
-            ::close(wp_);
-            wp_ = -1;
-        }
-#endif // !WIN32
+        stop();
 
         if (sockfd_ != INVALID_SOCKET) {
             xq::net::close(sockfd_);
@@ -190,7 +182,19 @@ public:
 
 
     void stop() {
-        close();
+        constexpr char buf[1] = { 'X' };
+        if (wp_ != -1) {
+#ifndef WIN32
+            ASSERT(::write(wp_, buf, 1) == 1);
+#else
+            static sockaddr addr = { 0,{0} };
+            static socklen_t addrlen = sizeof(addr);
+            if (addr.sa_family == 0) {
+                ASSERT(xq::net::str2addr("127.0.0.1:34567", &addr, &addrlen));
+            }
+            ASSERT(::sendto(wp_, buf, 1, 0, &addr, addrlen) == 1);
+#endif // !WIN32
+        }
     }
 
 
@@ -217,24 +221,50 @@ public:
     void start_rcv(RcvCallback rcv_cb) {
         ASSERT(sockfd_ != INVALID_SOCKET && "udp session is invalid");
         ASSERT(rcv_cb && "rcv_cb cannot be null");
+        ASSERT(!xq::net::make_nonblocking(sockfd_));
+
+        wp_ = xq::net::udp_bind("127.0.0.1", "34567");
+        fd_set fds, rfds;
+        FD_ZERO(&fds);
+        FD_SET(sockfd_, &fds);
+        FD_SET(wp_, &fds);
+
+        int n;
 
         while (1) {
-            Datagram* seg = Datagram::get(this);
-            int n = ::recvfrom(sockfd_, (char*)seg->data, UDP_DGX_SIZE, 0, &seg->name, &seg->namelen);
-            if (n < 0 && error() != 10060) {
-                std::printf("recv failed: %d\n", xq::net::error());
-                break;
+            rfds = fds;
+            n = ::select(FD_SETSIZE, &rfds, nullptr, nullptr, nullptr);
+            if (n <= 0) {
+                continue;
             }
 
-            seg->datalen = n;
-            seg->time_ms = xq::tools::now_ms();
-            n = rcv_cb(seg);
-            if (n <= 0) {
-                delete seg;
-                if (n < 0) {
+            if (FD_ISSET(wp_, &rfds)) {
+                char buf[1];
+                if (::recvfrom(wp_, buf, 1, 0, nullptr, nullptr) == 1 && buf[0] == 'X') {
+                    xq::net::close(wp_);
+                    wp_ = -1;
                     break;
                 }
             }
+
+            do {
+                Datagram* dg = Datagram::get(this);
+                int n = ::recvfrom(sockfd_, (char*)dg->data, UDP_DGX_SIZE, 0, &dg->name, &dg->namelen);
+                if (n < 0) {
+                    int err = xq::net::error();
+                    if (err == WSAEWOULDBLOCK) {
+                        break;
+                    }
+                    std::printf("recv failed: %d\n", err);
+                }
+
+                dg->datalen = n;
+                dg->time_ms = xq::tools::now_ms();
+                n = rcv_cb(dg);
+                if (n <= 0) {
+                    delete dg;
+                }
+            } while (1);
         }
 
         while (!snd_buf_.empty()) {
@@ -242,6 +272,8 @@ public:
             delete* itr;
             snd_buf_.erase(itr);
         }
+
+        close();
     }
 
 
@@ -290,7 +322,7 @@ public:
 
         for (int i = 0; i < n; i++) {
             if (!segs[i]) {
-                segs[i] = new Datagram(this);
+                segs[i] = Datagram::get(this);
             }
             seg = segs[i];
 
@@ -312,8 +344,11 @@ public:
 
             if (FD_ISSET(rpfd, &rfds)) {
                 char buf[1];
-                ASSERT(::read(rpfd, buf, 1) == 1 && buf[0] == 'X');
-                break;
+                if (::read(rpfd, buf, 1) == 1 && buf[0] == 'X') {
+                    ::close(wp_);
+                    wp_ = -1;
+                    break;
+                }
             }
 
             do {
@@ -334,7 +369,7 @@ public:
 
                 for (int i = 0; i < n; i++) {
                     seg->datalen = msgs[i].msg_len;
-                    if (seg->datalen > UDP_RBUF_SIZE) {
+                    if (seg->datalen > UDP_DGX_SIZE) {
                         continue;
                     }
 
@@ -349,14 +384,14 @@ public:
                         delete seg;
                     }
 
-                    seg = segs[i] = new Datagram(this);
+                    seg = segs[i] = Datagram::get(this);
                     hdr = &msgs[i].msg_hdr;
                     hdr->msg_name = &seg->name;
                     hdr->msg_namelen = seg->namelen;
                     hdr->msg_iov = &iovecs[i];
                     hdr->msg_iovlen = 1;
                     iovecs[i].iov_base = seg->data;
-                    iovecs[i].iov_len = UDP_RBUF_SIZE;
+                    iovecs[i].iov_len = UDP_DGX_SIZE;
                 }
             } while(1);
         }
@@ -452,21 +487,22 @@ public:
     int send(const uint8_t* data, size_t datalen, const sockaddr* remote, socklen_t remotelen, bool force = false) {
         ASSERT(sockfd_ != INVALID_SOCKET && "udp session is invalid");
         if (force) {
-            
+#ifndef WIN32
+            return ::sendto(sockfd_, data, datalen, 0, remote, remotelen);
+#else
             return ::sendto(sockfd_, (const char*)data, datalen, 0, remote, remotelen);
+#endif // !WIN32
         }
 
-        Datagram* seg = Datagram::get(this, remote, remotelen, data, datalen);
-        return this->send(seg);
+        Datagram* dg = Datagram::get(this, remote, remotelen, data, datalen);
+        return this->send(dg);
     }
 
 
 private:
     UdpSession(SOCKET sockfd, const sockaddr *addr, socklen_t addrlen)
         : sockfd_(sockfd)
-#ifndef WIN32
         , wp_(-1)
-#endif // !WIN32
         , addr_({ 0, {0} })
         , addrlen_(sizeof(addr_)) {
         ::memcpy(&addr_, addr, addrlen);
@@ -475,9 +511,7 @@ private:
 
 
     SOCKET sockfd_;
-#ifndef WIN32
     int wp_;
-#endif // WIN32
     sockaddr addr_;
     socklen_t addrlen_;
     std::thread thread_;
