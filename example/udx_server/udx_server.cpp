@@ -21,27 +21,24 @@ void signal_handler(int signal) {
 
 
 int rcv_cb(const UdpSession::Datagram* dg) {
-    std::printf("[%lld]:%s\n", dg->time_ms, xq::tools::bin2hex(dg->data, dg->datalen).c_str());
-    
-    int n = udx->input(dg->data, dg->datalen, dg->time_ms);
+    static uint8_t* rbuf = new uint8_t[xq::net::UDX_MSG_MAX];
+
+    int n = udx->input(dg->data, dg->datalen, &dg->name, dg->namelen, dg->time_ms);
     if (n < 0) {
-        std::printf("%d\n", n);
+        std::printf("input failed: %d\n", n);
+        return 0;
     }
 
-    uint8_t* rbuf = new uint8_t[xq::net::UDX_MSG_MAX];
     n = udx->recv(rbuf, xq::net::UDX_MSG_MAX);
-    if (n < 0) {
-        std::printf("%d\n", n);
-    }
-    else if (n > 0) {
+    if (n > 0) {
         rbuf[n] = 0;
         std::printf("%s\n", (char*)rbuf);
 
         udx->set_addr(&dg->name, dg->namelen);
         ASSERT(!udx->send(rbuf, n));
-        udx->flush(dg->time_ms);
+        
     }
-    delete[] rbuf;
+    udx->flush(dg->time_ms);
     return 0;
 }
 

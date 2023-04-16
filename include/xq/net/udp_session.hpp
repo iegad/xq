@@ -182,17 +182,12 @@ public:
 
 
     void stop() {
-        constexpr char buf[1] = { 'X' };
         if (wp_ != -1) {
 #ifndef WIN32
+            static constexpr char buf[1] = { 'X' };
             ASSERT(::write(wp_, buf, 1) == 1);
 #else
-            static sockaddr addr = { 0,{0} };
-            static socklen_t addrlen = sizeof(addr);
-            if (addr.sa_family == 0) {
-                ASSERT(xq::net::str2addr("127.0.0.1:34567", &addr, &addrlen));
-            }
-            ASSERT(::sendto(wp_, buf, 1, 0, &addr, addrlen) == 1);
+            wp_ = -1;
 #endif // !WIN32
         }
     }
@@ -221,50 +216,25 @@ public:
     void start_rcv(RcvCallback rcv_cb) {
         ASSERT(sockfd_ != INVALID_SOCKET && "udp session is invalid");
         ASSERT(rcv_cb && "rcv_cb cannot be null");
-        ASSERT(!xq::net::make_nonblocking(sockfd_));
 
-        wp_ = xq::net::udp_bind("127.0.0.1", "34567");
-        fd_set fds, rfds;
-        FD_ZERO(&fds);
-        FD_SET(sockfd_, &fds);
-        FD_SET(wp_, &fds);
+        wp_ = 0;
+        int i, n, err;
 
-        int n;
-
-        while (1) {
-            rfds = fds;
-            n = ::select(FD_SETSIZE, &rfds, nullptr, nullptr, nullptr);
-            if (n <= 0) {
-                continue;
-            }
-
-            if (FD_ISSET(wp_, &rfds)) {
-                char buf[1];
-                if (::recvfrom(wp_, buf, 1, 0, nullptr, nullptr) == 1 && buf[0] == 'X') {
-                    xq::net::close(wp_);
-                    wp_ = -1;
-                    break;
-                }
-            }
-
-            do {
-                Datagram* dg = Datagram::get(this);
-                int n = ::recvfrom(sockfd_, (char*)dg->data, UDP_DGX_SIZE, 0, &dg->name, &dg->namelen);
-                if (n < 0) {
-                    int err = xq::net::error();
-                    if (err == WSAEWOULDBLOCK) {
-                        break;
-                    }
-                    std::printf("recv failed: %d\n", err);
-                }
-
+        while (wp_ != -1) {
+            Datagram* dg = Datagram::get(this);
+            n = ::recvfrom(sockfd_, (char*)dg->data, UDP_DGX_SIZE, 0, &dg->name, &dg->namelen);
+            if (n > 0) {
                 dg->datalen = n;
                 dg->time_ms = xq::tools::now_ms();
                 n = rcv_cb(dg);
                 if (n <= 0) {
                     delete dg;
                 }
-            } while (1);
+            }
+            else if (n < 0) {
+                err = xq::net::error();
+                std::printf("recv failed: %d\n", err);
+            }
         }
 
         while (!snd_buf_.empty()) {
@@ -282,9 +252,9 @@ public:
 
         while (!snd_buf_.empty()) {
             auto itr = snd_buf_.begin();
-            Datagram* seg = *itr;
-            int n = ::sendto(sockfd_, (char*)seg->data, seg->datalen, 0, &seg->name, seg->namelen);
-            delete seg;
+            Datagram* dg = *itr;
+            int n = ::sendto(sockfd_, (char*)dg->data, dg->datalen, 0, &dg->name, dg->namelen);
+            delete dg;
             snd_buf_.erase(itr++);
             if (n < 0) {
                 return -1;
@@ -309,97 +279,100 @@ public:
         ::memset(msgs, 0, sizeof(msgs));
 
         iovec iovecs[IO_RMSG_SIZE];
-        Datagram* segs[IO_RMSG_SIZE] = {nullptr};
-        Datagram* seg;
+        Datagram* dgs[IO_RMSG_SIZE] = {nullptr};
+        Datagram* dg;
         msghdr* hdr;
 
-        int n = IO_RMSG_SIZE, err;
+        int i, n = IO_RMSG_SIZE, nready, err;
 
         fd_set fds, rfds;
         FD_ZERO(&fds);
         FD_SET(sockfd_, &fds);
         FD_SET(rpfd, &fds);
 
-        for (int i = 0; i < n; i++) {
-            if (!segs[i]) {
-                segs[i] = Datagram::get(this);
+        for (i = 0; i < n; i++) {
+            if (!dgs[i]) {
+                dgs[i] = Datagram::get(this);
             }
-            seg = segs[i];
+            dg = dgs[i];
 
             hdr = &msgs[i].msg_hdr;
-            hdr->msg_name = &seg->name;
-            hdr->msg_namelen = seg->namelen;
+            hdr->msg_name = &dg->name;
+            hdr->msg_namelen = dg->namelen;
             hdr->msg_iov = &iovecs[i];
             hdr->msg_iovlen = 1;
-            iovecs[i].iov_base = seg->data;
-            iovecs[i].iov_len = sizeof(seg->data);
+            iovecs[i].iov_base = dg->data;
+            iovecs[i].iov_len = sizeof(dg->data);
         }
 
-        while(1) {
+        while(wp_ != -1) {
             rfds = fds;
-            n = ::select(FD_SETSIZE, &rfds, nullptr, nullptr, nullptr);
-            if (n <= 0) {
+            nready = ::select(FD_SETSIZE, &rfds, nullptr, nullptr, nullptr);
+            if (nready <= 0) {
                 continue;
             }
 
-            if (FD_ISSET(rpfd, &rfds)) {
-                char buf[1];
-                if (::read(rpfd, buf, 1) == 1 && buf[0] == 'X') {
-                    ::close(wp_);
-                    wp_ = -1;
-                    break;
-                }
-            }
-
-            do {
-                n = ::recvmmsg(sockfd_, msgs, IO_RMSG_SIZE, MSG_WAITFORONE, nullptr);
-                if (n < 0) {
-                    err = error();
-                    if (err != EAGAIN && err != EWOULDBLOCK && err != EINTR) {
-                        // TODO: error
-                        std::printf("recvmmsg failed: %d\n", xq::net::error());
+            for (i = 0; i < nready; i++) {
+                if (FD_ISSET(rpfd, &rfds)) {
+                    char buf[1];
+                    if (::read(rpfd, buf, 1) == 1 && buf[0] == 'X') {
+                        ::close(wp_);
+                        wp_ = -1;
+                        break;
                     }
-                    break;
-                }
-                else if (n == 0) {
-                    break;
+                    continue;
                 }
 
-                int64_t now_ms = xq::tools::now_ms();
-
-                for (int i = 0; i < n; i++) {
-                    seg->datalen = msgs[i].msg_len;
-                    if (seg->datalen > UDP_DGX_SIZE) {
-                        continue;
+                do {
+                    n = ::recvmmsg(sockfd_, msgs, IO_RMSG_SIZE, MSG_WAITFORONE, nullptr);
+                    if (n < 0) {
+                        err = error();
+                        if (err != EAGAIN && err != EWOULDBLOCK && err != EINTR) {
+                            // TODO: error
+                            std::printf("recvmmsg failed: %d\n", xq::net::error());
+                        }
+                        break;
+                    }
+                    else if (n == 0) {
+                        break;
                     }
 
-                    seg = segs[i];
-                    seg->sess = this;
-                    seg->datalen = msgs[i].msg_len;
-                    seg->time_ms = now_ms;
+                    int64_t now_ms = xq::tools::now_ms();
 
-                    int res = rcv_cb(seg);
-                    segs[i] = nullptr;
-                    if (res <= 0) {
-                        delete seg;
+                    for (int i = 0; i < n; i++) {
+                        dg->datalen = msgs[i].msg_len;
+                        if (dg->datalen > UDP_DGX_SIZE) {
+                            continue;
+                        }
+
+                        dg = dgs[i];
+                        dg->sess = this;
+                        dg->datalen = msgs[i].msg_len;
+                        dg->time_ms = now_ms;
+
+                        int res = rcv_cb(dg);
+                        dgs[i] = nullptr;
+                        if (res <= 0) {
+                            delete dg;
+                        }
+
+                        dg = dgs[i] = Datagram::get(this);
+                        hdr = &msgs[i].msg_hdr;
+                        hdr->msg_name = &dg->name;
+                        hdr->msg_namelen = dg->namelen;
+                        hdr->msg_iov = &iovecs[i];
+                        hdr->msg_iovlen = 1;
+                        iovecs[i].iov_base = dg->data;
+                        iovecs[i].iov_len = UDP_DGX_SIZE;
                     }
-
-                    seg = segs[i] = Datagram::get(this);
-                    hdr = &msgs[i].msg_hdr;
-                    hdr->msg_name = &seg->name;
-                    hdr->msg_namelen = seg->namelen;
-                    hdr->msg_iov = &iovecs[i];
-                    hdr->msg_iovlen = 1;
-                    iovecs[i].iov_base = seg->data;
-                    iovecs[i].iov_len = UDP_DGX_SIZE;
-                }
-            } while(1);
+                } while (1);
+            } // for
         }
 
         ::close(rpfd);
 
         for (int i = 0; i < IO_RMSG_SIZE; i++) {
-            if (segs[i]) delete segs[i];
+            if (dgs[i]) delete dgs[i];
         }
 
         while (!snd_buf_.empty()) {
@@ -418,20 +391,20 @@ public:
 
         iovec iovecs[IO_SMSG_SIZE];
         msghdr *hdr;
-        Datagram* seg;
+        Datagram* dg;
 
         size_t n = 0;
         int res = 0;
 
         for (auto itr = snd_buf_.begin(); itr != snd_buf_.end(); ++n, ++itr) {
-            seg = *itr;
+            dg = *itr;
             hdr = &msgs[n].msg_hdr;
-            hdr->msg_name = &seg->name;
-            hdr->msg_namelen = seg->namelen;
+            hdr->msg_name = &dg->name;
+            hdr->msg_namelen = dg->namelen;
             hdr->msg_iov = &iovecs[n];
             hdr->msg_iovlen = 1;
-            iovecs[n].iov_base = seg->data;
-            iovecs[n].iov_len = seg->datalen;
+            iovecs[n].iov_base = dg->data;
+            iovecs[n].iov_len = dg->datalen;
 
             if (n == IO_SMSG_SIZE) {
                 res = ::sendmmsg(sockfd_, msgs, n, 0);
@@ -460,10 +433,10 @@ public:
 
     /* --------------------------------------------------------------------- */
     /// @brief 发送数据, 
-    ///        参数seg 在主调函数中必需是 new 运算符创建. 
+    ///        参数dg 在主调函数中必需是 new 运算符创建. 
     ///        主调函数无需调用 delete 删除该对象, 该对象将由 该方法接管.
     /// 
-    /// @param seg   需要发送的UdpSession::Datagram
+    /// @param dg   需要发送的UdpSession::Datagram
     /// @param force 立即发送数据
     /// 
     /// @return 成功返回 0, 否则返回 -1
