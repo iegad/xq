@@ -36,7 +36,6 @@ int rcv_cb(const UdpSession::Datagram* dg) {
 
         udx->set_addr(&dg->name, dg->namelen);
         ASSERT(!udx->send(rbuf, n));
-        
     }
     udx->flush(dg->time_ms);
     return 0;
