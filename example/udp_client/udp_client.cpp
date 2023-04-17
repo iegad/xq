@@ -36,7 +36,6 @@ void send_wkr() {
 
     int n = seg0->encode(p, xq::net::UDX_MTU) + 3;
     UdpSession::Datagram* dg1 = UdpSession::Datagram::get(nullptr, &addr, addrlen, buf, n);
-    
 
     n = seg1->encode(p, xq::net::UDX_MTU) + 3;
     UdpSession::Datagram* dg2 = UdpSession::Datagram::get(nullptr, &addr, addrlen, buf, n);

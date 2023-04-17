@@ -25,7 +25,7 @@ int rcv_cb(const UdpSession::Datagram* dg) {
         rbuf[n] = 0;
         std::printf("%s\n", (char*)rbuf);
 
-        if (COUNT == 1) {
+        if (COUNT == 1000) {
             udx->flush(dg->time_ms);
             sess->stop();
             return 0;

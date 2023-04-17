@@ -32,6 +32,7 @@ int rcv_cb(const UdpSession::Datagram* dg) {
     n = udx->recv(rbuf, xq::net::UDX_MSG_MAX);
     if (n > 0) {
         rbuf[n] = 0;
+        std::printf("\n\n--------------------------------------------\n");
         std::printf("%s\n", (char*)rbuf);
 
         udx->set_addr(&dg->name, dg->namelen);
