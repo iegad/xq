@@ -14,23 +14,23 @@ namespace net {
 /* -------------------------------------------------------------- */
 /// @brief UDX Max transmit uint, UDX最大传输单元
 ///
-constexpr size_t UDX_MTU = UDP_DGX_SIZE;
+constexpr int UDX_MTU = UDP_DGX_SIZE;
 
 /* -------------------------------------------------------------- */
 /// @brief UDX uid length, UDX uid长度 3 bytes
 ///
-constexpr size_t UDX_UID_LEN = 3;
+constexpr int UDX_UID_LEN = 3;
 
 /* -------------------------------------------------------------- */
 /// @brief UDX header length, UDX消息头长度: CMD[8b] + WND[8b]
 ///
-constexpr size_t UDX_HDR_LEN = 14;
+constexpr int UDX_HDR_LEN = 14;
 
 /* -------------------------------------------------------------- */
 /// @brief UDX header length, UDX消息头长度: CMD[8b] + WND[8b]
 ///
-constexpr size_t   UDX_ACK_LEN = UDX_HDR_LEN + 1;
-constexpr size_t   UDX_PSH_MIN = UDX_HDR_LEN + 3;
+constexpr int   UDX_ACK_LEN = UDX_HDR_LEN + 1;
+constexpr int   UDX_PSH_MIN = UDX_HDR_LEN + 3;
 constexpr size_t   UDX_MSS = (UDX_MTU - UDX_UID_LEN - UDX_PSH_MIN) / 16 * 16;
 constexpr size_t   UDX_PSH_MAX = UDX_PSH_MIN + UDX_MSS;
 constexpr uint8_t  UDX_FRG_MAX = 256 * 1024 / UDX_MSS;
@@ -152,8 +152,6 @@ public:
         return 1;
     }
 
-
-public:
     // ------------------------------------------------------------------ BEG Segment ------------------------------------------------------------------
     struct Segment {
         uint8_t  cmd;
@@ -166,14 +164,10 @@ public:
         uint8_t xmit;
         uint64_t resend_ts;
 
-        union {
-            uint8_t acc;
-            struct {
-                uint8_t  frg;
-                uint16_t len;
-                uint8_t  data[UDX_MSS];
-            };
-        };
+        uint8_t acc;
+        uint8_t  frg;
+        uint16_t len;
+        uint8_t  data[UDX_MSS];
 
 
         ~Segment() = default;
@@ -188,31 +182,56 @@ public:
         }
 
 
+#ifndef WIN32
         std::string to_string() {
             char buf[UDX_MSS * 2 + 80];
             int n = 0;
             switch (cmd) {
             case UDX_CMD_PIN:
-            case UDX_CMD_PON: n = sprintf(buf, "[CMD:0x%x][WND:%3d][SN:%llu][TS:%llu]", 
-                cmd, wnd, sn, ts); 
+            case UDX_CMD_PON: n = sprintf(buf, "[CMD:0x%x][WND:%3d][SN:%lu][TS:%lu]",
+                cmd, wnd, sn, ts);
                 break;
 
-            case UDX_CMD_ACK: n = sprintf(buf, "[CMD:0x%x][WND:%3d][SN:%llu][TS:%llu][ACC:%d]", 
-                cmd, wnd, sn, ts, acc); 
+            case UDX_CMD_ACK: n = sprintf(buf, "[CMD:0x%x][WND:%3d][SN:%lu][TS:%lu][ACC:%d]",
+                cmd, wnd, sn, ts, acc);
                 break;
 
             case UDX_CMD_PSH:
-            case UDX_CMD_CON: n = sprintf(buf, "[CMD:0x%x][WND:%3d][SN:%llu][TS:%llu][FRG:%3d][LEN:%d] %s", 
-                cmd, wnd, sn, ts, frg, len, xq::tools::bin2hex(data, len).c_str()); 
+            case UDX_CMD_CON: n = sprintf(buf, "[CMD:0x%x][WND:%3d][SN:%lu][TS:%lu][FRG:%3d][LEN:%d] %s",
+                cmd, wnd, sn, ts, frg, len, xq::tools::bin2hex(data, len).c_str());
                 break;
 
             default: break;
             }
             return std::string(buf, n);
         }
+#else
+        std::string to_string() {
+            char buf[UDX_MSS * 2 + 80];
+            int n = 0;
+            switch (cmd) {
+            case UDX_CMD_PIN:
+            case UDX_CMD_PON: n = sprintf(buf, "[CMD:0x%x][WND:%3d][SN:%llu][TS:%llu]",
+                cmd, wnd, sn, ts);
+                break;
+
+            case UDX_CMD_ACK: n = sprintf(buf, "[CMD:0x%x][WND:%3d][SN:%llu][TS:%llu][ACC:%d]",
+                cmd, wnd, sn, ts, acc);
+                break;
+
+            case UDX_CMD_PSH:
+            case UDX_CMD_CON: n = sprintf(buf, "[CMD:0x%x][WND:%3d][SN:%llu][TS:%llu][FRG:%3d][LEN:%d] %s",
+                cmd, wnd, sn, ts, frg, len, xq::tools::bin2hex(data, len).c_str());
+                break;
+
+            default: break;
+            }
+            return std::string(buf, n);
+    }
+#endif // !WIN32
 
 
-        Segment(uint8_t cmd, uint8_t rcv_wnd, uint64_t sn, uint64_t ts, uint8_t acc, uint8_t frg, const uint8_t *data, size_t datalen)
+        Segment(uint8_t cmd, uint8_t rcv_wnd, uint64_t sn, uint64_t ts, uint8_t acc, uint8_t frg, const uint8_t* data, size_t datalen)
             : cmd(cmd)
             , wnd(rcv_wnd)
             , sn(sn)
@@ -220,11 +239,11 @@ public:
             , fastack(0)
             , xmit(0)
             , resend_ts(0)
-            , acc(cmd == UDX_CMD_ACK ? acc : frg)
-            , frg(cmd == UDX_CMD_ACK ? acc : frg)
+            , acc(acc)
+            , frg(frg)
             , len(datalen) {
-                
-            if (cmd >= UDX_CMD_PSH && data && datalen > 0){
+
+            if (cmd >= UDX_CMD_PSH && data && datalen > 0) {
                 ::memcpy(this->data, data, datalen);
                 return;
             }
@@ -257,7 +276,7 @@ public:
         }
 
 
-        static __inline__ int decode(Segment** seg, const uint8_t* buf, size_t buflen) {
+        static __inline__ int decode(Segment** seg, const uint8_t* buf, int buflen) {
             if (!buf) {
                 return -1;
             }
@@ -275,7 +294,7 @@ public:
             if (cmd < UDX_CMD_PIN || cmd > UDX_CMD_CON) {
                 return -3;
             }
-        
+
             p += Udx::_u8_decode(p, &wnd);
             if (wnd > UDX_RWN_MAX) {
                 return -4;
@@ -340,7 +359,7 @@ public:
         }
 
 
-        __inline__ int encode(uint8_t *buf, size_t buflen) {
+        __inline__ int encode(uint8_t* buf, int buflen) {
             ASSERT(buf);
 
             if (buflen < UDX_HDR_LEN) {
@@ -459,7 +478,8 @@ public:
         p += n;
         buflen -= n;
 
-        int now_ts = now_ms - start_ms_, res = 0;
+        int64_t now_ts = now_ms - start_ms_;
+        int res = 0;
         Segment* seg;
 
         while (buflen > 0) {
@@ -522,8 +542,6 @@ public:
         bool ok = false;
         Segment* segs[UDX_FRG_MAX];
         size_t nsegs = 0;
-
-        uint8_t prv_frg = 0xFF;
         uint64_t nxt = rcv_nxt_;
         auto itr = rcv_buf_.begin();
 
@@ -590,7 +608,6 @@ public:
         int nleft = UDX_MTU - UDX_UID_LEN, n;
 
         if (!ack_que_.empty()) {
-            uint64_t cur_ts = now_ms - start_ms_;
             uint8_t acc_flag = 1;
             Segment seg;
 
@@ -700,13 +717,13 @@ private:
         , addr_({0,{0}})
         , addrlen_(sizeof(addr_))
         , cwnd_(UDX_RWN_MIN)
-        , ssthresh_(UDX_STH_INI)
         , rmt_wnd_(UDX_RWN_MIN)
+        , ssthresh_(UDX_STH_INI)
         , uid_(uid)
         , srtt_(0)
         , rttvar_(0)
         , rto_(UDX_RTO_MIN)
-        , start_ms_(0)
+        , start_ms_(xq::tools::now_ms())
         , last_sn_(0)
         , rcv_nxt_(0)
         , snd_nxt_(0) 
@@ -717,7 +734,7 @@ private:
         cwnd_ = UDX_RWN_MIN;
         start_ms_ = now_ms;
         rto_ = UDX_RTO_MIN;
-        snd_nxt_ = rcv_nxt_ = last_sn_ = srtt_ = rmt_wnd_ = 0;
+        snd_nxt_ = rcv_nxt_ = last_sn_ = srtt_ = 0;
 
         if (rcv_buf_.size() > 0) {
             for (auto& itr : rcv_buf_) {
@@ -793,7 +810,8 @@ private:
             snd_buf_.erase(itr);
         }
 
-        uint64_t rtt = now_ts - seg->ts;
+        int64_t rtt = now_ts - seg->ts;
+        std::printf("now_ts[%llu] - seg->ts[%llu]\n", now_ts, seg->ts);
         if (rtt < 0) {
             delete seg;
             return -1;
@@ -804,7 +822,7 @@ private:
             rttvar_ = rtt / 2;
         }
         else {
-            uint64_t delta = rtt - srtt_;
+            int64_t delta = rtt - srtt_;
             if (delta < 0) {
                 delta = -delta;
             }
@@ -829,10 +847,17 @@ private:
     sockaddr addr_;
     socklen_t addrlen_;
 
-    uint8_t  cwnd_, rmt_wnd_, ssthresh_;
-    uint64_t uid_, srtt_, rttvar_, rto_;
-    uint64_t start_ms_, last_sn_;
-    uint64_t rcv_nxt_, snd_nxt_;
+    uint8_t cwnd_;
+    uint8_t rmt_wnd_;
+    uint8_t ssthresh_;
+    uint64_t uid_;
+    uint64_t srtt_;
+    uint64_t rttvar_;
+    uint64_t rto_;
+    uint64_t start_ms_;
+    uint64_t last_sn_;
+    uint64_t rcv_nxt_;
+    uint64_t snd_nxt_;
 
     std::map<uint64_t, uint64_t> ack_que_;
     std::map<uint64_t, Segment*> rcv_buf_;
