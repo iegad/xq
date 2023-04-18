@@ -29,28 +29,29 @@ constexpr int UDX_HDR_LEN = 14;
 /* -------------------------------------------------------------- */
 /// @brief UDX header length, UDX消息头长度: CMD[8b] + WND[8b]
 ///
-constexpr int   UDX_ACK_LEN = UDX_HDR_LEN + 1;
-constexpr int   UDX_PSH_MIN = UDX_HDR_LEN + 3;
-constexpr size_t   UDX_MSS = (UDX_MTU - UDX_UID_LEN - UDX_PSH_MIN) / 16 * 16;
-constexpr size_t   UDX_PSH_MAX = UDX_PSH_MIN + UDX_MSS;
-constexpr uint8_t  UDX_FRG_MAX = 256 * 1024 / UDX_MSS;
-constexpr size_t   UDX_MSG_MAX = UDX_FRG_MAX * UDX_MSS;
-constexpr uint8_t  UDX_CMD_PIN = 0x11;
-constexpr uint8_t  UDX_CMD_PON = 0x12;
-constexpr uint8_t  UDX_CMD_ACK = 0x13;
-constexpr uint8_t  UDX_CMD_PSH = 0x14;
-constexpr uint8_t  UDX_CMD_CON = 0x15;
-constexpr uint8_t  UDX_RWN_MIN = 1;
-constexpr uint8_t  UDX_RWN_MAX = 128;
-constexpr uint8_t  UDX_SWN_MAX = UDX_RWN_MAX / 4;
-constexpr uint8_t  UDX_STH_INI = 12;
-constexpr uint32_t UDX_UID_MAX = 100000;
-constexpr uint64_t UDX_SN_MAX  = 0x0000FFFFFFFFFFFF;
-constexpr uint64_t UDX_TS_MAX  = 0x0000FFFFFFFFFFFF;
-constexpr uint32_t UDX_RTO_MIN = 100;
-constexpr uint32_t UDX_RTO_MAX = 60000;
-constexpr uint64_t UDX_UPD_INT = 0;
-constexpr uint32_t UDX_RXM_MAX = 20; // 最大重传次数
+constexpr int UDX_ACK_LEN = UDX_HDR_LEN + 1;
+constexpr int UDX_PSH_MIN = UDX_HDR_LEN + 3;
+constexpr int UDX_MSS = (UDX_MTU - UDX_UID_LEN - UDX_PSH_MIN) / 16 * 16;
+constexpr int UDX_PSH_MAX = UDX_PSH_MIN + UDX_MSS;
+constexpr int UDX_FRG_MAX = 256 * 1024 / UDX_MSS;
+constexpr int UDX_MSG_MAX = UDX_FRG_MAX * UDX_MSS;
+constexpr int UDX_CMD_PIN = 0x11;
+constexpr int UDX_CMD_PON = 0x12;
+constexpr int UDX_CMD_ACK = 0x13;
+constexpr int UDX_CMD_PSH = 0x14;
+constexpr int UDX_CMD_CON = 0x15;
+constexpr int UDX_RWN_MIN = 1;
+constexpr int UDX_RWN_MAX = 128;
+constexpr int UDX_SWN_MAX = UDX_RWN_MAX / 4;
+constexpr int UDX_STH_INI = 12;
+constexpr int UDX_UID_MAX = 100000;
+constexpr int UDX_SN_MAX  = 0x0000FFFFFFFFFFFF;
+constexpr int UDX_TS_MAX  = 0x0000FFFFFFFFFFFF;
+constexpr int UDX_RTO_MIN = 100;
+constexpr int UDX_RTO_MAX = 60000;
+constexpr int UDX_UPD_INT = 0;
+constexpr int UDX_RXM_MAX = 20; // 最大重传次数
+constexpr int UDX_FAS_MAX = 3; // 快速重传
 
 
 class Udx {
@@ -677,10 +678,15 @@ public:
                 else if (seg->resend_ts <= now_ts) {
                     // 超时重传
                     needsend = 1;
-                    seg->resend_ts += xq::tools::MID(UDX_RTO_MIN, (uint32_t)(rto_ * 1.3), UDX_RTO_MAX);
+                    seg->resend_ts += xq::tools::MID(UDX_RTO_MIN, (int)(rto_ * 1.3), UDX_RTO_MAX);
 
                     // TODO: 重新计算CWND大小
                     snd_wnd = xq::tools::MIN(cwnd_, rmt_wnd_);
+                }
+                else if (seg->fastack >= UDX_FAS_MAX) {
+                    needsend = 1;
+                    // TODO: 快速恢复
+                    seg->fastack = 0;
                 }
 
                 if (needsend) {
@@ -802,12 +808,18 @@ private:
 
 
     __inline__ int _update_ack(Segment* seg, uint64_t now_ts) {
-        auto itr = snd_buf_.find(seg->sn);
-        if (itr != snd_buf_.end()) {
+        auto rm_itr = snd_buf_.find(seg->sn);
+        if (rm_itr != snd_buf_.end()) {
             if (seg->acc) {
-                snd_buf_.erase(snd_buf_.begin(), itr);
+                snd_buf_.erase(snd_buf_.begin(), rm_itr);
             }
-            snd_buf_.erase(itr);
+            else {
+                for (auto itr = snd_buf_.begin(); itr != rm_itr; ++itr) {
+                    itr->second->fastack++;
+                }
+            }
+
+            snd_buf_.erase(rm_itr);
         }
 
         int64_t rtt = now_ts - seg->ts;
@@ -835,7 +847,7 @@ private:
             }
         }
 
-        uint32_t tmp = srtt_ + xq::tools::MAX(UDX_UPD_INT, 4 * rttvar_);
+        int tmp = srtt_ + xq::tools::MAX(UDX_UPD_INT, 4 * rttvar_);
         rto_ = xq::tools::MID(UDX_RTO_MIN, tmp, UDX_RTO_MAX);
 
         delete seg;
@@ -847,13 +859,13 @@ private:
     sockaddr addr_;
     socklen_t addrlen_;
 
-    uint8_t cwnd_;
-    uint8_t rmt_wnd_;
-    uint8_t ssthresh_;
-    uint64_t uid_;
-    uint64_t srtt_;
-    uint64_t rttvar_;
-    uint64_t rto_;
+    int cwnd_;
+    int rmt_wnd_;
+    int ssthresh_;
+    int rto_;
+    int srtt_;
+    int rttvar_;
+    uint32_t uid_;
     uint64_t start_ms_;
     uint64_t last_sn_;
     uint64_t rcv_nxt_;
