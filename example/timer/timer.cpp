@@ -14,35 +14,35 @@ int main(int, char**) {
     beg = xq::tools::now_ms();
 
     btmr->create_timer_after(2000, [](void*) {
-        std::printf("---------------------------------------------------------------------: %lld\n", xq::tools::now());
+        std::printf("---------------------------------------------------------------------: %ld\n", xq::tools::now());
     }, nullptr, -1);
 
     btmr->create_timer_after(10000, [](void*) {
-        std::printf("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++: %lld\n", xq::tools::now());
+        std::printf("++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++: %ld\n", xq::tools::now());
     }, nullptr, 10);
 
-    for (int i = 1; i <= NTIMES; i++) {
+    for (long i = 1; i <= NTIMES; i++) {
         int64_t delay_ms = (i + 1) * 20;
         btmr->create_timer_after(delay_ms, [](void* num) {
-            int n = (int)num;
-            std::printf(">>> %d <<<\n", (int)n);
+            long n = long(num);
+            std::printf(">>> %ld <<<\n", n);
         }, (void*)i);
 
         btmr->create_timer_after(delay_ms, [](void* num) {
-            int n = (int)num;
-            std::printf("+++ %d +++\n", (int)n);
+            long n = long(num);
+            std::printf("+++ %ld +++\n", n);
         }, (void*)i);
 
         btmr->create_timer_after(delay_ms, [](void* num) {
-            int n = (int)num;
-            std::printf("@@@ %d @@@\n", (int)n);
+            long n = long(num);
+            std::printf("@@@ %ld @@@\n", n);
         }, (void*)i);
 
         btmr->create_timer_after(delay_ms, [](void* num) {
-            int n = (int)num;
-            std::printf("--- %d ---\n", n);
+            long n = long(num);
+            std::printf("--- %ld ---\n", n);
             if (n == NTIMES) {
-                std::printf("take %lld ms\n", xq::tools::now_ms() - beg);
+                std::printf("take %ld ms\n", xq::tools::now_ms() - beg);
                 btmr->stop();
             }
         }, (void*)i);

@@ -40,18 +40,19 @@ constexpr int UDX_CMD_PON = 0x12;
 constexpr int UDX_CMD_ACK = 0x13;
 constexpr int UDX_CMD_PSH = 0x14;
 constexpr int UDX_CMD_CON = 0x15;
-constexpr int UDX_RWN_MIN = 1;
+constexpr int UDX_RWN_MIN = 2;
 constexpr int UDX_RWN_MAX = 128;
 constexpr int UDX_SWN_MAX = UDX_RWN_MAX / 4;
 constexpr int UDX_STH_INI = 12;
 constexpr int UDX_UID_MAX = 100000;
-constexpr int UDX_SN_MAX  = 0x0000FFFFFFFFFFFF;
-constexpr int UDX_TS_MAX  = 0x0000FFFFFFFFFFFF;
 constexpr int UDX_RTO_MIN = 100;
 constexpr int UDX_RTO_MAX = 60000;
 constexpr int UDX_UPD_INT = 0;
 constexpr int UDX_RXM_MAX = 20; // 最大重传次数
 constexpr int UDX_FAS_MAX = 3; // 快速重传
+
+constexpr uint64_t UDX_SN_MAX = 0x0000FFFFFFFFFFFF;
+constexpr uint64_t UDX_TS_MAX = 0x0000FFFFFFFFFFFF;
 
 
 class Udx {
@@ -439,9 +440,24 @@ public:
 
 
     ~Udx() {
-        snd_que_.clear();
-        snd_buf_.clear();
-        rcv_buf_.clear();
+        while (rcv_buf_.size() > 0) {
+            auto itr = rcv_buf_.begin();
+            delete itr->second;
+            rcv_buf_.erase(itr);
+        }
+
+        while (snd_que_.size() > 0) {
+            auto itr = snd_que_.begin();
+            delete* itr;
+            snd_que_.erase(itr);
+        }
+
+        while (snd_buf_.size() > 0) {
+            auto itr = snd_buf_.begin();
+            delete itr->second;
+            snd_buf_.erase(itr);
+        }
+
         ack_que_.clear();
     }
 
@@ -490,7 +506,7 @@ public:
             }
 
             ASSERT(seg);
-            std::printf("%s\n", seg->to_string().c_str());
+            //std::printf("%s\n", seg->to_string().c_str());
             if (seg->sn > last_sn_ || last_sn_ == 0) {
                 rmt_wnd_ = seg->wnd;
                 last_sn_ = seg->sn;
@@ -617,7 +633,6 @@ public:
                     dg->datalen = UDX_MTU - nleft;
                     _u24_encode(uid_, dg->data);
                     sess_->send(dg);
-
                     dg = UdpSession::Datagram::get(nullptr, &addr_, addrlen_);
                     p = dg->data + UDX_UID_LEN;
                     nleft = UDX_MTU - UDX_UID_LEN;
@@ -665,6 +680,7 @@ public:
                     dg = UdpSession::Datagram::get(nullptr, &addr_, addrlen_);
                     p = dg->data + UDX_UID_LEN;
                     nleft = UDX_MTU - UDX_UID_LEN;
+                    
                 }
 
                 if (seg->xmit == 0) {
@@ -711,7 +727,7 @@ public:
 
         _u24_encode(uid_, dg->data);
         sess_->send(dg);
-        ASSERT(!sess_->flush());
+        ASSERT(sess_->flush() >= 0);
 
         return 0;
     }
@@ -725,10 +741,10 @@ private:
         , cwnd_(UDX_RWN_MIN)
         , rmt_wnd_(UDX_RWN_MIN)
         , ssthresh_(UDX_STH_INI)
-        , uid_(uid)
+        , rto_(UDX_RTO_MIN)
         , srtt_(0)
         , rttvar_(0)
-        , rto_(UDX_RTO_MIN)
+        , uid_(uid)
         , start_ms_(xq::tools::now_ms())
         , last_sn_(0)
         , rcv_nxt_(0)
@@ -742,26 +758,25 @@ private:
         rto_ = UDX_RTO_MIN;
         snd_nxt_ = rcv_nxt_ = last_sn_ = srtt_ = 0;
 
-        if (rcv_buf_.size() > 0) {
-            for (auto& itr : rcv_buf_) {
-                delete itr.second;
-            }
-            rcv_buf_.clear();
-        }
-        
-        if (snd_que_.size() > 0) {
-            for (auto& itr : snd_que_) {
-                delete itr;
-            }
-            snd_que_.clear();
+        while (rcv_buf_.size() > 0) {
+            auto itr = rcv_buf_.begin();
+            delete itr->second;
+            rcv_buf_.erase(itr);
         }
 
-        if (snd_buf_.size() > 0) {
-            for (auto& itr : snd_buf_) {
-                delete itr.second;
-            }
-            snd_buf_.clear();
+        while (snd_que_.size() > 0) {
+            auto itr = snd_que_.begin();
+            delete *itr;
+            snd_que_.erase(itr);
         }
+        
+        while (snd_buf_.size() > 0) {
+            auto itr = snd_buf_.begin();
+            delete itr->second;
+            snd_buf_.erase(itr);
+        }
+        
+        ack_que_.clear();
     }
 
 
@@ -823,7 +838,6 @@ private:
         }
 
         int64_t rtt = now_ts - seg->ts;
-        std::printf("now_ts[%llu] - seg->ts[%llu]\n", now_ts, seg->ts);
         if (rtt < 0) {
             delete seg;
             return -1;
