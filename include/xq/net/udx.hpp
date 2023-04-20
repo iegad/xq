@@ -434,7 +434,7 @@ public:
     // ------------------------------------------------------------------ END Segment ------------------------------------------------------------------
 
 
-    static Ptr create(uint32_t uid, UdpSession::Ptr &sess) {
+    static Ptr create(uint32_t uid, UdpSession &sess) {
         return Ptr(new Udx(uid, sess));
     }
 
@@ -622,20 +622,20 @@ public:
 
         uint64_t now_ts = now_ms - start_ms_;
         uint8_t* p = dg->data + UDX_UID_LEN;
-        int nleft = UDX_MTU - UDX_UID_LEN, n;
+        int nbuf = 0, n;
 
         if (!ack_que_.empty()) {
             uint8_t acc_flag = 1;
             Segment seg;
 
             for (auto& ack : ack_que_) {
-                if (nleft < UDX_ACK_LEN) {
-                    dg->datalen = UDX_MTU - nleft;
-                    _u24_encode(uid_, dg->data);
-                    sess_->send(dg);
+                if (nbuf > UDX_MTU - UDX_ACK_LEN - UDX_UID_LEN) {
+                    nbuf += _u24_encode(uid_, dg->data);
+                    dg->datalen = nbuf;
+                    sess_.send(dg);
                     dg = UdpSession::Datagram::get(nullptr, &addr_, addrlen_);
                     p = dg->data + UDX_UID_LEN;
-                    nleft = UDX_MTU - UDX_UID_LEN;
+                    nbuf = 0;
                 }
 
                 seg.cmd = UDX_CMD_ACK;
@@ -643,9 +643,9 @@ public:
                 seg.sn = ack.first;
                 seg.ts = ack.second;
                 seg.acc = acc_flag;
-                n = seg.encode(p, nleft);
+                n = seg.encode(p, UDX_MTU - UDX_UID_LEN - nbuf);
                 p += n;
-                nleft -= n;
+                nbuf += n;
                 if (acc_flag) {
                     acc_flag = 0;
                 }
@@ -673,13 +673,13 @@ public:
                     break;
                 }
 
-                if (nleft < seg->len + UDX_PSH_MIN) {
-                    dg->datalen = UDX_MTU - nleft;
-                    _u24_encode(uid_, dg->data);
-                    sess_->send(dg);
+                if (nbuf > UDX_MTU - UDX_PSH_MIN - UDX_UID_LEN - seg->len) {
+                    nbuf += _u24_encode(uid_, dg->data);
+                    dg->datalen = nbuf;
+                    sess_.send(dg);
                     dg = UdpSession::Datagram::get(nullptr, &addr_, addrlen_);
                     p = dg->data + UDX_UID_LEN;
-                    nleft = UDX_MTU - UDX_UID_LEN;
+                    nbuf = 0;
                     
                 }
 
@@ -706,11 +706,12 @@ public:
                 }
 
                 if (needsend) {
+                    // 所有需要重新发送的包 都需要打上当前时间戳.
                     seg->ts = now_ts;
                     seg->wnd = rcv_buf_.size() < UDX_RWN_MAX ? UDX_RWN_MAX - rcv_buf_.size() : 0;
-                    n = seg->encode(p, nleft);
+                    n = seg->encode(p, UDX_MTU - UDX_UID_LEN - nbuf);
                     p += n;
-                    nleft -= n;
+                    nbuf += n;
                     seg->xmit++;
                     needsend = 0;
                     i++;
@@ -718,23 +719,24 @@ public:
             }
         }
 
-        dg->datalen = UDX_MTU - nleft;
-        ASSERT(dg->datalen == 3 || dg->datalen >= UDX_UID_LEN + UDX_HDR_LEN);
-        if (dg->datalen <= 3) {
-            delete dg;
+        ASSERT(nbuf == 0 || nbuf >= UDX_HDR_LEN);
+        if (nbuf == 0) {
+            UdpSession::Datagram::put(dg);
             return 0;
         }
 
-        _u24_encode(uid_, dg->data);
-        sess_->send(dg);
-        ASSERT(sess_->flush() >= 0);
+        nbuf += _u24_encode(uid_, dg->data);
+        dg->datalen = nbuf;
+        sess_.send(dg);
+        
+        ASSERT(sess_.flush() >= 0);
 
         return 0;
     }
 
 
 private:
-    Udx(uint32_t uid, UdpSession::Ptr &sess)
+    Udx(uint32_t uid, UdpSession &sess)
         : sess_(sess)
         , addr_({0,{0}})
         , addrlen_(sizeof(addr_))
@@ -837,6 +839,14 @@ private:
             snd_buf_.erase(rm_itr);
         }
 
+        /* ---------------------
+         * 这里可能会出现负值.
+         * 例如: 
+         *     1, 发送端发 psh[sn:1, ts:1] 的包.
+         *     2, 对端收到后响应 ack[sn:1, ts:2], 但是该响但在网络中滞留.
+         *     3, 发送端触发重传(可能是超时重传, 也可能是快速重传) re psh[sn:1, ts:3].
+         *     4, 发送端此时收到滞留的 ack[sn:1, ts: 2], 这时就会出现RTT时间负数的情况.
+         */
         int64_t rtt = now_ts - seg->ts;
         if (rtt < 0) {
             delete seg;
@@ -869,10 +879,9 @@ private:
     }
 
 
-    UdpSession::Ptr sess_;
+    UdpSession& sess_;
     sockaddr addr_;
     socklen_t addrlen_;
-
     int cwnd_;
     int rmt_wnd_;
     int ssthresh_;

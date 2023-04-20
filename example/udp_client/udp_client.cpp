@@ -14,17 +14,16 @@ int rcv_cb(const UdpSession::Datagram* udp_seg) {
 
 
 void send_wkr() {
-    Udx::Segment* seg0 = Udx::Segment::new_con(1, 0, 0, 4, (uint8_t*)"1111111111", 10);
-    Udx::Segment* seg1 = Udx::Segment::new_psh(1, 1, 1, 3, (uint8_t*)"2222222222", 10);
-    Udx::Segment* seg2 = Udx::Segment::new_psh(1, 2, 2, 2, (uint8_t*)"3333333333", 10);
-    Udx::Segment* seg3 = Udx::Segment::new_psh(1, 3, 3, 1, (uint8_t*)"4444444444", 10);
-    Udx::Segment* seg4 = Udx::Segment::new_psh(1, 4, 4, 0, (uint8_t*)"5555555555", 10);
-    
+    Udx::Segment* seg0 = Udx::Segment::new_con(2, 0, 0, 0, (uint8_t*)"1111111111", 10);
+    Udx::Segment* seg1 = Udx::Segment::new_psh(2, 1, 1, 0, (uint8_t*)"2222222222", 10);
+    Udx::Segment* seg2 = Udx::Segment::new_psh(2, 2, 2, 0, (uint8_t*)"3333333333", 10);
+    Udx::Segment* seg3 = Udx::Segment::new_psh(2, 3, 3, 0, (uint8_t*)"4444444444", 10);
+    Udx::Segment* seg4 = Udx::Segment::new_psh(2, 4, 4, 0, (uint8_t*)"5555555555", 10);
     
     sockaddr addr = { 0,{0} };
     socklen_t addrlen = sizeof(addr);
 
-    xq::net::str2addr("192.168.0.201:6688", &addr, &addrlen);
+    xq::net::str2addr("192.168.0.101:6688", &addr, &addrlen);
 
     uint8_t buf[xq::net::UDX_MTU];
 
@@ -54,6 +53,8 @@ void send_wkr() {
     sess->send(dg4, true);
     sess->send(dg2, true);
     sess->send(dg3, true);
+
+    std::this_thread::sleep_for(std::chrono::seconds(10));
 }
 
 

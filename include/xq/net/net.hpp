@@ -48,7 +48,7 @@ constexpr int UDP_DGX_SIZE = ETH_FRAME_SIZE - IPV6_HEAD_SIZE - UDP_HEAD_SIZE; //
 // recvmmsg 大小, 用于linux下
 constexpr int IO_RMSG_SIZE = 256;
 // sendmmsg 大小, 用于linux下
-constexpr int IO_SMSG_SIZE = 70;
+constexpr int IO_SMSG_SIZE = 128;
 //constexpr int IO_TIMEOUT = 5000;
 
 // IPv4正则

@@ -29,16 +29,16 @@ int rcv_cb(const UdpSession::Datagram* dg) {
         return 0;
     }
 
-    n = udx->recv(rbuf, xq::net::UDX_MSG_MAX);
-    if (n > 0) {
+    while (n = udx->recv(rbuf, xq::net::UDX_MSG_MAX), n > 0) {
         rbuf[n] = 0;
-        std::printf("\n\n--------------------------------------------\n");
-        std::printf("%s\n", (char*)rbuf);
+        //std::printf("\n\n--------------------------------------------\n");
+        //std::printf("%s\n", (char*)rbuf);
 
         udx->set_addr(&dg->name, dg->namelen);
         ASSERT(!udx->send(rbuf, n));
+        udx->flush(dg->time_ms);
     }
-    udx->flush(dg->time_ms);
+    
     return 0;
 }
 
@@ -54,7 +54,7 @@ int main(int, char**) {
 
     std::signal(SIGINT, signal_handler);
     server = UdpSession::create(":6688");
-    udx = xq::net::Udx::create(1, server);
+    udx = xq::net::Udx::create(1, *server);
     server->run(rcv_cb);
     server->wait();
     std::printf("EXIT.!!!\n");

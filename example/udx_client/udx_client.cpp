@@ -24,8 +24,7 @@ int rcv_cb(const UdpSession::Datagram* dg) {
     if (n > 0) {
         rbuf[n] = 0;
         std::printf("%s\n", (char*)rbuf);
-
-        if (COUNT == 1000) {
+        if (COUNT == 2) {
             udx->flush(dg->time_ms);
             sess->stop();
             return 0;
@@ -48,9 +47,11 @@ int main(int argc, char** argv) {
     }
 #endif // WIN32
     sess = UdpSession::create("192.168.0.201:0");
-    udx = Udx::create(1, sess);
+    udx = Udx::create(1, *sess);
+    //udx->connect("1.15.81.179:6688");
     udx->connect("192.168.0.101:6688");
     char buf[10000] = {0};
+    int64_t beg = xq::tools::now_ms();
     sprintf(buf, "Hello world: %d", COUNT++);
     int n = udx->send((uint8_t*)buf, strlen(buf));
     if (n < 0) {
@@ -60,6 +61,7 @@ int main(int argc, char** argv) {
     udx->flush(xq::tools::now_ms());
     sess->start_rcv(rcv_cb);
     sess->close();
+    std::printf(">>>> takes %lld ms\n", xq::tools::now_ms() - beg);
 
 #ifdef WIN32
     WSACleanup();
