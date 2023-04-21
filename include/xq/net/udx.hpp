@@ -162,11 +162,11 @@ public:
         uint64_t ts;
 
         // META
-        uint8_t fastack;
-        uint8_t xmit;
+        uint8_t  fastack;
+        uint8_t  xmit;
         uint64_t resend_ts;
 
-        uint8_t acc;
+        uint8_t  acc;
         uint8_t  frg;
         uint16_t len;
         uint8_t  data[UDX_MSS];
@@ -182,55 +182,6 @@ public:
         Segment() {
             ::memset(this, 0, sizeof(Segment));
         }
-
-
-#ifndef WIN32
-        std::string to_string() {
-            char buf[UDX_MSS * 2 + 80];
-            int n = 0;
-            switch (cmd) {
-            case UDX_CMD_PIN:
-            case UDX_CMD_PON: n = sprintf(buf, "[CMD:0x%x][WND:%3d][SN:%lu][TS:%lu]",
-                cmd, wnd, sn, ts);
-                break;
-
-            case UDX_CMD_ACK: n = sprintf(buf, "[CMD:0x%x][WND:%3d][SN:%lu][TS:%lu][ACC:%d]",
-                cmd, wnd, sn, ts, acc);
-                break;
-
-            case UDX_CMD_PSH:
-            case UDX_CMD_CON: n = sprintf(buf, "[CMD:0x%x][WND:%3d][SN:%lu][TS:%lu][FRG:%3d][LEN:%d] %s",
-                cmd, wnd, sn, ts, frg, len, xq::tools::bin2hex(data, len).c_str());
-                break;
-
-            default: break;
-            }
-            return std::string(buf, n);
-        }
-#else
-        std::string to_string() {
-            char buf[UDX_MSS * 2 + 80];
-            int n = 0;
-            switch (cmd) {
-            case UDX_CMD_PIN:
-            case UDX_CMD_PON: n = sprintf(buf, "[CMD:0x%x][WND:%3d][SN:%llu][TS:%llu]",
-                cmd, wnd, sn, ts);
-                break;
-
-            case UDX_CMD_ACK: n = sprintf(buf, "[CMD:0x%x][WND:%3d][SN:%llu][TS:%llu][ACC:%d]",
-                cmd, wnd, sn, ts, acc);
-                break;
-
-            case UDX_CMD_PSH:
-            case UDX_CMD_CON: n = sprintf(buf, "[CMD:0x%x][WND:%3d][SN:%llu][TS:%llu][FRG:%3d][LEN:%d] %s",
-                cmd, wnd, sn, ts, frg, len, xq::tools::bin2hex(data, len).c_str());
-                break;
-
-            default: break;
-            }
-            return std::string(buf, n);
-    }
-#endif // !WIN32
 
 
         Segment(uint8_t cmd, uint8_t rcv_wnd, uint64_t sn, uint64_t ts, uint8_t acc, uint8_t frg, const uint8_t* data, size_t datalen)
@@ -506,7 +457,6 @@ public:
             }
 
             ASSERT(seg);
-            //std::printf("%s\n", seg->to_string().c_str());
             if (seg->sn > last_sn_ || last_sn_ == 0) {
                 rmt_wnd_ = seg->wnd;
                 last_sn_ = seg->sn;
@@ -535,6 +485,10 @@ public:
 
             case UDX_CMD_PSH: 
                 res = _update_psh(seg); 
+                break;
+
+            case UDX_CMD_PIN:
+                res = _update_pin();
                 break;
 
             default: break;
@@ -623,10 +577,11 @@ public:
         uint64_t now_ts = now_ms - start_ms_;
         uint8_t* p = dg->data + UDX_UID_LEN;
         int nbuf = 0, n;
+        Segment seg, *psh;
 
         if (!ack_que_.empty()) {
             uint8_t acc_flag = 1;
-            Segment seg;
+            
 
             for (auto& ack : ack_que_) {
                 if (nbuf > UDX_MTU - UDX_ACK_LEN - UDX_UID_LEN) {
@@ -649,6 +604,10 @@ public:
                 if (acc_flag) {
                     acc_flag = 0;
                 }
+
+                if (pon_flag_) {
+                    pon_flag_ = false;
+                }
             }
 
             ack_que_.clear();
@@ -667,13 +626,13 @@ public:
 
         if (snd_wnd > 0) {
             for (auto& itr : snd_buf_) {
-                Segment* seg = itr.second;
+                psh = itr.second;
 
                 if (i > snd_wnd) {
                     break;
                 }
 
-                if (nbuf > UDX_MTU - UDX_PSH_MIN - UDX_UID_LEN - seg->len) {
+                if (nbuf > UDX_MTU - UDX_PSH_MIN - UDX_UID_LEN - psh->len) {
                     nbuf += _u24_encode(uid_, dg->data);
                     dg->datalen = nbuf;
                     sess_.send(dg);
@@ -683,40 +642,66 @@ public:
                     
                 }
 
-                if (seg->xmit == 0) {
+                if (psh->xmit == 0) {
                     // 第一次发送
                     needsend = 1;
                 }
-                else if (seg->xmit >= UDX_RXM_MAX) {
+                else if (psh->xmit >= UDX_RXM_MAX) {
                     // 超过最大重传次数
                     return -1;
                 }
-                else if (seg->resend_ts <= now_ts) {
+                else if (psh->resend_ts <= now_ts) {
                     // 超时重传
                     needsend = 1;
-                    seg->resend_ts += xq::tools::MID(UDX_RTO_MIN, (int)(rto_ * 1.3), UDX_RTO_MAX);
+                    psh->resend_ts += xq::tools::MID(UDX_RTO_MIN, (int)(rto_ * 1.3), UDX_RTO_MAX);
 
                     // TODO: 重新计算CWND大小
                     snd_wnd = xq::tools::MIN(cwnd_, rmt_wnd_);
                 }
-                else if (seg->fastack >= UDX_FAS_MAX) {
+                else if (psh->fastack >= UDX_FAS_MAX) {
                     needsend = 1;
                     // TODO: 快速恢复
-                    seg->fastack = 0;
+                    psh->fastack = 0;
                 }
 
                 if (needsend) {
                     // 所有需要重新发送的包 都需要打上当前时间戳.
-                    seg->ts = now_ts;
-                    seg->wnd = rcv_buf_.size() < UDX_RWN_MAX ? UDX_RWN_MAX - rcv_buf_.size() : 0;
-                    n = seg->encode(p, UDX_MTU - UDX_UID_LEN - nbuf);
+                    psh->ts = now_ts;
+                    psh->wnd = rcv_buf_.size() < UDX_RWN_MAX ? UDX_RWN_MAX - rcv_buf_.size() : 0;
+                    n = psh->encode(p, UDX_MTU - UDX_UID_LEN - nbuf);
                     p += n;
                     nbuf += n;
-                    seg->xmit++;
+                    psh->xmit++;
                     needsend = 0;
                     i++;
+                    if (pon_flag_) {
+                        pon_flag_ = false;
+                    }
                 }
             }
+        }
+
+        if (rmt_wnd_ == 0) {
+            seg.cmd = UDX_CMD_PIN;
+            seg.ts = now_ts;
+            seg.sn = snd_nxt_++;
+            seg.wnd = rcv_buf_.size() < UDX_RWN_MAX ? UDX_RWN_MAX - rcv_buf_.size() : 0;
+            n = seg.encode(p, UDX_MTU - UDX_UID_LEN - nbuf);
+            p += n;
+            nbuf += n;
+            if (pon_flag_) {
+                pon_flag_ = false;
+            }
+        }
+
+        if (pon_flag_) {
+            seg.cmd = UDX_CMD_PON;
+            seg.ts = now_ts;
+            seg.sn = snd_nxt_++;
+            seg.wnd = rcv_buf_.size() < UDX_RWN_MAX ? UDX_RWN_MAX - rcv_buf_.size() : 0;
+            n = seg.encode(p, UDX_MTU - UDX_UID_LEN - nbuf);
+            p += n;
+            nbuf += n;
         }
 
         ASSERT(nbuf == 0 || nbuf >= UDX_HDR_LEN);
@@ -740,6 +725,7 @@ private:
         : sess_(sess)
         , addr_({0,{0}})
         , addrlen_(sizeof(addr_))
+        , pon_flag_(false)
         , cwnd_(UDX_RWN_MIN)
         , rmt_wnd_(UDX_RWN_MIN)
         , ssthresh_(UDX_STH_INI)
@@ -791,6 +777,11 @@ private:
         return this->_update_psh(new_seg);
     }
 
+
+    __inline__ int _update_pin() {
+        pon_flag_ = true;
+        return 0;
+    }
 
     __inline__ int _update_psh(Segment* new_seg) {
         if (new_seg->sn >= rcv_nxt_ + UDX_RWN_MAX) {
@@ -882,6 +873,8 @@ private:
     UdpSession& sess_;
     sockaddr addr_;
     socklen_t addrlen_;
+
+    bool pon_flag_;
     int cwnd_;
     int rmt_wnd_;
     int ssthresh_;

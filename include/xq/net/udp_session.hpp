@@ -41,9 +41,6 @@ public:
 
 
         static __inline__ Datagram* get(UdpSession* sess = nullptr, const sockaddr* name = nullptr, socklen_t namelen = sizeof(sockaddr), const uint8_t* data = nullptr, int datalen = 0) {
-            static int count = 0;
-
-            std::printf(" ++++++++++ get: %d ++++++++++\n", ++count);
             Datagram* dg = (Datagram*)::malloc(sizeof(Datagram));
             ASSERT(dg);
 
@@ -73,9 +70,6 @@ public:
 
 
         static __inline__  void put(Datagram* dg) {
-            static int count = 0;
-
-            std::printf(" ---------- put: %d ----------\n", ++count);
             ::free(dg);
         }
     };
