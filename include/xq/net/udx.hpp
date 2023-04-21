@@ -458,7 +458,7 @@ public:
 
             ASSERT(seg);
             if (seg->sn > last_sn_ || last_sn_ == 0) {
-                rmt_wnd_ = seg->wnd;
+                rwnd_ = seg->wnd;
                 last_sn_ = seg->sn;
 
                 // 拥塞控制
@@ -581,8 +581,6 @@ public:
 
         if (!ack_que_.empty()) {
             uint8_t acc_flag = 1;
-            
-
             for (auto& ack : ack_que_) {
                 if (nbuf > UDX_MTU - UDX_ACK_LEN - UDX_UID_LEN) {
                     nbuf += _u24_encode(uid_, dg->data);
@@ -621,8 +619,8 @@ public:
             snd_que_.pop_front();
         }
 
-        int needsend = 0, i = 0;
-        uint8_t snd_wnd = xq::tools::MIN(cwnd_, rmt_wnd_);
+        int needsend = 0, i = 0, to_resend = 0, fa_resend = 0;
+        uint8_t snd_wnd = xq::tools::MIN(cwnd_, rwnd_);
 
         if (snd_wnd > 0) {
             for (auto& itr : snd_buf_) {
@@ -639,7 +637,6 @@ public:
                     dg = UdpSession::Datagram::get(nullptr, &addr_, addrlen_);
                     p = dg->data + UDX_UID_LEN;
                     nbuf = 0;
-                    
                 }
 
                 if (psh->xmit == 0) {
@@ -655,13 +652,15 @@ public:
                     needsend = 1;
                     psh->resend_ts += xq::tools::MID(UDX_RTO_MIN, (int)(rto_ * 1.3), UDX_RTO_MAX);
 
-                    // TODO: 重新计算CWND大小
-                    snd_wnd = xq::tools::MIN(cwnd_, rmt_wnd_);
+                    // TODO: 超时重传, 这里需要重新计算cwnd.
+                    snd_wnd = xq::tools::MIN(cwnd_, rwnd_);
+                    to_resend++;
                 }
                 else if (psh->fastack >= UDX_FAS_MAX) {
                     needsend = 1;
-                    // TODO: 快速恢复
+                    // TODO: 快重传, 这里需要进入快恢复
                     psh->fastack = 0;
+                    fa_resend++;
                 }
 
                 if (needsend) {
@@ -678,10 +677,10 @@ public:
                         pon_flag_ = false;
                     }
                 }
-            }
+            } // for
         }
 
-        if (rmt_wnd_ == 0) {
+        if (rwnd_ == 0) {
             seg.cmd = UDX_CMD_PIN;
             seg.ts = now_ts;
             seg.sn = snd_nxt_++;
@@ -727,7 +726,7 @@ private:
         , addrlen_(sizeof(addr_))
         , pon_flag_(false)
         , cwnd_(UDX_RWN_MIN)
-        , rmt_wnd_(UDX_RWN_MIN)
+        , rwnd_(UDX_RWN_MIN)
         , ssthresh_(UDX_STH_INI)
         , rto_(UDX_RTO_MIN)
         , srtt_(0)
@@ -875,8 +874,8 @@ private:
     socklen_t addrlen_;
 
     bool pon_flag_;
-    int cwnd_;
-    int rmt_wnd_;
+    int cwnd_; // 本端拥塞窗口
+    int rwnd_; // 对端接收窗口
     int ssthresh_;
     int rto_;
     int srtt_;

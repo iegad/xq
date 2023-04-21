@@ -20,7 +20,7 @@ namespace net {
 class UdpSession {
 public:
     /* ------------------------------------------------------------------- BEG Datagram ------------------------------------------------------------------- */
-    /// @brief UdpSession 数据报
+    /// @brief UdpSession 数据报, 该类型禁用了c++ 的构造函数和析构函数, 所以该对象无法在栈上创建, 只能通过 Datagram::get 来在堆上动态创建该类型实例.
     ///
     struct Datagram {
         /* ------------------- META 字段 ------------------- */
@@ -40,6 +40,19 @@ public:
         uint8_t data[xq::net::UDP_DGX_SIZE + 1];
 
 
+        /* ----------------------------------------------------- */
+        /// @brief 获取 Datagram 动态对象, 该函数应当和 Datagram::put 成对使用
+        ///
+        /// @param sess 所属UdpSession
+        ///
+        /// @param name 对端地址
+        ///
+        /// @param namelen 对端地址长度
+        ///
+        /// @param data 数据
+        ///
+        /// @param datalen 数据长度
+        ///
         static __inline__ Datagram* get(UdpSession* sess = nullptr, const sockaddr* name = nullptr, socklen_t namelen = sizeof(sockaddr), const uint8_t* data = nullptr, int datalen = 0) {
             Datagram* dg = (Datagram*)::malloc(sizeof(Datagram));
             ASSERT(dg);
@@ -69,17 +82,43 @@ public:
         }
 
 
+        /* ----------------------------------------------------- */
+        /// @brief 释放 Datagram 动态指针
+        ///
         static __inline__  void put(Datagram* dg) {
-            ::free(dg);
+            if (dg) ::free(dg);
         }
+
+
+    private:
+        friend class UdpSession;
+        Datagram() = default;
+        ~Datagram() = default;
+        Datagram(const Datagram&) = delete;
+        Datagram(const Datagram&&) = delete;
+        Datagram& operator=(const Datagram&) = delete;
+        Datagram& operator=(const Datagram&&) = delete;
     };
     /* ------------------------------------------------------------------- END Datagram ------------------------------------------------------------------- */
 
 
     typedef std::shared_ptr<UdpSession> Ptr;
-    typedef int (*RcvCallback)(const Datagram*);
+
+    /* ----------------------------------------------------- */
+    /// @brief IO 读回调
+    ///
+    /// @return 返回值有三种类型, 分别表达三种不同的语义; 
+    ///          1, ret < 0: 将退出IO loop. 
+    ///          2, ret == 0: 表示正常调用, 主调函数将获取 dg 的所有权. 
+    ///          3, ret > 0: 表示正常调用, 但回调函数获取 dg 所有权, 主调函数已失云dg所有权.
+    typedef int (*RcvCallback)(const Datagram* dg);
 
 
+    /* ----------------------------------------------------- */
+    /// @brief 动态创建 UdpSession
+    ///
+    /// @param local_addr 本端地址.
+    ///
     static __inline__ Ptr create(const std::string& local_addr = "") {
         std::string ip = "0.0.0.0", port = "0";
 
@@ -112,7 +151,9 @@ public:
         close();
     }
 
-
+    /* ----------------------------------------------------- */
+    /// @brief 端口复用
+    ///
     void __inline__ set_reuse() {
         constexpr int ON = 1;
         ASSERT(sockfd_ != INVALID_SOCKET);
@@ -139,11 +180,17 @@ public:
     }
 
 
+    /* ----------------------------------------------------- */
+    /// @brief 异步开启 io loop
+    ///
     void __inline__ run(RcvCallback rcv_cb) {
         thread_ = std::thread(std::bind(&UdpSession::start_rcv, this, rcv_cb));
     }
 
 
+    /* ----------------------------------------------------- */
+    /// @brief 停止 io loop
+    ///
     void __inline__ stop() {
         if (wp_ != -1) {
 #ifndef WIN32
@@ -158,6 +205,9 @@ public:
     }
 
 
+    /* ----------------------------------------------------- */
+    /// @brief 等待 异步 io loop 完成
+    ///
     void __inline__ wait() {
         if (thread_.joinable()) {
             thread_.join();
@@ -165,6 +215,13 @@ public:
     }
 
 
+    /* ----------------------------------------------------- */
+    /// @brief 加入组播
+    ///
+    /// @param multi_ip 组播地址 
+    ///
+    /// @param local_ip 本地地址
+    ///
     void __inline__ join_multi_addr(const std::string &multi_ip, const std::string &local_ip) {
         int af = xq::net::check_ip_type(multi_ip);
         ASSERT(af == AF_INET/* || af == AF_INET6*/);
@@ -178,6 +235,9 @@ public:
 
 
 #ifdef WIN32
+    /* ----------------------------------------------------- */
+    /// @brief 开启同步 io loop
+    ///
     void start_rcv(RcvCallback rcv_cb) {
         ASSERT(sockfd_ != INVALID_SOCKET && "udp session is invalid");
         ASSERT(rcv_cb && "rcv_cb cannot be null");
@@ -215,6 +275,9 @@ public:
     }
 
 
+    /* ----------------------------------------------------- */
+    /// @brief 刷新写缓冲区
+    ///
     int flush() {
         ASSERT(sockfd_ != INVALID_SOCKET && "udp session is invalid");
 
@@ -230,8 +293,14 @@ public:
         nsnd_buf_ = 0;
         return n >= 0 ? i : n;
     }
-#else
 
+
+#else // !windows
+
+
+    /* ----------------------------------------------------- */
+    /// @brief 开启同步 io loop
+    ///
     void start_rcv(RcvCallback rcv_cb) {
         ASSERT(sockfd_ != INVALID_SOCKET && "udp session is invalid");
         ASSERT(rcv_cb && "rcv_cb cannot be null");
@@ -349,6 +418,9 @@ public:
     }
 
 
+    /* ----------------------------------------------------- */
+    /// @brief 刷新写缓冲区
+    ///
     int flush() {
         ASSERT(sockfd_ != INVALID_SOCKET && "udp session is invalid");
 
@@ -391,28 +463,21 @@ public:
     /// @brief 发送数据, 
     ///        参数dg 在主调函数中必需是 new 运算符创建. 
     ///        主调函数无需调用 delete 删除该对象, 该对象将由 该方法接管.
+    ///        默认情况下, 当发送缓冲区满时, 该方法立即发送数据, 否则只会将数据提交至发送缓冲区.
     /// 
-    /// @param dg   需要发送的UdpSession::Datagram
+    /// @param dg    需要发送的UdpSession::Datagram
     /// @param force 立即发送数据
     /// 
-    /// @return 成功返回 0, 否则返回 -1
+    /// @return 返回0表示, 数据并未发送, 返回 大于0, 表示缓冲区中所有数据均以发送完毕, 小于0, 表示错误.
     ///
     int send(const Datagram* dg, bool force = false) {
         ASSERT(sockfd_ != INVALID_SOCKET);
         ASSERT(dg);
 
         if (dg->datalen > 0) {   
-            if (force) {
-                int ret = ::sendto(sockfd_, (char*)dg->data, dg->datalen, 0, &dg->name, dg->namelen);
-                Datagram::put(*(Datagram**)&dg);
-                return ret;
-            }
-
-            if (nsnd_buf_ < IO_SMSG_SIZE) {
-                snd_buf_[nsnd_buf_++] = *(Datagram**)&dg;
-            }
-            else if (flush() < 0) {
-                return -1;
+            snd_buf_[nsnd_buf_++] = *(Datagram**)&dg;
+            if (force || nsnd_buf_ == IO_SMSG_SIZE) {
+                return flush();
             }
         }
 
@@ -420,6 +485,14 @@ public:
     }
 
 
+    /* --------------------------------------------------------------------- */
+    /// @brief 发送数据, 该方法实际会调用send(const Datagram*, bool force)
+    /// @param data 
+    /// @param datalen 
+    /// @param remote 
+    /// @param remotelen 
+    /// @param force 
+    /// @return 
     int send(const uint8_t* data, size_t datalen, const sockaddr* remote, socklen_t remotelen, bool force = false) {
         ASSERT(sockfd_ != INVALID_SOCKET && "udp session is invalid");
         ASSERT(data && datalen > 0);
@@ -449,6 +522,11 @@ private:
 
 
     SOCKET sockfd_;
+
+    /* --------------------------------------------------------------------- 
+     * 在windows下, 该字段仅为 io loop的停止标识.
+     * 在!windwos下, 该字段将是写管道的fd, 同时也是停止标识.
+     * --------------------------------------------------------------------- */
     int wp_;
     int nsnd_buf_;
     sockaddr addr_;
