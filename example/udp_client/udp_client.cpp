@@ -1,29 +1,44 @@
 #include "xq/net/udp_session.hpp"
-#include "xq/net/udx.hpp"
+// #include "xq/net/udx.hpp"
 
 
-using UdpSession = xq::net::UdpSession;
-using Udx = xq::net::Udx;
+class EchoEvent;
+using UdpSession = xq::net::UdpSession<EchoEvent>;
+using Datagram = xq::net::Datagram;
+// using Udx = xq::net::Udx;
 
 static UdpSession::Ptr sess;
 
 
-int rcv_cb(const UdpSession::Datagram* udp_seg) {
-    return 0;
-}
+class EchoEvent {
+public:
+    int on_recv(const Datagram* dg) {
+        return 0;
+    }
+
+    int on_send(const Datagram* dg) {
+        return 0;
+    }
+
+    int on_error(int err_type, int err_code, void* ev) {
+        return 0;
+    }
+};
 
 
 void send_wkr() {
-    Udx::Segment* seg0 = Udx::Segment::new_con(2, 0, 0, 0, (uint8_t*)"1111111111", 10);
+    sockaddr addr = { 0,{0} };
+    socklen_t addrlen = sizeof(addr);
+
+    ASSERT(xq::net::str2addr("192.168.0.201:6688", &addr, &addrlen));
+
+    /*Udx::Segment* seg0 = Udx::Segment::new_con(2, 0, 0, 0, (uint8_t*)"1111111111", 10);
     Udx::Segment* seg1 = Udx::Segment::new_psh(2, 1, 1, 0, (uint8_t*)"2222222222", 10);
     Udx::Segment* seg2 = Udx::Segment::new_psh(2, 2, 2, 0, (uint8_t*)"3333333333", 10);
     Udx::Segment* seg3 = Udx::Segment::new_psh(2, 3, 3, 0, (uint8_t*)"4444444444", 10);
     Udx::Segment* seg4 = Udx::Segment::new_psh(2, 4, 4, 0, (uint8_t*)"5555555555", 10);
     
-    sockaddr addr = { 0,{0} };
-    socklen_t addrlen = sizeof(addr);
 
-    xq::net::str2addr("192.168.0.101:6688", &addr, &addrlen);
 
     uint8_t buf[xq::net::UDX_MTU];
 
@@ -54,7 +69,15 @@ void send_wkr() {
     sess->send(dg2, true);
     sess->send(dg3, true);
 
-    std::this_thread::sleep_for(std::chrono::seconds(10));
+    std::this_thread::sleep_for(std::chrono::seconds(10));*/
+
+    char buf[1500] = { 0 };
+    int n;
+    for (int i = 0; i < 1000; i++) {
+        n = ::sprintf(buf, "Hello world: %d", i + 1);
+        sess->send((uint8_t*)buf, n, &addr, addrlen);
+        sess->flush();
+    }
 }
 
 
@@ -65,7 +88,9 @@ int main(int argc, char** argv) {
         exit(EXIT_FAILURE);
     }
 #endif // WIN32
-    sess = UdpSession::create("192.168.0.201:0");
+    EchoEvent ev;
+    sess = UdpSession::create(ev);
+    sess->connect("", "", nullptr, nullptr);
     std::thread t(send_wkr);
     t.join();
 

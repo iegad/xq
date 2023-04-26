@@ -67,36 +67,84 @@ typedef int SOCKET;
 #endif
 
 
-// 网络错误类型
-enum class ErrType {
-    IO_RECV,     // IO 读失败
-    IO_SEND,     // IO 写失败
-
-    KCP_HEAD,    // KCP 消息头错误
-    KCP_INPUT,   // KCP input 失败
-    KCP_RECV,
-
-    KL_INVALID_CONV, // KCP conv 无效
-
-    KC_HOST,
+enum ErrType {
+    ET_SYS,  // 系统错误
+    ET_IO,   // IO层 错误
+    ET_PROTO // 协议层错误
 };
 
 
-constexpr int EK_INVALID      = -10000;
-constexpr int EK_CONV         = -10001;
-constexpr int EK_MAX_CONN     = -10002;
-constexpr int EK_UNKNOWN_HOST = -10003; // 未知的服务端
+/* ------------------------------------------------------------------- BEG Datagram ------------------------------------------------------------------- */
+    /// @brief UdpSession 数据报, 该类型禁用了c++ 的构造函数和析构函数, 所以该对象无法在栈上创建, 只能通过 Datagram::get 来在堆上动态创建该类型实例.
+    ///
+struct Datagram {
+    /* ------------------- META 字段 ------------------- */
+    // 数据接收时间
+    int64_t time_us;
+
+    /* ------------------- 数据相关 字段 ------------------- */
+    // 地址长度
+    int namelen;
+    // 数据长度
+    int datalen;
+    // 数据来源地址
+    sockaddr name;
+    // 数据
+    uint8_t data[xq::net::UDP_DGX_SIZE + 1];
 
 
-// ------------------------------------------------------------------------ State ------------------------------------------------------------------------
+    /* ----------------------------------------------------- */
+    /// @brief 获取 Datagram 动态对象, 该函数应当和 Datagram::put 成对使用
+    ///
+    /// @param sess 所属UdpSession
+    ///
+    /// @param name 对端地址
+    ///
+    /// @param namelen 对端地址长度
+    ///
+    /// @param data 数据
+    ///
+    /// @param datalen 数据长度
+    ///
+    static __inline__ Datagram* get(const sockaddr* name = nullptr, socklen_t namelen = sizeof(sockaddr), const uint8_t* data = nullptr, int datalen = 0) {
+        Datagram* dg = (Datagram*)::malloc(sizeof(Datagram));
+        ASSERT(dg);
+
+        if (name) {
+            ::memcpy(&dg->name, name, namelen);
+        }
+        else {
+            ::memset(&dg->name, 0, sizeof(namelen));
+        }
+        dg->namelen = namelen;
+
+        dg->datalen = datalen;
+        if (data) {
+            ASSERT(datalen > 0);
+            ::memcpy(dg->data, data, datalen);
+        }
+
+        return dg;
+    }
 
 
-/// @brief Kcp节点状态
-enum class State {
-    Stopped,  // 停止
-    Stopping, // 停止中
-    Running   // 运行
+    /* ----------------------------------------------------- */
+    /// @brief 释放 Datagram 动态指针
+    ///
+    static __inline__  void put(Datagram* dg) {
+        if (dg) ::free(dg);
+    }
+
+
+private:
+    Datagram() = default;
+    ~Datagram() = default;
+    Datagram(const Datagram&) = delete;
+    Datagram(const Datagram&&) = delete;
+    Datagram& operator=(const Datagram&) = delete;
+    Datagram& operator=(const Datagram&&) = delete;
 };
+/* ------------------------------------------------------------------- END Datagram ------------------------------------------------------------------- */
 
 
 // ------------------------------------------------------------------------ 函数 ------------------------------------------------------------------------

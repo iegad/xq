@@ -53,7 +53,8 @@ int main(int, char**) {
 #endif // _WIN32
 
     std::signal(SIGINT, signal_handler);
-    server = UdpSession::create(":6688");
+    server = UdpSession::create();
+    server->bind("192.168.0.201:6688");
     udx = xq::net::Udx::create(1, *server);
     server->run(rcv_cb);
     server->wait();

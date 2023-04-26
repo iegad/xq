@@ -23,8 +23,8 @@ int rcv_cb(const UdpSession::Datagram* dg) {
     n = udx->recv(rbuf, xq::net::UDX_MSG_MAX);
     if (n > 0) {
         rbuf[n] = 0;
-        std::printf("%s\n", (char*)rbuf);
-        if (COUNT == 1000) {
+        //std::printf("%s\n", (char*)rbuf);
+        if (COUNT == 1000000) {
             udx->flush(dg->time_ms);
             sess->stop();
             return 0;

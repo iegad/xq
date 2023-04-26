@@ -17,101 +17,10 @@ namespace net {
 /// @note  1, UdpSession 只允许接收 UDP_DGX_SIZE 大小的数据;
 ///        2, 支持IPV4组播;
 ///
+template <class TEvent>
 class UdpSession {
 public:
-    /* ------------------------------------------------------------------- BEG Datagram ------------------------------------------------------------------- */
-    /// @brief UdpSession 数据报, 该类型禁用了c++ 的构造函数和析构函数, 所以该对象无法在栈上创建, 只能通过 Datagram::get 来在堆上动态创建该类型实例.
-    ///
-    struct Datagram {
-        /* ------------------- META 字段 ------------------- */
-        // 数据接收时间
-        int64_t time_ms;
-        // 数据所属会话
-        UdpSession* sess;
-        
-        /* ------------------- 数据相关 字段 ------------------- */
-        // 地址长度
-        int namelen;
-        // 数据长度
-        int datalen;
-        // 数据来源地址
-        sockaddr name;
-        // 数据
-        uint8_t data[xq::net::UDP_DGX_SIZE + 1];
-
-
-        /* ----------------------------------------------------- */
-        /// @brief 获取 Datagram 动态对象, 该函数应当和 Datagram::put 成对使用
-        ///
-        /// @param sess 所属UdpSession
-        ///
-        /// @param name 对端地址
-        ///
-        /// @param namelen 对端地址长度
-        ///
-        /// @param data 数据
-        ///
-        /// @param datalen 数据长度
-        ///
-        static __inline__ Datagram* get(UdpSession* sess = nullptr, const sockaddr* name = nullptr, socklen_t namelen = sizeof(sockaddr), const uint8_t* data = nullptr, int datalen = 0) {
-            Datagram* dg = (Datagram*)::malloc(sizeof(Datagram));
-            ASSERT(dg);
-
-            if (sess) {
-                dg->sess = sess;
-            }
-            else {
-                dg->sess = nullptr;
-            }
-
-            if (name) {
-                ::memcpy(&dg->name, name, namelen);
-            }
-            else {
-                ::memset(&dg->name, 0, sizeof(namelen));
-            }
-            dg->namelen = namelen;
-
-            dg->datalen = datalen;
-            if (data) {
-                ASSERT(datalen > 0);
-                ::memcpy(dg->data, data, datalen);
-            }
-
-            return dg;
-        }
-
-
-        /* ----------------------------------------------------- */
-        /// @brief 释放 Datagram 动态指针
-        ///
-        static __inline__  void put(Datagram* dg) {
-            if (dg) ::free(dg);
-        }
-
-
-    private:
-        friend class UdpSession;
-        Datagram() = default;
-        ~Datagram() = default;
-        Datagram(const Datagram&) = delete;
-        Datagram(const Datagram&&) = delete;
-        Datagram& operator=(const Datagram&) = delete;
-        Datagram& operator=(const Datagram&&) = delete;
-    };
-    /* ------------------------------------------------------------------- END Datagram ------------------------------------------------------------------- */
-
-
     typedef std::shared_ptr<UdpSession> Ptr;
-
-    /* ----------------------------------------------------- */
-    /// @brief IO 读回调
-    ///
-    /// @return 返回值有三种类型, 分别表达三种不同的语义; 
-    ///          1, ret < 0: 将退出IO loop. 
-    ///          2, ret == 0: 表示正常调用, 主调函数将获取 dg 的所有权. 
-    ///          3, ret > 0: 表示正常调用, 但回调函数获取 dg 所有权, 主调函数已失云dg所有权.
-    typedef int (*RcvCallback)(const Datagram* dg);
 
 
     /* ----------------------------------------------------- */
@@ -119,36 +28,33 @@ public:
     ///
     /// @param local_addr 本端地址.
     ///
-    static __inline__ Ptr create(const std::string& local_addr = "") {
-        std::string ip = "0.0.0.0", port = "0";
-
-        if (!local_addr.empty()) {
-            size_t pos = local_addr.rfind(':');
-            if (pos == std::string::npos) {
-                return nullptr;
-            }
-
-            if (pos == 0) {
-                ip = "0.0.0.0";
-            }
-
-            port = local_addr.substr(pos + 1);
-        }
-
-        sockaddr addr{ 0, {0} };
-        socklen_t addrlen = sizeof(addr);
-        
-        SOCKET sockfd = udp_bind(ip.c_str(), port.c_str(), &addr, &addrlen);
-        if (sockfd == INVALID_SOCKET) {
-            return nullptr;
-        }
-
-        return Ptr(new UdpSession(sockfd, &addr, addrlen));
+    static __inline__ Ptr create(TEvent &ev) {
+        return Ptr(new UdpSession(ev));
     }
 
 
     ~UdpSession() {
         close();
+    }
+
+
+    void __inline__ connect(const std::string& raddr_str, const std::string& laddr_str, sockaddr* addr, socklen_t* addrlen) {
+        std::string lip = "0.0.0.0", lport = "0";
+
+        if (raddr_str.size() > 0 && addr && addrlen) {
+            ASSERT(xq::net::str2addr(raddr_str, addr, addrlen));
+        }
+
+        if (laddr_str.size() > 0) {
+            size_t npos = laddr_str.rfind(':');
+            ASSERT(npos != std::string::npos);
+
+            lip = laddr_str.substr(0, npos);
+            lport = laddr_str.substr(npos + 1);
+        }
+
+        sockfd_ = xq::net::udp_bind(lip.c_str(), lport.c_str());
+        ASSERT(sockfd_ != INVALID_SOCKET);
     }
 
     /* ----------------------------------------------------- */
@@ -172,19 +78,14 @@ public:
             Datagram::put(snd_buf_[i]);
         }
         nsnd_buf_ = 0;
-
-        if (sockfd_ != INVALID_SOCKET) {
-            xq::net::close(sockfd_);
-            sockfd_ = INVALID_SOCKET;
-        }
     }
 
 
     /* ----------------------------------------------------- */
     /// @brief 异步开启 io loop
     ///
-    void __inline__ run(RcvCallback rcv_cb) {
-        thread_ = std::thread(std::bind(&UdpSession::start_rcv, this, rcv_cb));
+    void __inline__ run(const std::string& laddr_str = "", const std::string& multi_route_ip = "", const std::string& multi_local_ip = "") {
+        thread_ = std::thread(std::bind(&UdpSession::start_rcv, this, laddr_str, multi_route_ip, multi_local_ip));
     }
 
 
@@ -192,15 +93,9 @@ public:
     /// @brief 停止 io loop
     ///
     void __inline__ stop() {
-        if (wp_ != -1) {
-#ifndef WIN32
-            static constexpr char buf[1] = { 'X' };
-            ASSERT(::write(wp_, buf, 1) == 1);
-#else
+        if (sockfd_ != INVALID_SOCKET) {
             xq::net::close(sockfd_);
             sockfd_ = INVALID_SOCKET;
-            wp_ = -1;
-#endif // !WIN32
         }
     }
 
@@ -215,48 +110,43 @@ public:
     }
 
 
-    /* ----------------------------------------------------- */
-    /// @brief 加入组播
-    ///
-    /// @param multi_ip 组播地址 
-    ///
-    /// @param local_ip 本地地址
-    ///
-    void __inline__ join_multi_addr(const std::string &multi_ip, const std::string &local_ip) {
-        int af = xq::net::check_ip_type(multi_ip);
-        ASSERT(af == AF_INET/* || af == AF_INET6*/);
-
-        ip_mreq mreq;
-        ::memset(&mreq, 0, sizeof(mreq));
-        ASSERT(::inet_pton(af, multi_ip.c_str(), &mreq.imr_multiaddr) == 1);
-        ASSERT(::inet_pton(af, local_ip.c_str(), &mreq.imr_interface) == 1);
-        ASSERT(!::setsockopt(sockfd_, IPPROTO_IP, IP_ADD_MEMBERSHIP, (char *)&mreq, sizeof(mreq)));
-    }
-
-
 #ifdef WIN32
     /* ----------------------------------------------------- */
     /// @brief 开启同步 io loop
     ///
-    void start_rcv(RcvCallback rcv_cb) {
+    void start_rcv(const std::string& laddr_str = "", const std::string& multi_route_ip = "", const std::string& multi_local_ip = "") {
+        if (sockfd_ == INVALID_SOCKET) {
+            ASSERT(laddr_str.size() > 0);
+            ASSERT(!_bind(laddr_str));
+        }
+
+        if (multi_local_ip.size() > 0 && multi_route_ip.size() > 0) {
+            int af = xq::net::check_ip_type(multi_route_ip);
+            ASSERT(af == AF_INET/* || af == AF_INET6*/);
+
+            ip_mreq mreq;
+            ::memset(&mreq, 0, sizeof(mreq));
+            ASSERT(::inet_pton(af, multi_route_ip.c_str(), &mreq.imr_multiaddr) == 1);
+            ASSERT(::inet_pton(af, multi_local_ip.c_str(), &mreq.imr_interface) == 1);
+            ASSERT(!::setsockopt(sockfd_, IPPROTO_IP, IP_ADD_MEMBERSHIP, (char*)&mreq, sizeof(mreq)))
+        }
+        
         ASSERT(sockfd_ != INVALID_SOCKET && "udp session is invalid");
-        ASSERT(rcv_cb && "rcv_cb cannot be null");
 
-        wp_ = 0;
         int i, n, err;
-        Datagram* dg = Datagram::get(this);
+        Datagram* dg = Datagram::get();
 
-        while (wp_ != -1) {
+        while (sockfd_ != INVALID_SOCKET) {
             n = ::recvfrom(sockfd_, (char*)dg->data, UDP_DGX_SIZE, 0, &dg->name, &dg->namelen);
             if (n > 0) {
                 dg->datalen = n;
-                dg->time_ms = xq::tools::now_ms();
-                n = rcv_cb(dg);
+                dg->time_us = xq::tools::now_us();
+                n = ev_.on_recv(this, dg);
                 if (n < 0) {
                     break;
                 }
                 else if (n > 0) {
-                    dg = Datagram::get(this);
+                    dg = Datagram::get();
                 }
             }
             else if (n < 0) {
@@ -295,21 +185,47 @@ public:
     }
 
 
+    int flush(const Datagram* dgs, size_t dglen) {
+        ASSERT(sockfd_ != INVALID_SOCKET && "udp session is invalid");
+        ASSERT(dgs && dglen > 0 && dglen <= IO_SMSG_SIZE);
+
+        int n = 0, i;
+        for (i = 0; i < dglen; i++) {
+            Datagram* dg = dgs[i];
+            if (n >= 0) {
+                n = ::sendto(sockfd_, (char*)dg->data, dg->datalen, 0, &dg->name, dg->namelen);
+            }
+            Datagram::put(dg);
+        }
+
+        return n >= 0 ? i : n;
+    }
+
+
 #else // !windows
 
 
     /* ----------------------------------------------------- */
     /// @brief 开启同步 io loop
     ///
-    void start_rcv(RcvCallback rcv_cb) {
-        ASSERT(sockfd_ != INVALID_SOCKET && "udp session is invalid");
-        ASSERT(rcv_cb && "rcv_cb cannot be null");
-        ASSERT(!xq::net::make_nonblocking(sockfd_));
+    void start_rcv(const std::string& laddr_str = "", const std::string& multi_route_ip = "", const std::string& multi_local_ip = "") {
+        constexpr static timeval TIMEOUT{0, 50000};
 
-        int p[2];
-        ASSERT(!pipe(p));
-        int rpfd = p[0];
-        wp_ = p[1];
+        if (sockfd_ == INVALID_SOCKET) {
+            ASSERT(!_bind(laddr_str));
+            ASSERT(!setsockopt(sockfd_, SOL_SOCKET, SO_RCVTIMEO, &TIMEOUT, sizeof(TIMEOUT)));
+        }
+
+        if (multi_local_ip.size() > 0 && multi_route_ip.size() > 0) {
+            int af = xq::net::check_ip_type(multi_route_ip);
+            ASSERT(af == AF_INET/* || af == AF_INET6*/);
+
+            ip_mreq mreq;
+            ::memset(&mreq, 0, sizeof(mreq));
+            ASSERT(::inet_pton(af, multi_route_ip.c_str(), &mreq.imr_multiaddr) == 1);
+            ASSERT(::inet_pton(af, multi_local_ip.c_str(), &mreq.imr_interface) == 1);
+            ASSERT(!::setsockopt(sockfd_, IPPROTO_IP, IP_ADD_MEMBERSHIP, (char *)&mreq, sizeof(mreq)))
+        }
 
         mmsghdr msgs[IO_RMSG_SIZE];
         ::memset(msgs, 0, sizeof(msgs));
@@ -319,16 +235,11 @@ public:
         Datagram* dg;
         msghdr* hdr;
 
-        int i, n = IO_RMSG_SIZE, nready, err, res;
-
-        fd_set fds, rfds;
-        FD_ZERO(&fds);
-        FD_SET(sockfd_, &fds);
-        FD_SET(rpfd, &fds);
+        int i, n = IO_RMSG_SIZE, err, res;
 
         for (i = 0; i < n; i++) {
             if (!dgs[i]) {
-                dgs[i] = Datagram::get(this);
+                dgs[i] = Datagram::get();
             }
             dg = dgs[i];
 
@@ -341,71 +252,48 @@ public:
             iovecs[i].iov_len = sizeof(dg->data);
         }
 
-        while(wp_ != -1) {
-            rfds = fds;
-            nready = ::select(FD_SETSIZE, &rfds, nullptr, nullptr, nullptr);
-            if (nready <= 0) {
+        while(sockfd_ != INVALID_SOCKET) {
+            n = ::recvmmsg(sockfd_, msgs, IO_RMSG_SIZE, MSG_WAITFORONE, nullptr);
+            if (n < 0) {
+                err = error();
+                if (err != EAGAIN && err != EINTR) {
+                    // TODO: error
+                    break;
+                }
+                continue;
+            }
+            else if (n == 0) {
                 continue;
             }
 
-            for (i = 0; i < nready; i++) {
-                if (FD_ISSET(rpfd, &rfds)) {
-                    char buf[1];
-                    if (::read(rpfd, buf, 1) == 1 && buf[0] == 'X') {
-                        ::close(wp_);
-                        wp_ = -1;
-                        break;
-                    }
+            int64_t now_us = xq::tools::now_us();
+
+            for (i = 0; i < n; i++) {
+                dg->datalen = msgs[i].msg_len;
+                if (dg->datalen > UDP_DGX_SIZE) {
                     continue;
                 }
 
-                do {
-                    n = ::recvmmsg(sockfd_, msgs, IO_RMSG_SIZE, MSG_WAITFORONE, nullptr);
-                    if (n < 0) {
-                        err = error();
-                        if (err != EAGAIN && err != EINTR) {
-                            // TODO: error
-                            std::printf("recvmmsg failed: %d\n", xq::net::error());
-                        }
-                        break;
-                    }
-                    else if (n == 0) {
-                        break;
-                    }
+                dg = dgs[i];
+                dg->datalen = msgs[i].msg_len;
+                dg->time_us = now_us;
 
-                    int64_t now_ms = xq::tools::now_ms();
-
-                    for (i = 0; i < n; i++) {
-                        dg->datalen = msgs[i].msg_len;
-                        if (dg->datalen > UDP_DGX_SIZE) {
-                            continue;
-                        }
-
-                        dg = dgs[i];
-                        dg->sess = this;
-                        dg->datalen = msgs[i].msg_len;
-                        dg->time_ms = now_ms;
-
-                        res = rcv_cb(dg);
-                        if (res < 0) {
-                            break;
-                        }
-                        else if (res > 0) {
-                            dg = dgs[i] = Datagram::get(this);
-                            hdr = &msgs[i].msg_hdr;
-                            hdr->msg_name = &dg->name;
-                            hdr->msg_namelen = dg->namelen;
-                            hdr->msg_iov = &iovecs[i];
-                            hdr->msg_iovlen = 1;
-                            iovecs[i].iov_base = dg->data;
-                            iovecs[i].iov_len = UDP_DGX_SIZE;
-                        }
-                    }
-                } while (1);
-            } // for
+                res = ev_.on_recv(this, dg);
+                if (res < 0) {
+                    break;
+                }
+                else if (res > 0) {
+                    dg = dgs[i] = Datagram::get();
+                    hdr = &msgs[i].msg_hdr;
+                    hdr->msg_name = &dg->name;
+                    hdr->msg_namelen = dg->namelen;
+                    hdr->msg_iov = &iovecs[i];
+                    hdr->msg_iovlen = 1;
+                    iovecs[i].iov_base = dg->data;
+                    iovecs[i].iov_len = UDP_DGX_SIZE;
+                }
+            }
         }
-
-        ::close(rpfd);
 
         for (i = 0; i < IO_RMSG_SIZE; i++) {
             if (dgs[i]) Datagram::put(dgs[i]);
@@ -505,29 +393,58 @@ public:
 #endif // !WIN32
         }
 
-        Datagram* dg = Datagram::get(this, remote, remotelen, data, datalen);
+        Datagram* dg = Datagram::get(remote, remotelen, data, datalen);
         return this->send(dg);
     }
 
 
 private:
-    UdpSession(SOCKET sockfd, const sockaddr *addr, socklen_t addrlen)
-        : sockfd_(sockfd)
-        , wp_(-1)
+    UdpSession(TEvent& ev)
+        : ev_(ev)
+        , sockfd_(INVALID_SOCKET)
         , nsnd_buf_(0)
-        , addrlen_(addrlen) {
-        ::memcpy(&addr_, addr, addrlen);
+        , addr_({0, {0}})
+        , addrlen_(sizeof(addr_)) {
         ::memset(snd_buf_, 0, sizeof(snd_buf_));
     }
 
 
+    int _bind(const std::string& laddr_str) {
+        if (sockfd_ != INVALID_SOCKET) {
+            this->close();
+        }
+
+        std::string ip = "0.0.0.0", port = "0";
+
+        if (!laddr_str.empty()) {
+            size_t pos = laddr_str.rfind(':');
+            if (pos == std::string::npos) {
+                return -1;
+            }
+
+            if (pos > 0) {
+                ip = laddr_str.substr(0, pos);
+            }
+
+            port = laddr_str.substr(pos + 1);
+        }
+
+        sockfd_ = udp_bind(ip.c_str(), port.c_str(), &addr_, &addrlen_);
+        if (sockfd_ == INVALID_SOCKET) {
+            return -1;
+        }
+
+        return 0;
+    }
+
+
+    TEvent& ev_;
     SOCKET sockfd_;
 
     /* --------------------------------------------------------------------- 
      * 在windows下, 该字段仅为 io loop的停止标识.
      * 在!windwos下, 该字段将是写管道的fd, 同时也是停止标识.
      * --------------------------------------------------------------------- */
-    int wp_;
     int nsnd_buf_;
     sockaddr addr_;
     socklen_t addrlen_;

@@ -5,22 +5,39 @@
 #include "xq/net/udp_session.hpp"
 
 
-using UdpSession = xq::net::UdpSession;
+class EchoEvent;
+using UdpSession = xq::net::UdpSession<EchoEvent>;
+using Datagram = xq::net::Datagram;
 static UdpSession::Ptr server;
+
+
+class EchoEvent {
+public:
+    int on_recv(UdpSession* sess, const Datagram* dg) {
+        static int count = 0;
+        count++;
+        auto p = *(Datagram**)&dg;
+        p->data[p->datalen] = 0;
+        std::printf("%d => %s\n", count, (char *)p->data/*xq::tools::bin2hex(dg->data, dg->datalen).c_str()*/);
+        return 0;
+    }
+
+
+    int on_send(const Datagram* dg) {
+
+    }
+
+
+    int on_error(int err_type, int err_code, void *ev) {
+
+    }
+};
 
 
 void signal_handler(int signal) {
     if (signal == SIGINT && server) {
         server->stop();
     }
-}
-
-
-int rcv_cb(const UdpSession::Datagram* seg) {
-    static int count = 0;
-    count++;
-    std::printf("%d => %s\n", count, xq::tools::bin2hex(seg->data, seg->datalen).c_str());
-    return 0;
 }
 
 
@@ -33,9 +50,9 @@ int main(int, char**) {
 #endif // _WIN32
 
     std::signal(SIGINT, signal_handler);
-    server = UdpSession::create(":6688");
-    server->join_multi_addr("224.0.0.10", "192.168.0.201");
-    server->run(rcv_cb);
+    EchoEvent ev;
+    server = UdpSession::create(ev);
+    server->run(":6688", "224.0.0.10", "192.168.0.201");
     server->wait();
     std::printf("EXIT.!!!\n");
 

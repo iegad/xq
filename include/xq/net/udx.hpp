@@ -40,16 +40,17 @@ constexpr int UDX_CMD_PON = 0x12;
 constexpr int UDX_CMD_ACK = 0x13;
 constexpr int UDX_CMD_PSH = 0x14;
 constexpr int UDX_CMD_CON = 0x15;
-constexpr int UDX_RWN_MIN = 2;
-constexpr int UDX_RWN_MAX = 128;
-constexpr int UDX_SWN_MAX = UDX_RWN_MAX / 4;
-constexpr int UDX_STH_INI = 12;
 constexpr int UDX_UID_MAX = 100000;
 constexpr int UDX_RTO_MIN = 100;
 constexpr int UDX_RTO_MAX = 60000;
 constexpr int UDX_UPD_INT = 0;
-constexpr int UDX_RXM_MAX = 20; // 最大重传次数
+constexpr int UDX_RXMIT_MAX = 20; // 最大重传次数
 constexpr int UDX_FAS_MAX = 3; // 快速重传
+
+constexpr int UDX_RWND_MIN = 2;
+constexpr int UDX_RWND_MAX = 128;
+constexpr int UDX_SWND_MAX = UDX_RWND_MAX / 2;
+constexpr int UDX_SSTHRESH_INIT = 8;
 
 constexpr uint64_t UDX_SN_MAX = 0x0000FFFFFFFFFFFF;
 constexpr uint64_t UDX_TS_MAX = 0x0000FFFFFFFFFFFF;
@@ -204,6 +205,18 @@ public:
         }
 
 
+        __inline__ int size() {
+            switch (cmd) {
+            case UDX_CMD_PSH:
+            case UDX_CMD_CON: return UDX_PSH_MIN + len;
+            case UDX_CMD_ACK: return UDX_ACK_LEN;
+            case UDX_CMD_PIN:
+            case UDX_CMD_PON: return UDX_HDR_LEN;
+            default: return -1;
+            }
+        }
+
+
         static __inline__ Segment* new_pin(uint8_t rcv_wnd, uint64_t sn, uint64_t ts) {
             return new Segment(UDX_CMD_PIN, rcv_wnd, sn, ts, 0, 0, nullptr, 0);
         }
@@ -249,7 +262,7 @@ public:
             }
 
             p += Udx::_u8_decode(p, &wnd);
-            if (wnd > UDX_RWN_MAX) {
+            if (wnd > UDX_RWND_MAX) {
                 return -4;
             }
 
@@ -319,7 +332,7 @@ public:
                 return -1;
             }
 
-            if (wnd > UDX_RWN_MAX) {
+            if (wnd > UDX_RWND_MAX) {
                 return -2;
             }
 
@@ -385,8 +398,8 @@ public:
     // ------------------------------------------------------------------ END Segment ------------------------------------------------------------------
 
 
-    static Ptr create(uint32_t uid, UdpSession &sess) {
-        return Ptr(new Udx(uid, sess));
+    static Ptr create(uint32_t uid) {
+        return Ptr(new Udx(uid));
     }
 
 
@@ -469,8 +482,8 @@ public:
                     cwnd_++;
                 }
 
-                if (cwnd_ > UDX_SWN_MAX) {
-                    cwnd_ = UDX_SWN_MAX;
+                if (cwnd_ > UDX_SWND_MAX) {
+                    cwnd_ = UDX_SWND_MAX;
                 }
             }
 
@@ -572,12 +585,15 @@ public:
 
 
     int flush(int64_t now_ms) {
-        UdpSession::Datagram* dg = UdpSession::Datagram::get(nullptr, &addr_, addrlen_);
+        Datagram* dg = Datagram::get(&addr_, addrlen_);
 
         uint64_t now_ts = now_ms - start_ms_;
         uint8_t* p = dg->data + UDX_UID_LEN;
-        int nbuf = 0, n;
+        int nbuf = 0, n, idx = 0;
         Segment seg, *psh;
+
+        Datagram* dgs[IO_SMSG_SIZE];
+
 
         if (!ack_que_.empty()) {
             uint8_t acc_flag = 1;
@@ -585,14 +601,14 @@ public:
                 if (nbuf > UDX_MTU - UDX_ACK_LEN - UDX_UID_LEN) {
                     nbuf += _u24_encode(uid_, dg->data);
                     dg->datalen = nbuf;
-                    sess_.send(dg);
-                    dg = UdpSession::Datagram::get(nullptr, &addr_, addrlen_);
+                    dgs[idx++] = dg;
+                    dg = Datagram::get(&addr_, addrlen_);
                     p = dg->data + UDX_UID_LEN;
                     nbuf = 0;
                 }
 
                 seg.cmd = UDX_CMD_ACK;
-                seg.wnd = rcv_buf_.size() < UDX_RWN_MAX ? UDX_RWN_MAX - rcv_buf_.size() : 0;
+                seg.wnd = rcv_buf_.size() < UDX_RWND_MAX ? UDX_RWND_MAX - rcv_buf_.size() : 0;
                 seg.sn = ack.first;
                 seg.ts = ack.second;
                 seg.acc = acc_flag;
@@ -614,7 +630,7 @@ public:
         while (!snd_que_.empty()) {
             Segment* seg = snd_que_.front();
             seg->resend_ts = now_ts + rto_;
-            seg->wnd = UDX_SWN_MAX - rcv_buf_.size();
+            seg->wnd = UDX_SWND_MAX - rcv_buf_.size();
             snd_buf_.insert(std::make_pair(seg->sn, seg));
             snd_que_.pop_front();
         }
@@ -633,8 +649,8 @@ public:
                 if (nbuf > UDX_MTU - UDX_PSH_MIN - UDX_UID_LEN - psh->len) {
                     nbuf += _u24_encode(uid_, dg->data);
                     dg->datalen = nbuf;
-                    sess_.send(dg);
-                    dg = UdpSession::Datagram::get(nullptr, &addr_, addrlen_);
+                    dgs[idx++] = dg;
+                    dg = Datagram::get(&addr_, addrlen_);
                     p = dg->data + UDX_UID_LEN;
                     nbuf = 0;
                 }
@@ -643,7 +659,7 @@ public:
                     // 第一次发送
                     needsend = 1;
                 }
-                else if (psh->xmit >= UDX_RXM_MAX) {
+                else if (psh->xmit >= UDX_RXMIT_MAX) {
                     // 超过最大重传次数
                     return -1;
                 }
@@ -666,7 +682,7 @@ public:
                 if (needsend) {
                     // 所有需要重新发送的包 都需要打上当前时间戳.
                     psh->ts = now_ts;
-                    psh->wnd = rcv_buf_.size() < UDX_RWN_MAX ? UDX_RWN_MAX - rcv_buf_.size() : 0;
+                    psh->wnd = rcv_buf_.size() < UDX_RWND_MAX ? UDX_RWND_MAX - rcv_buf_.size() : 0;
                     n = psh->encode(p, UDX_MTU - UDX_UID_LEN - nbuf);
                     p += n;
                     nbuf += n;
@@ -684,7 +700,7 @@ public:
             seg.cmd = UDX_CMD_PIN;
             seg.ts = now_ts;
             seg.sn = snd_nxt_++;
-            seg.wnd = rcv_buf_.size() < UDX_RWN_MAX ? UDX_RWN_MAX - rcv_buf_.size() : 0;
+            seg.wnd = rcv_buf_.size() < UDX_RWND_MAX ? UDX_RWND_MAX - rcv_buf_.size() : 0;
             n = seg.encode(p, UDX_MTU - UDX_UID_LEN - nbuf);
             p += n;
             nbuf += n;
@@ -697,7 +713,7 @@ public:
             seg.cmd = UDX_CMD_PON;
             seg.ts = now_ts;
             seg.sn = snd_nxt_++;
-            seg.wnd = rcv_buf_.size() < UDX_RWN_MAX ? UDX_RWN_MAX - rcv_buf_.size() : 0;
+            seg.wnd = rcv_buf_.size() < UDX_RWND_MAX ? UDX_RWND_MAX - rcv_buf_.size() : 0;
             n = seg.encode(p, UDX_MTU - UDX_UID_LEN - nbuf);
             p += n;
             nbuf += n;
@@ -705,29 +721,28 @@ public:
 
         ASSERT(nbuf == 0 || nbuf >= UDX_HDR_LEN);
         if (nbuf == 0) {
-            UdpSession::Datagram::put(dg);
+            Datagram::put(dg);
             return 0;
         }
 
         nbuf += _u24_encode(uid_, dg->data);
         dg->datalen = nbuf;
-        sess_.send(dg);
+        dgs[idx++] = dg;
         
-        ASSERT(sess_.flush() >= 0);
+        // TODO: flush
 
         return 0;
     }
 
 
 private:
-    Udx(uint32_t uid, UdpSession &sess)
-        : sess_(sess)
-        , addr_({0,{0}})
+    Udx(uint32_t uid)
+        : addr_({0,{0}})
         , addrlen_(sizeof(addr_))
         , pon_flag_(false)
-        , cwnd_(UDX_RWN_MIN)
-        , rwnd_(UDX_RWN_MIN)
-        , ssthresh_(UDX_STH_INI)
+        , cwnd_(UDX_RWND_MIN)
+        , rwnd_(UDX_RWND_MIN)
+        , ssthresh_(UDX_SSTHRESH_INIT)
         , rto_(UDX_RTO_MIN)
         , srtt_(0)
         , rttvar_(0)
@@ -735,12 +750,12 @@ private:
         , start_ms_(xq::tools::now_ms())
         , last_sn_(0)
         , rcv_nxt_(0)
-        , snd_nxt_(0) 
+        , snd_nxt_(0)
     {}
 
 
     void _reset(int64_t now_ms) {
-        cwnd_ = UDX_RWN_MIN;
+        cwnd_ = UDX_RWND_MIN;
         start_ms_ = now_ms;
         rto_ = UDX_RTO_MIN;
         snd_nxt_ = rcv_nxt_ = last_sn_ = srtt_ = 0;
@@ -783,7 +798,7 @@ private:
     }
 
     __inline__ int _update_psh(Segment* new_seg) {
-        if (new_seg->sn >= rcv_nxt_ + UDX_RWN_MAX) {
+        if (new_seg->sn >= rcv_nxt_ + UDX_RWND_MAX) {
             delete new_seg;
             return -1;
         }
@@ -814,19 +829,24 @@ private:
     }
 
 
-    __inline__ int _update_ack(Segment* seg, uint64_t now_ts) {
-        auto rm_itr = snd_buf_.find(seg->sn);
-        if (rm_itr != snd_buf_.end()) {
-            if (seg->acc) {
-                snd_buf_.erase(snd_buf_.begin(), rm_itr);
+    __inline__ int _update_ack(Segment* new_seg, uint64_t now_ts) {
+        auto end = snd_buf_.find(new_seg->sn);
+
+        if (end != snd_buf_.end()) {
+            if (new_seg->acc) {
+                for (auto itr = snd_buf_.begin(); itr != end;) {
+                    delete itr->second;
+                    snd_buf_.erase(itr++);
+                }
             }
             else {
-                for (auto itr = snd_buf_.begin(); itr != rm_itr; ++itr) {
+                for (auto itr = snd_buf_.begin(); itr != end; ++itr) {
                     itr->second->fastack++;
                 }
             }
 
-            snd_buf_.erase(rm_itr);
+            delete end->second;
+            snd_buf_.erase(end);
         }
 
         /* ---------------------
@@ -837,10 +857,10 @@ private:
          *     3, 发送端触发重传(可能是超时重传, 也可能是快速重传) re psh[sn:1, ts:3].
          *     4, 发送端此时收到滞留的 ack[sn:1, ts: 2], 这时就会出现RTT时间负数的情况.
          */
-        int64_t rtt = now_ts - seg->ts;
+        int64_t rtt = now_ts - new_seg->ts;
         if (rtt < 0) {
-            delete seg;
-            return -1;
+            delete new_seg;
+            return 0;
         }
 
         if (srtt_ == 0) {
@@ -855,21 +875,18 @@ private:
 
             rttvar_ = (3 * rttvar_ + delta) / 4;
             srtt_ = (7 * srtt_ + rtt) / 8;
-
-            if (srtt_ < 1) {
-                srtt_ = 1;
-            }
         }
 
-        int tmp = srtt_ + xq::tools::MAX(UDX_UPD_INT, 4 * rttvar_);
-        rto_ = xq::tools::MID(UDX_RTO_MIN, tmp, UDX_RTO_MAX);
+        if (srtt_ < 1) {
+            srtt_ = 1;
+        }
 
-        delete seg;
+        rto_ = xq::tools::MID(UDX_RTO_MIN, srtt_ + xq::tools::MAX(UDX_UPD_INT, 4 * rttvar_), UDX_RTO_MAX);
+        delete new_seg;
         return 0;
     }
 
 
-    UdpSession& sess_;
     sockaddr addr_;
     socklen_t addrlen_;
 
@@ -880,6 +897,7 @@ private:
     int rto_;
     int srtt_;
     int rttvar_;
+    
     uint32_t uid_;
     uint64_t start_ms_;
     uint64_t last_sn_;
