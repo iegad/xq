@@ -854,7 +854,6 @@ private:
         }
 
         cc_.update_ack(rtt, &cwnd_);
-        std::printf(">>> cwnd: %d\n", cwnd_);
 
         if (srtt_ == 0) {
             srtt_ = rtt;

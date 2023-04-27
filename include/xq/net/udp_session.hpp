@@ -23,7 +23,7 @@ public:
     typedef std::shared_ptr<UdpSession> Ptr;
 
 
-    static Ptr create(const std::string& laddr_str, TEvent &ev) {
+    static Ptr create(const std::string& laddr_str = "") {
         std::string lip = "0.0.0.0", lport = "0";
 
         if (laddr_str.size() > 0) {
@@ -38,7 +38,7 @@ public:
         }
 
         SOCKET sockfd = udp_bind(lip.c_str(), lport.c_str());
-        return Ptr(new UdpSession(sockfd, ev));
+        return Ptr(new UdpSession(sockfd));
     }
 
 
@@ -63,19 +63,14 @@ public:
 
     void __inline__ close() {
         stop();
-
-        for (int i = 0; i < nsnd_buf_; i++) {
-            Datagram::put(snd_buf_[i]);
-        }
-        nsnd_buf_ = 0;
     }
 
 
     /* ----------------------------------------------------- */
     /// @brief 异步开启 io loop
     ///
-    void __inline__ run(const std::string& multi_route_ip = "", const std::string& multi_local_ip = "") {
-        thread_ = std::thread(std::bind(&UdpSession::start_rcv, this, multi_route_ip, multi_local_ip));
+    void __inline__ run() {
+        thread_ = std::thread(std::bind(&UdpSession::start_rcv, this));
     }
 
 
@@ -87,6 +82,12 @@ public:
             xq::net::close(sockfd_);
             sockfd_ = INVALID_SOCKET;
         }
+
+        for (int i = 0; i < nsnd_buf_; i++) {
+            Datagram::put(snd_buf_[i]);
+            snd_buf_[i] = nullptr;
+        }
+        nsnd_buf_ = 0;
     }
 
 
@@ -100,26 +101,58 @@ public:
     }
 
 
+    void __inline__ rebuild(const std::string &laddr_str = "") {
+        std::string lip = "0.0.0.0", lport = "0";
+
+        if (laddr_str.size() > 0) {
+            size_t npos = laddr_str.rfind(':');
+            ASSERT(npos != std::string::npos);
+
+            if (npos > 0) {
+                lip = laddr_str.substr(0, npos);
+            }
+
+            lport = laddr_str.substr(npos + 1);
+        }
+
+        sockfd_ = udp_bind(lip.c_str(), lport.c_str());
+        ASSERT(sockfd_ != INVALID_SOCKET);
+    }
+
+
+    int __inline__ join_multicast(const std::string& multi_ip, const std::string& local_ip) {
+        ASSERT(multi_local_ip.size() > 0 && multi_route_ip.size() > 0);
+
+        int af = xq::net::check_ip_type(multi_route_ip);
+        ASSERT(af == AF_INET/* || af == AF_INET6*/);
+
+        ip_mreq mreq;
+        ::memset(&mreq, 0, sizeof(mreq));
+        if (::inet_pton(af, multi_route_ip.c_str(), &mreq.imr_multiaddr) != 1) {
+            return -1;
+        }
+
+        if (::inet_pton(af, multi_local_ip.c_str(), &mreq.imr_interface) != 1) {
+            return -1;
+        }
+
+        if (::setsockopt(sockfd_, IPPROTO_IP, IP_ADD_MEMBERSHIP, (char*)&mreq, sizeof(mreq))) {
+            return -1;
+        }
+
+        return 0;
+    }
+
+
 #ifdef WIN32
     /* ----------------------------------------------------- */
     /// @brief 开启同步 io loop
     ///
-    void start_rcv(const std::string& multi_route_ip = "", const std::string& multi_local_ip = "") {
+    void start_rcv() {
         ASSERT(sockfd_ != INVALID_SOCKET);
 
         int i, n, err;
         Datagram* dg = Datagram::get();
-
-        if (multi_local_ip.size() > 0 && multi_route_ip.size() > 0) {
-            int af = xq::net::check_ip_type(multi_route_ip);
-            ASSERT(af == AF_INET/* || af == AF_INET6*/);
-
-            ip_mreq mreq;
-            ::memset(&mreq, 0, sizeof(mreq));
-            ASSERT(::inet_pton(af, multi_route_ip.c_str(), &mreq.imr_multiaddr) == 1);
-            ASSERT(::inet_pton(af, multi_local_ip.c_str(), &mreq.imr_interface) == 1);
-            ASSERT(!::setsockopt(sockfd_, IPPROTO_IP, IP_ADD_MEMBERSHIP, (char*)&mreq, sizeof(mreq)))
-        }
 
         while (sockfd_ != INVALID_SOCKET) {
             n = ::recvfrom(sockfd_, (char*)dg->data, UDP_DGX_SIZE, 0, &dg->name, &dg->namelen);
@@ -145,8 +178,6 @@ public:
             Datagram::put(snd_buf_[i]);
         }
         nsnd_buf_ = 0;
-
-        close();
     }
 
 
@@ -193,24 +224,9 @@ public:
     /* ----------------------------------------------------- */
     /// @brief 开启同步 io loop
     ///
-    void start_rcv(const std::string& laddr_str = "", const std::string& multi_route_ip = "", const std::string& multi_local_ip = "") {
-        constexpr static timeval TIMEOUT{0, 50000};
-
-        if (sockfd_ == INVALID_SOCKET) {
-            ASSERT(!_bind(laddr_str));
-            ASSERT(!setsockopt(sockfd_, SOL_SOCKET, SO_RCVTIMEO, &TIMEOUT, sizeof(TIMEOUT)));
-        }
-
-        if (multi_local_ip.size() > 0 && multi_route_ip.size() > 0) {
-            int af = xq::net::check_ip_type(multi_route_ip);
-            ASSERT(af == AF_INET/* || af == AF_INET6*/);
-
-            ip_mreq mreq;
-            ::memset(&mreq, 0, sizeof(mreq));
-            ASSERT(::inet_pton(af, multi_route_ip.c_str(), &mreq.imr_multiaddr) == 1);
-            ASSERT(::inet_pton(af, multi_local_ip.c_str(), &mreq.imr_interface) == 1);
-            ASSERT(!::setsockopt(sockfd_, IPPROTO_IP, IP_ADD_MEMBERSHIP, (char *)&mreq, sizeof(mreq)))
-        }
+    void start_rcv() {
+        constexpr static timeval TIMEOUT{0, 500000};
+        ASSERT(sockfd_ != INVALID_SOCKET);
 
         mmsghdr msgs[IO_RMSG_SIZE];
         ::memset(msgs, 0, sizeof(msgs));
@@ -384,9 +400,8 @@ public:
 
 
 private:
-    UdpSession(SOCKET sockfd, TEvent& ev)
-        : ev_(ev)
-        , sockfd_(sockfd)
+    UdpSession(SOCKET sockfd)
+        : sockfd_(sockfd)
         , nsnd_buf_(0)
         , addr_({0, {0}})
         , addrlen_(sizeof(addr_)) {
@@ -395,7 +410,6 @@ private:
     }
 
 
-    TEvent& ev_;
     SOCKET sockfd_;
 
     /* --------------------------------------------------------------------- 
@@ -407,7 +421,7 @@ private:
     socklen_t addrlen_;
     std::thread thread_;
     Datagram* snd_buf_[IO_SMSG_SIZE];
-
+    TEvent ev_;
 
     UdpSession(const UdpSession&) = delete;
     UdpSession(const UdpSession&&) = delete;

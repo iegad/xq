@@ -30,6 +30,8 @@ public:
 
 
     __inline__ void update_ack(int64_t rtt, int *cwnd) {
+        rtt += 1;
+
         if (cnt_rtt_ > CCC_CNT_MAX) {
             cnt_rtt_ = 0;
             min_rtt_ = 0;
@@ -43,10 +45,7 @@ public:
             min_rtt_ = rtt;
         }
 
-        int exp = CCC_CWND_MAX / base_rtt_;
-        int act = CCC_CWND_MAX / rtt;
-
-        int diff = exp - act;
+        int diff = *cwnd * (rtt - base_rtt_) / base_rtt_;
         if (diff > CCC_BETA) {
             if (*cwnd < ssthresh_) {
                 *cwnd -= 1;
@@ -71,6 +70,7 @@ public:
             *cwnd = CCC_CWND_MAX;
         }
 
+        std::printf("CCC diff: %d cwnd: %d\n", diff, *cwnd);
         cnt_rtt_++;
     }
 

@@ -5,14 +5,15 @@
 #include "xq/net/udp_session.hpp"
 
 
-class EchoEvent;
-using UdpSession = xq::net::UdpSession<EchoEvent>;
-using Datagram = xq::net::Datagram;
-static UdpSession::Ptr server;
+
 
 
 class EchoEvent {
 public:
+    using Datagram = xq::net::Datagram;
+    typedef xq::net::UdpSession<EchoEvent> UdpSession;
+
+
     int on_recv(UdpSession* sess, const Datagram* dg) {
         static int count = 0;
         count++;
@@ -33,6 +34,9 @@ public:
     }
 };
 
+using UdpSession = xq::net::UdpSession<EchoEvent>;
+static UdpSession::Ptr server;
+
 
 void signal_handler(int signal) {
     if (signal == SIGINT && server) {
@@ -50,9 +54,8 @@ int main(int, char**) {
 #endif // _WIN32
 
     std::signal(SIGINT, signal_handler);
-    EchoEvent ev;
-    server = UdpSession::create(":6688", ev);
-    server->run("224.0.0.10", "192.168.0.201");
+    server = UdpSession::create(":6688");
+    server->run();
     server->wait();
     std::printf("EXIT.!!!\n");
 

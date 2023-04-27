@@ -2,19 +2,26 @@
 #include "xq/net/udx.hpp"
 
 
-class EchoEvent;
-using UdpSession = xq::net::UdpSession<EchoEvent>;
-using Udx = xq::net::Udx<xq::net::CCCustom>;
-using Datagram = xq::net::Datagram;
+using Udx = xq::net::Udx<>;
 
-
-static UdpSession::Ptr sess;
-static Udx::Ptr udx;
 static int COUNT = 0;
-
+static Udx::Ptr udx;
 
 class EchoEvent {
 public:
+    using UdpSession = xq::net::UdpSession<EchoEvent>;
+    using Datagram = xq::net::Datagram;
+
+
+    static UdpSession* Session() {
+        static UdpSession::Ptr sess;
+        if (!sess) {
+            sess = UdpSession::create();
+        }
+        return sess.get();
+    }
+
+
     int on_recv(UdpSession* sess, const Datagram* dg) {
         static uint8_t* rbuf = new uint8_t[xq::net::UDX_MSG_MAX];
 
@@ -44,9 +51,11 @@ public:
 
 
     static int output(const Datagram::ptr *dgs, int ndg) {
-        return sess->flush(dgs, ndg);
+        return EchoEvent::Session()->flush(dgs, ndg);
     }
 };
+
+
 
 int main(int argc, char** argv) {
 #ifdef WIN32
@@ -55,10 +64,8 @@ int main(int argc, char** argv) {
         exit(EXIT_FAILURE);
     }
 #endif // WIN32
-    EchoEvent ev;
-    sess = UdpSession::create("", ev);
+    auto sess = EchoEvent::Session();
     sess->run();
-
     udx = Udx::create(1, &EchoEvent::output);
     udx->connect("192.168.0.201:6688");
     char buf[10000] = {0};

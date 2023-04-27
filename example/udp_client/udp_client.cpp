@@ -2,17 +2,17 @@
 // #include "xq/net/udx.hpp"
 
 
-class EchoEvent;
-using UdpSession = xq::net::UdpSession<EchoEvent>;
-using Datagram = xq::net::Datagram;
-// using Udx = xq::net::Udx;
 
-static UdpSession::Ptr sess;
+
+// using Udx = xq::net::Udx;
 
 
 class EchoEvent {
 public:
-    int on_recv(const Datagram* dg) {
+    using Datagram = xq::net::Datagram;
+    typedef xq::net::UdpSession<EchoEvent> UdpSession;
+
+    int on_recv(UdpSession* sess, const Datagram* dg) {
         return 0;
     }
 
@@ -24,6 +24,10 @@ public:
         return 0;
     }
 };
+
+
+using UdpSession = EchoEvent::UdpSession;
+static UdpSession::Ptr sess;
 
 
 void send_wkr() {
@@ -88,8 +92,7 @@ int main(int argc, char** argv) {
         exit(EXIT_FAILURE);
     }
 #endif // WIN32
-    EchoEvent ev;
-    sess = UdpSession::create("", ev);
+    sess = UdpSession::create("");
     std::thread t(send_wkr);
     t.join();
 
