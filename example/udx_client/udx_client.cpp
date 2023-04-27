@@ -3,9 +3,8 @@
 
 
 using Udx = xq::net::Udx<>;
-
 static int COUNT = 0;
-static Udx::Ptr udx;
+static Udx::ptr udx;
 
 class EchoEvent {
 public:

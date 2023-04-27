@@ -60,11 +60,11 @@ template <class TCC = CCCustom>
 class Udx {
 public:
     typedef std::pair<uint64_t, uint64_t> Ack;
-    typedef std::shared_ptr<Udx> Ptr;
+    typedef Udx* ptr;
     typedef int (*Output)(const Datagram::ptr *, int);
 
 
-    static __inline__ int _u48_decode(const uint8_t* p, uint64_t* v) {
+    static int __inline__ _u48_decode(const uint8_t* p, uint64_t* v) {
 #if X_BIG_ENDIAN || X_MUST_ALIGN
         uint8_t* tmp = (uint8_t*)v;
         *(tmp + 7) = *p;
@@ -80,7 +80,7 @@ public:
     }
 
 
-    static __inline__ int _u48_encode(uint64_t v, uint8_t* p) {
+    static int __inline__ _u48_encode(uint64_t v, uint8_t* p) {
         uint8_t* tmp = (uint8_t*)&v; // 00 00 01 02 03 04 05 06 =>
 #if X_BIG_ENDIAN || X_MUST_ALIGN
         * p = *(tmp + 7);
@@ -96,7 +96,7 @@ public:
     }
 
 
-    static __inline__ int _u24_decode(const uint8_t* p, uint32_t* v) {
+    static int __inline__ _u24_decode(const uint8_t* p, uint32_t* v) {
 #if X_BIG_ENDIAN || X_MUST_ALIGN
         uint8_t* tmp = (uint8_t*)v;
         *(tmp + 3) = *p;
@@ -122,7 +122,7 @@ public:
     }
 
 
-    static __inline__ int _u16_decode(const uint8_t* p, uint16_t* v) {
+    static int __inline__ _u16_decode(const uint8_t* p, uint16_t* v) {
 #if X_BIG_ENDIAN || X_MUST_ALIGN
         uint8_t* tmp = (uint8_t*)v;
         *(tmp + 1) = *p;
@@ -156,6 +156,115 @@ public:
         *p = v;
         return 1;
     }
+
+
+    // ------------------------------------------------------------------ BEG Manager ------------------------------------------------------------------
+    class Manager {
+    public:
+        static Manager* instance() {
+            static Manager m;
+            return &m;
+        }
+
+
+        Udx* load_udx(const uint8_t *data, size_t datalen, Output output) {
+            if (!data || datalen < 3) {
+                return nullptr;
+            }
+
+            uint32_t uid = 0;
+            Udx::_u24_decode(data, &uid);
+            if (uid == 0 || uid > UDX_UID_MAX) {
+                return nullptr;
+            }
+
+            uint32_t i = uid - 1;
+
+            mtx_.lock();
+            if (!udxs_[i]) {
+                udxs_[i] = new Udx(uid, output);
+            }
+            active_udxs_.insert(i + 1);
+            mtx_.unlock();
+            return udxs_[i];
+        }
+
+
+        void rmv_udx(uint32_t uid) {
+            mtx_.lock();
+            active_udxs_.erase(uid);
+            mtx_.unlock();
+        }
+
+
+        void run() {
+            update_loop_ = std::thread(std::bind(&Manager::_update_loop, this));
+        }
+
+
+        void stop() {
+            stopped_ = true;
+        }
+
+
+        void wait() {
+            if (update_loop_.joinable()) {
+                update_loop_.join();
+            }
+        }
+
+
+        ~Manager() {
+            wait();
+            for (auto& udx : udxs_) {
+                delete udx;
+            }
+        }
+
+
+    private:
+        Manager()
+            : stopped_(true)
+            , udxs_(UDX_UID_MAX, nullptr) {
+        }
+
+
+        int _get_active_udxs(Udx* *udxs) {
+            mtx_.lock();
+            int n = active_udxs_.size(), i = 0;
+            for (auto& uid : active_udxs_) {
+                udxs[i] = udxs_[uid - 1];
+            }
+            mtx_.unlock();
+            return n;
+        }
+
+
+        void _update_loop() {
+            stopped_ = false;
+            Udx** active_udxs = new Udx*[UDX_UID_MAX];
+            int n = 0, i;
+            int64_t now_us;
+
+            while (!stopped_) {
+                std::this_thread::sleep_for(std::chrono::milliseconds(50));
+                n = _get_active_udxs(active_udxs);
+                now_us = xq::tools::now_us();
+                for (i = 0; i < n; i++) {
+                    active_udxs[i]->flush(now_us);
+                }
+            }
+        }
+
+
+        bool stopped_;
+        std::thread update_loop_;
+        std::mutex mtx_;
+        std::unordered_set<uint32_t> active_udxs_;
+        std::vector<Udx*> udxs_;
+    };
+    // ------------------------------------------------------------------ END Manager ------------------------------------------------------------------
+
 
     // ------------------------------------------------------------------ BEG Segment ------------------------------------------------------------------
     struct Segment {
@@ -400,8 +509,8 @@ public:
     // ------------------------------------------------------------------ END Segment ------------------------------------------------------------------
 
 
-    static Ptr create(uint32_t uid, Output output) {
-        return Ptr(new Udx(uid, output));
+    static ptr create(uint32_t uid, Output output) {
+        return new Udx(uid, output);
     }
 
 
@@ -439,8 +548,14 @@ public:
     }
 
 
+    uint32_t __inline__ uid() const {
+        return uid_;
+    }
+
+
     void connect(const std::string& remote) {
         ASSERT(xq::net::str2addr(remote, &addr_, &addrlen_));
+        active_ = true;
     }
 
 
@@ -575,6 +690,10 @@ public:
 
 
     int flush(int64_t now_us) {
+        if (!active_) {
+            return -1;
+        }
+
         Datagram* dg = Datagram::get(&addr_, addrlen_);
 
         uint64_t now_ts = now_us - start_us_;
@@ -651,6 +770,8 @@ public:
                 }
                 else if (psh->xmit >= UDX_RXMIT_MAX) {
                     // 超过最大重传次数
+                    active_ = false;
+                    Manager::instance()->rmv_udx(uid_);
                     return -1;
                 }
                 else if (psh->resend_ts <= now_ts) {
@@ -729,6 +850,7 @@ private:
     Udx(uint32_t uid, Output output)
         : addr_({0,{0}})
         , addrlen_(sizeof(addr_))
+        , active_(false)
         , pon_flag_(false)
         , cwnd_(UDX_RWND_MIN)
         , rwnd_(UDX_RWND_MIN)
@@ -778,6 +900,7 @@ private:
         }
 
         this->_reset(now_ms);
+        active_ = true;
         return this->_update_psh(new_seg);
     }
 
@@ -882,6 +1005,7 @@ private:
     sockaddr addr_;
     socklen_t addrlen_;
 
+    bool active_;
     bool pon_flag_;
     int cwnd_; // 本端拥塞窗口
     int rwnd_; // 对端接收窗口

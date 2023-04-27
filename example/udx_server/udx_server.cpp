@@ -7,7 +7,6 @@
 
 
 using Udx = xq::net::Udx<>;
-static Udx::Ptr udx;
 
 
 class EchoEvent {
@@ -28,6 +27,11 @@ public:
     int on_recv(UdpSession* sess, const Datagram* dg) {
         static uint8_t* rbuf = new uint8_t[xq::net::UDX_MSG_MAX];
 
+        Udx* udx = Udx::Manager::instance()->load_udx(dg->data, dg->datalen, &EchoEvent::output);
+        if (!udx) {
+            return 0;
+        }
+
         int n = udx->input(dg->data, dg->datalen, &dg->name, dg->namelen, dg->time_us);
         if (n < 0) {
             std::printf("input failed: %d\n", n);
@@ -38,10 +42,8 @@ public:
             rbuf[n] = 0;
             //std::printf("\n\n--------------------------------------------\n");
             //std::printf("%s\n", (char*)rbuf);
-
             udx->set_addr(&dg->name, dg->namelen);
             ASSERT(!udx->send(rbuf, n));
-            udx->flush(dg->time_us);
         }
 
         return 0;
@@ -51,11 +53,21 @@ public:
     static int output(const Datagram::ptr *dgs, int ndg) {
         return EchoEvent::Session()->flush(dgs, ndg);
     }
+
+
+    EchoEvent() {
+        Udx::Manager::instance()->run();
+    }
+
+
+    ~EchoEvent() {
+    }
 };
 
 
 void signal_handler(int signal) {
     if (signal == SIGINT) {
+        Udx::Manager::instance()->stop();
         EchoEvent::Session()->stop();
     }
 }
@@ -71,7 +83,6 @@ int main(int, char**) {
 
     std::signal(SIGINT, signal_handler);
     auto sess = EchoEvent::Session();
-    udx = Udx::create(1, &EchoEvent::output);
     sess->run();
     sess->wait();
     std::printf("EXIT.!!!\n");
