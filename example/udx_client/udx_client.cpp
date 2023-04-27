@@ -2,8 +2,10 @@
 #include "xq/net/udx.hpp"
 
 
-using UdpSession = xq::net::UdpSession;
-using Udx = xq::net::Udx;
+class EchoEvent;
+using UdpSession = xq::net::UdpSession<EchoEvent>;
+using Udx = xq::net::Udx<xq::net::CCCustom>;
+using Datagram = xq::net::Datagram;
 
 
 static UdpSession::Ptr sess;
@@ -11,33 +13,40 @@ static Udx::Ptr udx;
 static int COUNT = 0;
 
 
-int rcv_cb(const UdpSession::Datagram* dg) {
-    static uint8_t* rbuf = new uint8_t[xq::net::UDX_MSG_MAX];
+class EchoEvent {
+public:
+    int on_recv(UdpSession* sess, const Datagram* dg) {
+        static uint8_t* rbuf = new uint8_t[xq::net::UDX_MSG_MAX];
 
-    int n = udx->input(dg->data, dg->datalen, &dg->name, dg->namelen, dg->time_ms);
-    if (n < 0) {
-        std::printf("input failed: %d\n", n);
-        return -1;
-    }
-    
-    n = udx->recv(rbuf, xq::net::UDX_MSG_MAX);
-    if (n > 0) {
-        rbuf[n] = 0;
-        //std::printf("%s\n", (char*)rbuf);
-        if (COUNT == 1000000) {
-            udx->flush(dg->time_ms);
-            sess->stop();
-            return 0;
+        int n = udx->input(dg->data, dg->datalen, &dg->name, dg->namelen, dg->time_us);
+        if (n < 0) {
+            std::printf("input failed: %d\n", n);
+            return -1;
         }
 
-        n = sprintf((char*)rbuf, "Hello world: %d", COUNT++);
-        udx->send(rbuf, n);
+        n = udx->recv(rbuf, xq::net::UDX_MSG_MAX);
+        if (n > 0) {
+            rbuf[n] = 0;
+            std::printf("%s\n", (char*)rbuf);
+            if (COUNT == 1000) {
+                udx->flush(dg->time_us);
+                sess->stop();
+                return 0;
+            }
+
+            n = sprintf((char*)rbuf, "Hello world: %d", COUNT++);
+            udx->send(rbuf, n);
+        }
+
+        udx->flush(dg->time_us);
+        return 0;
     }
 
-    udx->flush(dg->time_ms);
-    return 0;
-}
 
+    static int output(const Datagram::ptr *dgs, int ndg) {
+        return sess->flush(dgs, ndg);
+    }
+};
 
 int main(int argc, char** argv) {
 #ifdef WIN32
@@ -46,9 +55,11 @@ int main(int argc, char** argv) {
         exit(EXIT_FAILURE);
     }
 #endif // WIN32
-    sess = UdpSession::create("192.168.0.201:0");
-    udx = Udx::create(1, *sess);
-    //udx->connect("1.15.81.179:6688");
+    EchoEvent ev;
+    sess = UdpSession::create("", ev);
+    sess->run();
+
+    udx = Udx::create(1, &EchoEvent::output);
     udx->connect("192.168.0.201:6688");
     char buf[10000] = {0};
     int64_t beg = xq::tools::now_ms();
@@ -57,9 +68,9 @@ int main(int argc, char** argv) {
     if (n < 0) {
         std::printf("send failed: %d\n", n);
     }
-
-    udx->flush(xq::tools::now_ms());
-    sess->start_rcv(rcv_cb);
+    
+    udx->flush(xq::tools::now_us());
+    sess->wait();
     sess->close();
     std::printf(">>>> takes %lld ms\n", xq::tools::now_ms() - beg);
 

@@ -4,6 +4,7 @@
 
 #include <deque>
 #include <unordered_set>
+#include "xq/net/cc_custom.hpp"
 #include "xq/net/udp_session.hpp"
 
 
@@ -50,16 +51,17 @@ constexpr int UDX_FAS_MAX = 3; // 快速重传
 constexpr int UDX_RWND_MIN = 2;
 constexpr int UDX_RWND_MAX = 128;
 constexpr int UDX_SWND_MAX = UDX_RWND_MAX / 2;
-constexpr int UDX_SSTHRESH_INIT = 8;
 
 constexpr uint64_t UDX_SN_MAX = 0x0000FFFFFFFFFFFF;
 constexpr uint64_t UDX_TS_MAX = 0x0000FFFFFFFFFFFF;
 
 
+template <class TCC = CCCustom>
 class Udx {
 public:
     typedef std::pair<uint64_t, uint64_t> Ack;
     typedef std::shared_ptr<Udx> Ptr;
+    typedef int (*Output)(const Datagram::ptr *, int);
 
 
     static __inline__ int _u48_decode(const uint8_t* p, uint64_t* v) {
@@ -398,8 +400,8 @@ public:
     // ------------------------------------------------------------------ END Segment ------------------------------------------------------------------
 
 
-    static Ptr create(uint32_t uid) {
-        return Ptr(new Udx(uid));
+    static Ptr create(uint32_t uid, Output output) {
+        return Ptr(new Udx(uid, output));
     }
 
 
@@ -442,8 +444,8 @@ public:
     }
 
 
-    int input(const uint8_t* buf, size_t buflen, const sockaddr* addr, socklen_t addrlen, int64_t now_ms) {
-        ASSERT(buf && now_ms > 0);
+    int input(const uint8_t* buf, size_t buflen, const sockaddr* addr, socklen_t addrlen, int64_t now_us) {
+        ASSERT(buf && now_us > 0);
 
         if (buflen < UDX_HDR_LEN + UDX_UID_LEN) {
             return -1;
@@ -459,7 +461,7 @@ public:
         p += n;
         buflen -= n;
 
-        int64_t now_ts = now_ms - start_ms_;
+        int64_t now_ts = now_us - start_us_;
         int res = 0;
         Segment* seg;
 
@@ -473,18 +475,6 @@ public:
             if (seg->sn > last_sn_ || last_sn_ == 0) {
                 rwnd_ = seg->wnd;
                 last_sn_ = seg->sn;
-
-                // 拥塞控制
-                if (cwnd_ < ssthresh_) {
-                    cwnd_ <<= 1;
-                }
-                else {
-                    cwnd_++;
-                }
-
-                if (cwnd_ > UDX_SWND_MAX) {
-                    cwnd_ = UDX_SWND_MAX;
-                }
             }
 
             switch (seg->cmd) {
@@ -493,7 +483,7 @@ public:
                 break;
 
             case UDX_CMD_CON: 
-                res = _update_con(now_ms, seg, addr, addrlen); 
+                res = _update_con(now_us, seg, addr, addrlen); 
                 break;
 
             case UDX_CMD_PSH: 
@@ -584,15 +574,15 @@ public:
     }
 
 
-    int flush(int64_t now_ms) {
+    int flush(int64_t now_us) {
         Datagram* dg = Datagram::get(&addr_, addrlen_);
 
-        uint64_t now_ts = now_ms - start_ms_;
+        uint64_t now_ts = now_us - start_us_;
         uint8_t* p = dg->data + UDX_UID_LEN;
         int nbuf = 0, n, idx = 0;
         Segment seg, *psh;
 
-        Datagram* dgs[IO_SMSG_SIZE];
+        Datagram::ptr dgs[IO_SMSG_SIZE];
 
 
         if (!ack_que_.empty()) {
@@ -628,10 +618,10 @@ public:
         }
 
         while (!snd_que_.empty()) {
-            Segment* seg = snd_que_.front();
-            seg->resend_ts = now_ts + rto_;
-            seg->wnd = UDX_SWND_MAX - rcv_buf_.size();
-            snd_buf_.insert(std::make_pair(seg->sn, seg));
+            psh = snd_que_.front();
+            psh->resend_ts = now_ts + rto_;
+            psh->wnd = UDX_SWND_MAX - rcv_buf_.size();
+            snd_buf_.insert(std::make_pair(psh->sn, psh));
             snd_que_.pop_front();
         }
 
@@ -684,6 +674,7 @@ public:
                     psh->ts = now_ts;
                     psh->wnd = rcv_buf_.size() < UDX_RWND_MAX ? UDX_RWND_MAX - rcv_buf_.size() : 0;
                     n = psh->encode(p, UDX_MTU - UDX_UID_LEN - nbuf);
+                    ASSERT(n > 0);
                     p += n;
                     nbuf += n;
                     psh->xmit++;
@@ -728,35 +719,34 @@ public:
         nbuf += _u24_encode(uid_, dg->data);
         dg->datalen = nbuf;
         dgs[idx++] = dg;
-        
-        // TODO: flush
 
+        output_(dgs, idx);
         return 0;
     }
 
 
 private:
-    Udx(uint32_t uid)
+    Udx(uint32_t uid, Output output)
         : addr_({0,{0}})
         , addrlen_(sizeof(addr_))
         , pon_flag_(false)
         , cwnd_(UDX_RWND_MIN)
         , rwnd_(UDX_RWND_MIN)
-        , ssthresh_(UDX_SSTHRESH_INIT)
         , rto_(UDX_RTO_MIN)
         , srtt_(0)
         , rttvar_(0)
         , uid_(uid)
-        , start_ms_(xq::tools::now_ms())
+        , start_us_(xq::tools::now_us())
         , last_sn_(0)
         , rcv_nxt_(0)
         , snd_nxt_(0)
+        , output_(output)
     {}
 
 
-    void _reset(int64_t now_ms) {
+    void _reset(int64_t now_us) {
         cwnd_ = UDX_RWND_MIN;
-        start_ms_ = now_ms;
+        start_us_ = now_us;
         rto_ = UDX_RTO_MIN;
         snd_nxt_ = rcv_nxt_ = last_sn_ = srtt_ = 0;
 
@@ -852,16 +842,19 @@ private:
         /* ---------------------
          * 这里可能会出现负值.
          * 例如: 
-         *     1, 发送端发 psh[sn:1, ts:1] 的包.
-         *     2, 对端收到后响应 ack[sn:1, ts:2], 但是该响但在网络中滞留.
-         *     3, 发送端触发重传(可能是超时重传, 也可能是快速重传) re psh[sn:1, ts:3].
-         *     4, 发送端此时收到滞留的 ack[sn:1, ts: 2], 这时就会出现RTT时间负数的情况.
+         *    1, 发送端发 psh[sn:1, ts:1] 的包.
+         *    2, 对端收到后响应 ack[sn:1, ts:2], 但是该响但在网络中滞留.
+         *    3, 发送端触发重传(可能是超时重传, 也可能是快速重传) re psh[sn:1, ts:3].
+         *    4, 发送端此时收到滞留的 ack[sn:1, ts: 2], 这时就会出现RTT时间负数的情况.
          */
         int64_t rtt = now_ts - new_seg->ts;
         if (rtt < 0) {
             delete new_seg;
             return 0;
         }
+
+        cc_.update_ack(rtt, &cwnd_);
+        std::printf(">>> cwnd: %d\n", cwnd_);
 
         if (srtt_ == 0) {
             srtt_ = rtt;
@@ -893,16 +886,18 @@ private:
     bool pon_flag_;
     int cwnd_; // 本端拥塞窗口
     int rwnd_; // 对端接收窗口
-    int ssthresh_;
     int rto_;
     int srtt_;
     int rttvar_;
+    TCC cc_; // congestion controller
     
     uint32_t uid_;
-    uint64_t start_ms_;
+    uint64_t start_us_;
     uint64_t last_sn_;
     uint64_t rcv_nxt_;
     uint64_t snd_nxt_;
+
+    Output output_;
 
     std::map<uint64_t, uint64_t> ack_que_;
     std::map<uint64_t, Segment*> rcv_buf_;

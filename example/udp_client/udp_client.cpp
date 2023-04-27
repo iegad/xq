@@ -30,7 +30,7 @@ void send_wkr() {
     sockaddr addr = { 0,{0} };
     socklen_t addrlen = sizeof(addr);
 
-    ASSERT(xq::net::str2addr("192.168.0.201:6688", &addr, &addrlen));
+    ASSERT(xq::net::str2addr("127.0.0.1:6688", &addr, &addrlen));
 
     /*Udx::Segment* seg0 = Udx::Segment::new_con(2, 0, 0, 0, (uint8_t*)"1111111111", 10);
     Udx::Segment* seg1 = Udx::Segment::new_psh(2, 1, 1, 0, (uint8_t*)"2222222222", 10);
@@ -89,8 +89,7 @@ int main(int argc, char** argv) {
     }
 #endif // WIN32
     EchoEvent ev;
-    sess = UdpSession::create(ev);
-    sess->connect("", "", nullptr, nullptr);
+    sess = UdpSession::create("", ev);
     std::thread t(send_wkr);
     t.join();
 

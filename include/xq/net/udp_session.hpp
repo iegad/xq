@@ -23,13 +23,22 @@ public:
     typedef std::shared_ptr<UdpSession> Ptr;
 
 
-    /* ----------------------------------------------------- */
-    /// @brief 动态创建 UdpSession
-    ///
-    /// @param local_addr 本端地址.
-    ///
-    static __inline__ Ptr create(TEvent &ev) {
-        return Ptr(new UdpSession(ev));
+    static Ptr create(const std::string& laddr_str, TEvent &ev) {
+        std::string lip = "0.0.0.0", lport = "0";
+
+        if (laddr_str.size() > 0) {
+            size_t npos = laddr_str.rfind(':');
+            ASSERT(npos != std::string::npos);
+
+            if (npos > 0) {
+                lip = laddr_str.substr(0, npos);
+            }
+
+            lport = laddr_str.substr(npos + 1);
+        }
+
+        SOCKET sockfd = udp_bind(lip.c_str(), lport.c_str());
+        return Ptr(new UdpSession(sockfd, ev));
     }
 
 
@@ -37,25 +46,6 @@ public:
         close();
     }
 
-
-    void __inline__ connect(const std::string& raddr_str, const std::string& laddr_str, sockaddr* addr, socklen_t* addrlen) {
-        std::string lip = "0.0.0.0", lport = "0";
-
-        if (raddr_str.size() > 0 && addr && addrlen) {
-            ASSERT(xq::net::str2addr(raddr_str, addr, addrlen));
-        }
-
-        if (laddr_str.size() > 0) {
-            size_t npos = laddr_str.rfind(':');
-            ASSERT(npos != std::string::npos);
-
-            lip = laddr_str.substr(0, npos);
-            lport = laddr_str.substr(npos + 1);
-        }
-
-        sockfd_ = xq::net::udp_bind(lip.c_str(), lport.c_str());
-        ASSERT(sockfd_ != INVALID_SOCKET);
-    }
 
     /* ----------------------------------------------------- */
     /// @brief 端口复用
@@ -84,8 +74,8 @@ public:
     /* ----------------------------------------------------- */
     /// @brief 异步开启 io loop
     ///
-    void __inline__ run(const std::string& laddr_str = "", const std::string& multi_route_ip = "", const std::string& multi_local_ip = "") {
-        thread_ = std::thread(std::bind(&UdpSession::start_rcv, this, laddr_str, multi_route_ip, multi_local_ip));
+    void __inline__ run(const std::string& multi_route_ip = "", const std::string& multi_local_ip = "") {
+        thread_ = std::thread(std::bind(&UdpSession::start_rcv, this, multi_route_ip, multi_local_ip));
     }
 
 
@@ -114,11 +104,11 @@ public:
     /* ----------------------------------------------------- */
     /// @brief 开启同步 io loop
     ///
-    void start_rcv(const std::string& laddr_str = "", const std::string& multi_route_ip = "", const std::string& multi_local_ip = "") {
-        if (sockfd_ == INVALID_SOCKET) {
-            ASSERT(laddr_str.size() > 0);
-            ASSERT(!_bind(laddr_str));
-        }
+    void start_rcv(const std::string& multi_route_ip = "", const std::string& multi_local_ip = "") {
+        ASSERT(sockfd_ != INVALID_SOCKET);
+
+        int i, n, err;
+        Datagram* dg = Datagram::get();
 
         if (multi_local_ip.size() > 0 && multi_route_ip.size() > 0) {
             int af = xq::net::check_ip_type(multi_route_ip);
@@ -130,11 +120,6 @@ public:
             ASSERT(::inet_pton(af, multi_local_ip.c_str(), &mreq.imr_interface) == 1);
             ASSERT(!::setsockopt(sockfd_, IPPROTO_IP, IP_ADD_MEMBERSHIP, (char*)&mreq, sizeof(mreq)))
         }
-        
-        ASSERT(sockfd_ != INVALID_SOCKET && "udp session is invalid");
-
-        int i, n, err;
-        Datagram* dg = Datagram::get();
 
         while (sockfd_ != INVALID_SOCKET) {
             n = ::recvfrom(sockfd_, (char*)dg->data, UDP_DGX_SIZE, 0, &dg->name, &dg->namelen);
@@ -185,7 +170,7 @@ public:
     }
 
 
-    int flush(const Datagram* dgs, size_t dglen) {
+    int flush(const Datagram::ptr *dgs, size_t dglen) {
         ASSERT(sockfd_ != INVALID_SOCKET && "udp session is invalid");
         ASSERT(dgs && dglen > 0 && dglen <= IO_SMSG_SIZE);
 
@@ -195,7 +180,7 @@ public:
             if (n >= 0) {
                 n = ::sendto(sockfd_, (char*)dg->data, dg->datalen, 0, &dg->name, dg->namelen);
             }
-            Datagram::put(dg);
+            Datagram::put(*(Datagram**)&dg);
         }
 
         return n >= 0 ? i : n;
@@ -399,42 +384,14 @@ public:
 
 
 private:
-    UdpSession(TEvent& ev)
+    UdpSession(SOCKET sockfd, TEvent& ev)
         : ev_(ev)
-        , sockfd_(INVALID_SOCKET)
+        , sockfd_(sockfd)
         , nsnd_buf_(0)
         , addr_({0, {0}})
         , addrlen_(sizeof(addr_)) {
+        ASSERT(sockfd_ != INVALID_SOCKET);
         ::memset(snd_buf_, 0, sizeof(snd_buf_));
-    }
-
-
-    int _bind(const std::string& laddr_str) {
-        if (sockfd_ != INVALID_SOCKET) {
-            this->close();
-        }
-
-        std::string ip = "0.0.0.0", port = "0";
-
-        if (!laddr_str.empty()) {
-            size_t pos = laddr_str.rfind(':');
-            if (pos == std::string::npos) {
-                return -1;
-            }
-
-            if (pos > 0) {
-                ip = laddr_str.substr(0, pos);
-            }
-
-            port = laddr_str.substr(pos + 1);
-        }
-
-        sockfd_ = udp_bind(ip.c_str(), port.c_str(), &addr_, &addrlen_);
-        if (sockfd_ == INVALID_SOCKET) {
-            return -1;
-        }
-
-        return 0;
     }
 
 

@@ -78,6 +78,8 @@ enum ErrType {
     /// @brief UdpSession 数据报, 该类型禁用了c++ 的构造函数和析构函数, 所以该对象无法在栈上创建, 只能通过 Datagram::get 来在堆上动态创建该类型实例.
     ///
 struct Datagram {
+    typedef Datagram* ptr;
+
     /* ------------------- META 字段 ------------------- */
     // 数据接收时间
     int64_t time_us;

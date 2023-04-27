@@ -51,8 +51,8 @@ int main(int, char**) {
 
     std::signal(SIGINT, signal_handler);
     EchoEvent ev;
-    server = UdpSession::create(ev);
-    server->run(":6688", "224.0.0.10", "192.168.0.201");
+    server = UdpSession::create(":6688", ev);
+    server->run("224.0.0.10", "192.168.0.201");
     server->wait();
     std::printf("EXIT.!!!\n");
 
