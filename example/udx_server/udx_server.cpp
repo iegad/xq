@@ -57,12 +57,14 @@ public:
 
 
     EchoEvent() {
-        
+        Udx::Timer::instance()->run();
+        Udx::Timer::instance()->create_mission(1, nullptr);
     }
 
 
     ~EchoEvent() {
-        
+        Udx::Timer::instance()->stop();
+        Udx::Timer::instance()->wait();
     }
 };
 

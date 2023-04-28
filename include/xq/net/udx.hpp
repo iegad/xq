@@ -461,6 +461,139 @@ public:
     };
     // ------------------------------------------------------------------ END Segment ------------------------------------------------------------------
 
+    // ------------------------------------------------------------------ BEG Timer ------------------------------------------------------------------
+    struct Mission {
+        int64_t expire_us;
+        Datagram* dg;
+
+
+        Mission(int64_t expire_us, Datagram* dg)
+            : expire_us(expire_us)
+            , dg(dg)
+        {}
+    };
+
+    class Timer {
+    public:
+        typedef std::unordered_multiset<Mission*> Slot;
+
+
+        static Timer* instance() {
+            static Timer tmr;
+            return &tmr;
+        }
+
+
+        Timer()
+            : running_(false)
+        {}
+
+
+        ~Timer() {
+            if (running_) {
+                stop();
+            }
+        }
+
+
+        void set_output(Output output) {
+            output_ = output;
+        }
+
+
+        void run() {
+            sch_ = std::thread(std::bind(&Timer::_start, this));
+        }
+
+
+        void stop() {
+            running_ = false;
+        }
+
+
+        void wait() {
+            if (sch_.joinable()) {
+                sch_.join();
+            }
+
+            for (auto& slot : slotm_) {
+                auto &s = slot.second;
+                for (auto& m : *s) {
+                    delete m;
+                }
+                delete slot.second;
+            }
+        }
+
+
+        Mission* create_mission(int64_t expire_us, Datagram* dg) {
+            Mission* m = new Mission(expire_us, dg);
+            mtx_.lock();
+            auto itr = slotm_.find(expire_us);
+            if (itr != slotm_.end()) {
+                itr->second->insert(m);
+            }
+            else {
+                Slot* slot = new Slot;
+                slot->insert(m);
+                slotm_.insert(std::make_pair(expire_us, slot));
+            }
+            mtx_.unlock();
+            return m;
+        }
+
+
+    private:
+        void _start() {
+            running_ = true;
+            int64_t now_us;
+            Datagram::ptr dbuf[IO_SMSG_SIZE];
+            int di = 0;
+
+            while (running_) {
+                std::this_thread::sleep_for(std::chrono::microseconds(10000));
+                now_us = xq::tools::now_us();
+
+                while (1) {
+                    mtx_.lock();
+                    auto slot_itr = slotm_.begin();
+                    if (slot_itr == slotm_.end()) {
+                        mtx_.unlock();
+                        break;
+                    }
+                    mtx_.unlock();
+
+                    if (slot_itr->first > now_us) {
+                        break;
+                    }
+
+                    Slot* slot = slot_itr->second;
+                    for (auto& m_itr : *slot) {
+                        Mission* m = m_itr;
+                        if (m->dg) {
+                            dbuf[di++] = m->dg;
+
+                            if (di == IO_SMSG_SIZE) {
+                                output_(dbuf, di);
+                                di = 0;
+                            }
+                        }
+                        delete m;
+                    }
+                    delete slot;
+                } // while(1);
+            } // while(running_);
+        }
+
+
+        bool running_;
+        Output output_;
+        std::thread sch_;
+        xq::tools::SpinLock mtx_;
+        std::multimap<int64_t, Slot*> slotm_;
+    };
+    // ------------------------------------------------------------------ END Timer ------------------------------------------------------------------
+
 
     static __inline__ ptr create(uint32_t uid, Output output) {
         return new Udx(uid, output);
