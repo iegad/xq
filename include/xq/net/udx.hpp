@@ -158,16 +158,16 @@ public:
     }
 
 
-    // ------------------------------------------------------------------ BEG Manager ------------------------------------------------------------------
-    class Manager {
+    // ------------------------------------------------------------------ BEG Sets ------------------------------------------------------------------
+    class Sets {
     public:
-        static Manager* instance() {
-            static Manager m;
+        static Sets* instance() {
+            static Sets m;
             return &m;
         }
 
 
-        Udx* load_udx(const uint8_t *data, size_t datalen, Output output) {
+        Udx* load(const uint8_t* data, size_t datalen, Output output) {
             if (!data || datalen < 3) {
                 return nullptr;
             }
@@ -179,91 +179,40 @@ public:
             }
 
             uint32_t i = uid - 1;
-
             mtx_.lock();
-            if (!udxs_[i]) {
-                udxs_[i] = new Udx(uid, output);
+            if (!sets_[i]) {
+                sets_[i] = new Udx(uid, output);
             }
-            active_udxs_.insert(i + 1);
+            active_sets_.insert(i + 1);
             mtx_.unlock();
-            return udxs_[i];
+            return sets_[i];
         }
 
 
-        void rmv_udx(uint32_t uid) {
+        void rmv(uint32_t uid) {
             mtx_.lock();
-            active_udxs_.erase(uid);
+            active_sets_.erase(uid);
             mtx_.unlock();
         }
 
 
-        void run() {
-            update_loop_ = std::thread(std::bind(&Manager::_update_loop, this));
-        }
-
-
-        void stop() {
-            stopped_ = true;
-        }
-
-
-        void wait() {
-            if (update_loop_.joinable()) {
-                update_loop_.join();
-            }
-        }
-
-
-        ~Manager() {
-            wait();
-            for (auto& udx : udxs_) {
+        ~Sets() {
+            for (auto& udx : sets_) {
                 delete udx;
             }
         }
 
 
     private:
-        Manager()
-            : stopped_(true)
-            , udxs_(UDX_UID_MAX, nullptr) {
-        }
+        Sets() : sets_(UDX_UID_MAX, nullptr)
+        {}
 
 
-        int _get_active_udxs(Udx* *udxs) {
-            mtx_.lock();
-            int n = active_udxs_.size(), i = 0;
-            for (auto& uid : active_udxs_) {
-                udxs[i] = udxs_[uid - 1];
-            }
-            mtx_.unlock();
-            return n;
-        }
-
-
-        void _update_loop() {
-            stopped_ = false;
-            Udx** active_udxs = new Udx*[UDX_UID_MAX];
-            int n = 0, i;
-            int64_t now_us;
-
-            while (!stopped_) {
-                std::this_thread::sleep_for(std::chrono::milliseconds(50));
-                n = _get_active_udxs(active_udxs);
-                now_us = xq::tools::now_us();
-                for (i = 0; i < n; i++) {
-                    active_udxs[i]->flush(now_us);
-                }
-            }
-        }
-
-
-        bool stopped_;
-        std::thread update_loop_;
         std::mutex mtx_;
-        std::unordered_set<uint32_t> active_udxs_;
-        std::vector<Udx*> udxs_;
+        std::unordered_set<uint32_t> active_sets_;
+        std::vector<Udx*> sets_;
     };
-    // ------------------------------------------------------------------ END Manager ------------------------------------------------------------------
+    // ------------------------------------------------------------------ END Sets ------------------------------------------------------------------
 
 
     // ------------------------------------------------------------------ BEG Segment ------------------------------------------------------------------
@@ -277,6 +226,7 @@ public:
         uint8_t  fastack;
         uint8_t  xmit;
         uint64_t resend_ts;
+        xq::tools::BTreeTimer::Timer* resend_tmr;
 
         uint8_t  acc;
         uint8_t  frg;
@@ -537,6 +487,12 @@ public:
     }
 
 
+    static xq::tools::BTreeTimer* Timer() {
+        static xq::tools::BTreeTimer::Ptr tmr = xq::tools::BTreeTimer::create();
+        return tmr.get();
+    }
+
+
     void set_addr(const sockaddr *addr, socklen_t addrlen) {
         if (::memcmp(addr, &addr_, addrlen)) {
             ::memcpy(&addr_, addr, addrlen);
@@ -566,15 +522,9 @@ public:
             return -1;
         }
 
-        const uint8_t* p = buf;
-        uint32_t uid = 0;
-
-        int n = Udx::_u24_decode(p, &uid);
-        if (uid != uid_) {
-            return -2;
-        }
-        p += n;
-        buflen -= n;
+        const uint8_t* p = buf + 3;
+        int n;
+        buflen -= 3;
 
         int64_t now_ts = now_us - start_us_;
         int res = 0;
@@ -771,7 +721,6 @@ public:
                 else if (psh->xmit >= UDX_RXMIT_MAX) {
                     // 超过最大重传次数
                     active_ = false;
-                    Manager::instance()->rmv_udx(uid_);
                     return -1;
                 }
                 else if (psh->resend_ts <= now_ts) {

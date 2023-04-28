@@ -27,7 +27,7 @@ public:
     int on_recv(UdpSession* sess, const Datagram* dg) {
         static uint8_t* rbuf = new uint8_t[xq::net::UDX_MSG_MAX];
 
-        Udx* udx = Udx::Manager::instance()->load_udx(dg->data, dg->datalen, &EchoEvent::output);
+        Udx* udx = Udx::Sets::instance()->load(dg->data, dg->datalen, &EchoEvent::output);
         if (!udx) {
             return 0;
         }
@@ -44,6 +44,7 @@ public:
             //std::printf("%s\n", (char*)rbuf);
             udx->set_addr(&dg->name, dg->namelen);
             ASSERT(!udx->send(rbuf, n));
+            udx->flush(dg->time_us);
         }
 
         return 0;
@@ -56,18 +57,18 @@ public:
 
 
     EchoEvent() {
-        Udx::Manager::instance()->run();
+        Udx::Timer()->run();
     }
 
 
     ~EchoEvent() {
+        Udx::Timer()->stop();
     }
 };
 
 
 void signal_handler(int signal) {
     if (signal == SIGINT) {
-        Udx::Manager::instance()->stop();
         EchoEvent::Session()->stop();
     }
 }
