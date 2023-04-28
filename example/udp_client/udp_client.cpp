@@ -1,9 +1,7 @@
 #include "xq/net/udp_session.hpp"
 // #include "xq/net/udx.hpp"
-
-
-
-
+// 
+// 
 // using Udx = xq::net::Udx;
 
 
@@ -80,8 +78,8 @@ void send_wkr() {
     for (int i = 0; i < 1000; i++) {
         n = ::sprintf(buf, "Hello world: %d", i + 1);
         sess->send((uint8_t*)buf, n, &addr, addrlen);
-        sess->flush();
     }
+    sess->flush();
 }
 
 

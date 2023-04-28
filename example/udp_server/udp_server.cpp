@@ -5,9 +5,6 @@
 #include "xq/net/udp_session.hpp"
 
 
-
-
-
 class EchoEvent {
 public:
     using Datagram = xq::net::Datagram;
@@ -25,12 +22,12 @@ public:
 
 
     int on_send(const Datagram* dg) {
-
+        return 0;
     }
 
 
     int on_error(int err_type, int err_code, void *ev) {
-
+        return 0;
     }
 };
 

@@ -46,7 +46,7 @@ namespace tools {
 /// @tparam T 必需实现大于, 小于运算符
 ///
 template<typename T> 
-__inline__ T MAX(const T &a, const T &b) {
+inline T MAX(const T &a, const T &b) {
     return a > b ? a : b;
 }
 
@@ -57,7 +57,7 @@ __inline__ T MAX(const T &a, const T &b) {
 /// @tparam T 必需实现大于, 小于运算符
 ///
 template<typename T>
-__inline__ T MIN(const T& a, const T& b) {
+inline T MIN(const T& a, const T& b) {
     return a < b ? a : b;
 }
 
@@ -68,7 +68,7 @@ __inline__ T MIN(const T& a, const T& b) {
 /// @tparam T 必需实现大于, 小于运算符
 ///
 template<typename T>
-__inline__ T MID(const T& a, const T& b, const T& c) {
+inline T MID(const T& a, const T& b, const T& c) {
     return MIN(MAX(a, b), c);
 }
 
@@ -78,7 +78,7 @@ __inline__ T MID(const T& a, const T& b, const T& c) {
 /* -------------------------------------- */
 /// @brief 获取当前时间(秒)
 ///
-__inline__ int64_t now() {
+inline int64_t now() {
     return std::chrono::duration_cast<std::chrono::seconds>(
         std::chrono::system_clock::now().time_since_epoch()
     ).count();
@@ -88,7 +88,7 @@ __inline__ int64_t now() {
 /* -------------------------------------- */
 /// @brief 获取当前时间(毫秒)
 ///
-__inline__ int64_t now_ms() {
+inline int64_t now_ms() {
     return std::chrono::duration_cast<std::chrono::milliseconds>(
         std::chrono::system_clock::now().time_since_epoch()
     ).count();
@@ -98,7 +98,7 @@ __inline__ int64_t now_ms() {
 /* -------------------------------------- */
 /// @brief 获取当前时间(微秒)
 ///
-__inline__ int64_t now_us() {
+inline int64_t now_us() {
     return std::chrono::duration_cast<std::chrono::microseconds>(
         std::chrono::system_clock::now().time_since_epoch()
     ).count();
@@ -108,7 +108,7 @@ __inline__ int64_t now_us() {
 /* -------------------------------------- */
 /// @brief 获取当前时间(纳秒)
 ///
-__inline__ int64_t now_ns() {
+inline int64_t now_ns() {
     return std::chrono::duration_cast<std::chrono::nanoseconds>(
         std::chrono::system_clock::now().time_since_epoch()
     ).count();
@@ -154,7 +154,7 @@ __inline__ int64_t now_ns() {
 /* -------------------------------------- */
 /// @brief 反转 u16
 ///
-__inline__ uint16_t __rvs_u16(uint16_t v) {
+inline uint16_t __rvs_u16(uint16_t v) {
     return (v << 8) | (v >> 8);
 }
 
@@ -162,7 +162,7 @@ __inline__ uint16_t __rvs_u16(uint16_t v) {
 /* -------------------------------------- */
 /// @brief 反转 u32
 ///
-__inline__ uint32_t __rvs_u32(uint32_t v) {
+inline uint32_t __rvs_u32(uint32_t v) {
     return (((uint32_t)(__rvs_u16(v)) << 16)) | (__rvs_u16(v >> 16));
 }
 
@@ -170,7 +170,7 @@ __inline__ uint32_t __rvs_u32(uint32_t v) {
 /* -------------------------------------- */
 /// @brief 反转 u64
 ///
-__inline__ uint64_t __rvs_u64(uint64_t v) {
+inline uint64_t __rvs_u64(uint64_t v) {
     return (((uint64_t)(__rvs_u32(v)) << 32)) | (__rvs_u32(v >> 32));
 }
 
@@ -178,7 +178,7 @@ __inline__ uint64_t __rvs_u64(uint64_t v) {
 /* -------------------------------------- */
 /// @brief 当前平台是否为小端序平台
 ///
-__inline__ bool is_le() {
+inline bool is_le() {
     return !X_BIG_ENDIAN;
 }
 
@@ -186,7 +186,7 @@ __inline__ bool is_le() {
 /* -------------------------------------- */
 /// @brief 当前平台是否为大端序平台
 ///
-__inline__ bool is_be() {
+bool is_be() {
     return X_BIG_ENDIAN;
 }
 
@@ -194,7 +194,7 @@ __inline__ bool is_be() {
 /* -------------------------------------- */
 /// @brief 将 u16 转换为小端序
 ///
-__inline__ uint16_t to_le_u16(uint16_t v) {
+inline uint16_t to_le_u16(uint16_t v) {
 #if X_BIG_ENDIAN
     return __rvs_u16(v);
 #else
@@ -207,7 +207,7 @@ __inline__ uint16_t to_le_u16(uint16_t v) {
 /* -------------------------------------- */
 /// @brief 将 u16 转换为大端序
 ///
-__inline__ uint16_t to_be_u16(uint16_t v) {
+inline uint16_t to_be_u16(uint16_t v) {
 #if X_BIG_ENDIAN
     return v;
 #else
@@ -219,7 +219,7 @@ __inline__ uint16_t to_be_u16(uint16_t v) {
 /* -------------------------------------- */
 /// @brief 将 u32 转换为小端序
 ///
-__inline__ uint32_t to_le_u32(uint32_t v) {
+inline uint32_t to_le_u32(uint32_t v) {
 #if X_BIG_ENDIAN
     return __rvs_u32(v);
 #else
@@ -231,7 +231,7 @@ __inline__ uint32_t to_le_u32(uint32_t v) {
 /* -------------------------------------- */
 /// @brief 将 u32 转换为大端序
 ///
-__inline__ uint32_t to_be_u32(uint32_t v) {
+uint32_t to_be_u32(uint32_t v) {
 #if X_BIG_ENDIAN
     return v;
 #else
@@ -243,7 +243,7 @@ __inline__ uint32_t to_be_u32(uint32_t v) {
 /* -------------------------------------- */
 /// @brief 将 u64 转换小端序
 ///
-__inline__ uint64_t to_le_u64(uint64_t v) {
+inline uint64_t to_le_u64(uint64_t v) {
 #if X_BIG_ENDIAN
     return __rvs_u64(v);
 #else
@@ -255,7 +255,7 @@ __inline__ uint64_t to_le_u64(uint64_t v) {
 /* -------------------------------------- */
 /// @brief 将 u64 转换为大端序
 ///
-__inline__ uint64_t to_be_u64(uint64_t v) {
+inline uint64_t to_be_u64(uint64_t v) {
 #if X_BIG_ENDIAN
     return v;
 #else

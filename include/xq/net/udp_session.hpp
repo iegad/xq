@@ -120,7 +120,7 @@ public:
     }
 
 
-    __inline__ int join_multicast(const std::string& multi_ip, const std::string& local_ip) {
+    __inline__ int join_multicast(const std::string& multi_local_ip, const std::string& multi_route_ip) {
         ASSERT(multi_local_ip.size() > 0 && multi_route_ip.size() > 0);
 
         int af = xq::net::check_ip_type(multi_route_ip);
@@ -201,7 +201,7 @@ public:
     }
 
 
-    int flush(const Datagram::ptr *dgs, size_t dglen) {
+    int flush(const Datagram::ptr *dgs, int dglen) {
         ASSERT(sockfd_ != INVALID_SOCKET && "udp session is invalid");
         ASSERT(dgs && dglen > 0 && dglen <= IO_SMSG_SIZE);
 
@@ -227,6 +227,7 @@ public:
     void start_rcv() {
         constexpr static timeval TIMEOUT{0, 500000};
         ASSERT(sockfd_ != INVALID_SOCKET);
+        ASSERT(!::setsockopt(sockfd_, SOL_SOCKET, SO_RCVTIMEO, &TIMEOUT, sizeof(TIMEOUT)));
 
         mmsghdr msgs[IO_RMSG_SIZE];
         ::memset(msgs, 0, sizeof(msgs));
@@ -320,22 +321,21 @@ public:
         msghdr *hdr;
         Datagram* dg;
 
-        size_t n = 0;
         int res = 0, i;
 
-        for (i = 0; i < nsnd_buf_; i++, n++) {
+        for (i = 0; i < nsnd_buf_; i++) {
             dg = snd_buf_[i];
-            hdr = &msgs[n].msg_hdr;
+            hdr = &msgs[i].msg_hdr;
             hdr->msg_name = &dg->name;
             hdr->msg_namelen = dg->namelen;
-            hdr->msg_iov = &iovecs[n];
+            hdr->msg_iov = &iovecs[i];
             hdr->msg_iovlen = 1;
-            iovecs[n].iov_base = dg->data;
-            iovecs[n].iov_len = dg->datalen;
+            iovecs[i].iov_base = dg->data;
+            iovecs[i].iov_len = dg->datalen;
         }
 
         if (res >= 0) {
-            res = ::sendmmsg(sockfd_, msgs, n, 0);
+            res = ::sendmmsg(sockfd_, msgs, nsnd_buf_, 0);
         }
 
         for (i = 0; i < nsnd_buf_; i++) {
@@ -343,6 +343,39 @@ public:
         }
 
         nsnd_buf_ = 0;
+        return res;
+    }
+
+
+    int flush(const Datagram::ptr *dgs, int dglen) {
+        mmsghdr msgs[IO_SMSG_SIZE];
+        ::memset(msgs, 0, sizeof(msgs));
+
+        iovec iovecs[IO_SMSG_SIZE];
+        msghdr* hdr;
+        Datagram* dg;
+
+        int res = 0, i;
+
+        for (i = 0; i < dglen; i++) {
+            dg = dgs[i];
+            hdr = &msgs[i].msg_hdr;
+            hdr->msg_name = &dg->name;
+            hdr->msg_namelen = dg->namelen;
+            hdr->msg_iov = &iovecs[i];
+            hdr->msg_iovlen = 1;
+            iovecs[i].iov_base = dg->data;
+            iovecs[i].iov_len = dg->datalen;
+        }
+
+        if (res >= 0) {
+            res = ::sendmmsg(sockfd_, msgs, dglen, 0);
+        }
+
+        for (i = 0; i < dglen; i++) {
+            Datagram::put(*(Datagram**)&dgs[i]);
+        }
+
         return res;
     }
 #endif // WIN32

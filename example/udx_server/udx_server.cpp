@@ -51,7 +51,7 @@ public:
     }
 
 
-    static int output(const Datagram::ptr *dgs, int ndg) {
+    static int output(const Datagram::ptr* dgs, int ndg) {
         return EchoEvent::Session()->flush(dgs, ndg);
     }
 

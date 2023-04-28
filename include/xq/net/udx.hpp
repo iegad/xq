@@ -679,13 +679,12 @@ public:
             return -1;
         }
 
+        int nbuf = 0, n, di = 0;
         uint64_t now_ts = now_us - base_us_;
 
-        uint8_t* p;
-        int nbuf = 0, n, di = 0;
-        Segment seg, *seg_psh;
+        uint8_t* p = nullptr;
+        Segment seg, *seg_psh = nullptr;
         Datagram* dg = nullptr;
-
         Datagram::ptr dbuf[IO_SMSG_SIZE];
 
         // step 1: 处理ack

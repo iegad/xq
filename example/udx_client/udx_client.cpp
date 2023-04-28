@@ -66,7 +66,7 @@ int main(int argc, char** argv) {
     auto sess = EchoEvent::Session();
     sess->run();
     udx = Udx::create(1, &EchoEvent::output);
-    udx->connect("192.168.0.201:6688");
+    udx->connect("1.15.81.179:6688");
     char buf[10000] = {0};
     int64_t beg = xq::tools::now_ms();
     sprintf(buf, "Hello world: %d", COUNT++);
