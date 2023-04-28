@@ -50,7 +50,7 @@ public:
     /* ----------------------------------------------------- */
     /// @brief 端口复用
     ///
-    void __inline__ set_reuse() {
+    __inline__ void set_reuse() {
         constexpr int ON = 1;
         ASSERT(sockfd_ != INVALID_SOCKET);
         ASSERT(!setsockopt(sockfd_, SOL_SOCKET, SO_REUSEADDR, (char *)&ON, sizeof(ON)));
@@ -61,7 +61,7 @@ public:
     }
 
 
-    void __inline__ close() {
+    __inline__ void close() {
         stop();
     }
 
@@ -69,7 +69,7 @@ public:
     /* ----------------------------------------------------- */
     /// @brief 异步开启 io loop
     ///
-    void __inline__ run() {
+    __inline__ void run() {
         thread_ = std::thread(std::bind(&UdpSession::start_rcv, this));
     }
 
@@ -77,7 +77,7 @@ public:
     /* ----------------------------------------------------- */
     /// @brief 停止 io loop
     ///
-    void __inline__ stop() {
+    __inline__ void stop() {
         if (sockfd_ != INVALID_SOCKET) {
             xq::net::close(sockfd_);
             sockfd_ = INVALID_SOCKET;
@@ -94,14 +94,14 @@ public:
     /* ----------------------------------------------------- */
     /// @brief 等待 异步 io loop 完成
     ///
-    void __inline__ wait() {
+    __inline__ void wait() {
         if (thread_.joinable()) {
             thread_.join();
         }
     }
 
 
-    void __inline__ rebuild(const std::string &laddr_str = "") {
+    __inline__ void rebuild(const std::string &laddr_str = "") {
         std::string lip = "0.0.0.0", lport = "0";
 
         if (laddr_str.size() > 0) {
@@ -120,7 +120,7 @@ public:
     }
 
 
-    int __inline__ join_multicast(const std::string& multi_ip, const std::string& local_ip) {
+    __inline__ int join_multicast(const std::string& multi_ip, const std::string& local_ip) {
         ASSERT(multi_local_ip.size() > 0 && multi_route_ip.size() > 0);
 
         int af = xq::net::check_ip_type(multi_route_ip);
@@ -359,7 +359,7 @@ public:
     /// 
     /// @return 返回0表示, 数据并未发送, 返回 大于0, 表示缓冲区中所有数据均以发送完毕, 小于0, 表示错误.
     ///
-    int send(const Datagram* dg, bool force = false) {
+    __inline__ int send(const Datagram* dg, bool force = false) {
         ASSERT(sockfd_ != INVALID_SOCKET);
         ASSERT(dg);
 
@@ -382,7 +382,7 @@ public:
     /// @param remotelen 
     /// @param force 
     /// @return 
-    int send(const uint8_t* data, size_t datalen, const sockaddr* remote, socklen_t remotelen, bool force = false) {
+    __inline__ int send(const uint8_t* data, size_t datalen, const sockaddr* remote, socklen_t remotelen, bool force = false) {
         ASSERT(sockfd_ != INVALID_SOCKET && "udp session is invalid");
         ASSERT(data && datalen > 0);
 

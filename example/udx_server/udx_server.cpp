@@ -57,12 +57,12 @@ public:
 
 
     EchoEvent() {
-        Udx::Timer()->run();
+        
     }
 
 
     ~EchoEvent() {
-        Udx::Timer()->stop();
+        
     }
 };
 

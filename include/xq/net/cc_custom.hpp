@@ -29,58 +29,29 @@ public:
     {}
 
 
-    __inline__ void update_ack(int64_t rtt, int *cwnd) {
-        rtt += 1;
-
-        if (cnt_rtt_ > CCC_CNT_MAX) {
-            cnt_rtt_ = 0;
-            min_rtt_ = 0;
+    void __inline__ cong_avoid(int *cwnd) {
+        int wnd = *cwnd;
+        if (wnd < ssthresh_) {
+            wnd <<= 1;
+        }
+        else {
+            wnd += 1;
         }
 
-        if (base_rtt_ == 0 || base_rtt_ > rtt) {
-            base_rtt_ = rtt;
+        if (wnd > CCC_CWND_MAX) {
+            wnd = CCC_CWND_MAX;
         }
 
-        if (min_rtt_ == 0 || rtt < min_rtt_) {
-            min_rtt_ = rtt;
-        }
-
-        int diff = *cwnd * (rtt - base_rtt_) / base_rtt_;
-        if (diff > CCC_BETA) {
-            if (*cwnd < ssthresh_) {
-                *cwnd -= 1;
-            }
-            else {
-                *cwnd >>= 1;
-            }
-        }
-        else if (diff < CCC_ALPHA) {
-            if (*cwnd < ssthresh_) {
-                *cwnd <<= 1;
-            }
-            else {
-                *cwnd += 1;
-            }
-        }
-
-        if (*cwnd < CCC_CWND_MIN) {
-            *cwnd = CCC_CWND_MIN;
-        }
-        else if (*cwnd > CCC_CWND_MAX) {
-            *cwnd = CCC_CWND_MAX;
-        }
-
-        std::printf("CCC diff: %d cwnd: %d\n", diff, *cwnd);
-        cnt_rtt_++;
+        *cwnd = wnd;
     }
 
 
-    __inline__ void loss(int *cwnd) {
+    void __inline__ loss(int *cwnd) {
 
     }
 
 
-    __inline__ void fastack(int* cwnd) {
+    void __inline__ fast(int* cwnd) {
 
     }
 

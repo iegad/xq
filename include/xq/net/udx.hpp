@@ -1,5 +1,5 @@
-#ifndef __XQ_NET_XDG__
-#define __XQ_NET_XDG__
+#ifndef __XQ_NET_UDX__
+#define __XQ_NET_UDX__
 
 
 #include <deque>
@@ -51,6 +51,8 @@ constexpr int UDX_FAS_MAX = 3; // 快速重传
 constexpr int UDX_RWND_MIN = 2;
 constexpr int UDX_RWND_MAX = 128;
 constexpr int UDX_SWND_MAX = UDX_RWND_MAX / 2;
+constexpr uint8_t UDX_PRB_PIN_FLAG = 0x01;
+constexpr uint8_t UDX_PRB_PON_FLAG = 0x02;
 
 constexpr uint64_t UDX_SN_MAX = 0x0000FFFFFFFFFFFF;
 constexpr uint64_t UDX_TS_MAX = 0x0000FFFFFFFFFFFF;
@@ -64,7 +66,7 @@ public:
     typedef int (*Output)(const Datagram::ptr *, int);
 
 
-    static int __inline__ _u48_decode(const uint8_t* p, uint64_t* v) {
+    static __inline__ int _u48_decode(const uint8_t* p, uint64_t* v) {
 #if X_BIG_ENDIAN || X_MUST_ALIGN
         uint8_t* tmp = (uint8_t*)v;
         *(tmp + 7) = *p;
@@ -80,7 +82,7 @@ public:
     }
 
 
-    static int __inline__ _u48_encode(uint64_t v, uint8_t* p) {
+    static __inline__ int _u48_encode(uint64_t v, uint8_t* p) {
         uint8_t* tmp = (uint8_t*)&v; // 00 00 01 02 03 04 05 06 =>
 #if X_BIG_ENDIAN || X_MUST_ALIGN
         * p = *(tmp + 7);
@@ -96,7 +98,7 @@ public:
     }
 
 
-    static int __inline__ _u24_decode(const uint8_t* p, uint32_t* v) {
+    static __inline__ int _u24_decode(const uint8_t* p, uint32_t* v) {
 #if X_BIG_ENDIAN || X_MUST_ALIGN
         uint8_t* tmp = (uint8_t*)v;
         *(tmp + 3) = *p;
@@ -122,7 +124,7 @@ public:
     }
 
 
-    static int __inline__ _u16_decode(const uint8_t* p, uint16_t* v) {
+    static __inline__ int _u16_decode(const uint8_t* p, uint16_t* v) {
 #if X_BIG_ENDIAN || X_MUST_ALIGN
         uint8_t* tmp = (uint8_t*)v;
         *(tmp + 1) = *p;
@@ -134,7 +136,7 @@ public:
     }
 
 
-    static int _u16_encode(uint16_t v, uint8_t* p) {
+    static __inline__ int _u16_encode(uint16_t v, uint8_t* p) {
         uint8_t* tmp = (uint8_t*)&v;
 #if X_BIG_ENDIAN || X_MUST_ALIGN
         * p = *(tmp + 1);
@@ -159,15 +161,16 @@ public:
 
 
     // ------------------------------------------------------------------ BEG Sets ------------------------------------------------------------------
+    // TODO: 后期需要移动到 Server/Client
     class Sets {
     public:
-        static Sets* instance() {
+        static __inline__ Sets* instance() {
             static Sets m;
             return &m;
         }
 
 
-        Udx* load(const uint8_t* data, size_t datalen, Output output) {
+        __inline__ Udx* load(const uint8_t* data, size_t datalen, Output output) {
             if (!data || datalen < 3) {
                 return nullptr;
             }
@@ -189,7 +192,7 @@ public:
         }
 
 
-        void rmv(uint32_t uid) {
+        __inline__ void rmv(uint32_t uid) {
             mtx_.lock();
             active_sets_.erase(uid);
             mtx_.unlock();
@@ -459,7 +462,7 @@ public:
     // ------------------------------------------------------------------ END Segment ------------------------------------------------------------------
 
 
-    static ptr create(uint32_t uid, Output output) {
+    static __inline__ ptr create(uint32_t uid, Output output) {
         return new Udx(uid, output);
     }
 
@@ -487,13 +490,7 @@ public:
     }
 
 
-    static xq::tools::BTreeTimer* Timer() {
-        static xq::tools::BTreeTimer::Ptr tmr = xq::tools::BTreeTimer::create();
-        return tmr.get();
-    }
-
-
-    void set_addr(const sockaddr *addr, socklen_t addrlen) {
+    void __inline__ set_addr(const sockaddr *addr, socklen_t addrlen) {
         if (::memcmp(addr, &addr_, addrlen)) {
             ::memcpy(&addr_, addr, addrlen);
         }
@@ -504,12 +501,12 @@ public:
     }
 
 
-    uint32_t __inline__ uid() const {
+    __inline__ uint32_t uid() const {
         return uid_;
     }
 
 
-    void connect(const std::string& remote) {
+    __inline__ void connect(const std::string& remote) {
         ASSERT(xq::net::str2addr(remote, &addr_, &addrlen_));
         active_ = true;
     }
@@ -523,12 +520,13 @@ public:
         }
 
         const uint8_t* p = buf + 3;
-        int n;
         buflen -= 3;
 
-        int64_t now_ts = now_us - start_us_;
-        int res = 0;
+        int64_t now_ts = now_us - base_us_;
+        int res = 0, n;
         Segment* seg;
+        uint64_t max_sn = 0, prev_una = snd_buf_.size() > 0 ? snd_buf_.begin()->second->sn : snd_nxt_;
+        uint8_t rwnd = 0;
 
         while (buflen > 0) {
             n = Segment::decode(&seg, p, buflen);
@@ -537,9 +535,9 @@ public:
             }
 
             ASSERT(seg);
-            if (seg->sn > last_sn_ || last_sn_ == 0) {
-                rwnd_ = seg->wnd;
-                last_sn_ = seg->sn;
+            if (seg->sn >= max_sn) {
+                max_sn = seg->sn;
+                rwnd = seg->wnd;
             }
 
             switch (seg->cmd) {
@@ -571,6 +569,26 @@ public:
             set_addr(addr, addrlen);
         }
 
+        if (max_sn > last_sn_ || last_sn_ == 0) {
+            rwnd_ = rwnd;
+            last_sn_ = max_sn;
+        }
+
+        if (rwnd_ == 0) {
+            probe_flag_ |= UDX_PRB_PIN_FLAG;
+        }
+
+        uint64_t snd_una = snd_buf_.size() > 0 ? snd_buf_.begin()->second->sn : snd_nxt_;
+        if (snd_una > prev_una) {
+            if (cwnd_ < rwnd_) {
+                cc_.cong_avoid(&cwnd_);
+            }
+            else if (cwnd_ > rwnd_) {
+                cwnd_ = rwnd_;
+            }
+        }
+
+        std::printf("--->> cwnd: %d\n", cwnd_);
         return res;
     }
 
@@ -639,28 +657,52 @@ public:
     }
 
 
+    /* ---------------------------------------------------------------------
+     * 清空缓冲区:
+     *  清空缓冲区会调用 output 回调.
+     *  step 1: 将所有 ack 数据放入临时缓存中
+     *  step 2: 将所有 snd_que 中的Segment 打上重传时间和接收窗口 投递到snd_buf中
+     *  step 3: 在发送窗口允许的情况下, 顺序的放入临时缓存中
+     *  step 4: 检查ping
+     *  step 5: 检查pong
+     *  step 6: 判断是否有数据是否需要发送
+     *  step 7: 发送数据
+     * --------------------------------------------------------------------- */
+    /// @brief 刷新发送缓冲区
+    ///
+    /// @param now_us 当前时间, 微秒
+    ///
+    /// @return 成功返回 0, 否则返回 -1
+    ///
     int flush(int64_t now_us) {
         if (!active_) {
             return -1;
         }
 
-        Datagram* dg = Datagram::get(&addr_, addrlen_);
+        uint64_t now_ts = now_us - base_us_;
 
-        uint64_t now_ts = now_us - start_us_;
-        uint8_t* p = dg->data + UDX_UID_LEN;
-        int nbuf = 0, n, idx = 0;
-        Segment seg, *psh;
+        uint8_t* p;
+        int nbuf = 0, n, di = 0;
+        Segment seg, *seg_psh;
+        Datagram* dg = nullptr;
 
-        Datagram::ptr dgs[IO_SMSG_SIZE];
+        Datagram::ptr dbuf[IO_SMSG_SIZE];
 
-
+        // step 1: 处理ack
         if (!ack_que_.empty()) {
-            uint8_t acc_flag = 1;
+            uint8_t acc_flag = 1; // ACK 累积确认标识
+
+            dg = Datagram::get(&addr_, addrlen_);
+            p = dg->data + UDX_UID_LEN;
+
             for (auto& ack : ack_que_) {
                 if (nbuf > UDX_MTU - UDX_ACK_LEN - UDX_UID_LEN) {
+                    // 编码 uid 并加入 Datagram 发送缓冲区
                     nbuf += _u24_encode(uid_, dg->data);
                     dg->datalen = nbuf;
-                    dgs[idx++] = dg;
+                    dbuf[di++] = dg;
+                    
+                    // 获取新的 Datagram, 并重置辅助字段
                     dg = Datagram::get(&addr_, addrlen_);
                     p = dg->data + UDX_UID_LEN;
                     nbuf = 0;
@@ -678,86 +720,99 @@ public:
                     acc_flag = 0;
                 }
 
-                if (pon_flag_) {
-                    pon_flag_ = false;
+                if (probe_flag_) {
+                    probe_flag_ = 0;
                 }
             }
 
             ack_que_.clear();
         }
 
+        // step 2: 将 snd_que 中的数据投递到 snd_buf 中
         while (!snd_que_.empty()) {
-            psh = snd_que_.front();
-            psh->resend_ts = now_ts + rto_;
-            psh->wnd = UDX_SWND_MAX - rcv_buf_.size();
-            snd_buf_.insert(std::make_pair(psh->sn, psh));
+            seg_psh = snd_que_.front();
+            seg_psh->resend_ts = now_ts + rto_;
+            seg_psh->wnd = rcv_buf_.size() < UDX_RWND_MAX ? UDX_RWND_MAX - rcv_buf_.size() : 0;
+            snd_buf_.insert(std::make_pair(seg_psh->sn, seg_psh));
             snd_que_.pop_front();
         }
 
-        int needsend = 0, i = 0, to_resend = 0, fa_resend = 0;
-        uint8_t snd_wnd = xq::tools::MIN(cwnd_, rwnd_);
+        int needsend = 0, i = 0;
+        int snd_wnd = xq::tools::MIN(cwnd_, rwnd_);
 
+        // step 3: 当发送窗口大于 0 时, 将 snd_buf 中的数据添加到临时缓冲区
         if (snd_wnd > 0) {
+            if (!dg) {
+                dg = Datagram::get(&addr_, addrlen_);
+                p = dg->data + UDX_UID_LEN;
+                nbuf = 0;
+            }
+
             for (auto& itr : snd_buf_) {
-                psh = itr.second;
+                seg_psh = itr.second;
 
                 if (i > snd_wnd) {
                     break;
                 }
 
-                if (nbuf > UDX_MTU - UDX_PSH_MIN - UDX_UID_LEN - psh->len) {
+                if (nbuf > UDX_MTU - UDX_PSH_MIN - UDX_UID_LEN - seg_psh->len) {
+                    // 编码uid 并加入 Datagram 缓冲区
                     nbuf += _u24_encode(uid_, dg->data);
                     dg->datalen = nbuf;
-                    dgs[idx++] = dg;
+                    dbuf[di++] = dg;
+
+                    // 获取新的 Datagram, 并重置辅助字段
                     dg = Datagram::get(&addr_, addrlen_);
                     p = dg->data + UDX_UID_LEN;
                     nbuf = 0;
                 }
 
-                if (psh->xmit == 0) {
+                if (seg_psh->xmit == 0) {
                     // 第一次发送
                     needsend = 1;
                 }
-                else if (psh->xmit >= UDX_RXMIT_MAX) {
+                else if (seg_psh->xmit >= UDX_RXMIT_MAX) {
                     // 超过最大重传次数
                     active_ = false;
                     return -1;
                 }
-                else if (psh->resend_ts <= now_ts) {
+                else if (seg_psh->resend_ts <= now_ts) {
                     // 超时重传
                     needsend = 1;
-                    psh->resend_ts += xq::tools::MID(UDX_RTO_MIN, (int)(rto_ * 1.3), UDX_RTO_MAX);
+                    seg_psh->resend_ts += xq::tools::MID(UDX_RTO_MIN, (int)(rto_ * 1.3), UDX_RTO_MAX);
 
-                    // TODO: 超时重传, 这里需要重新计算cwnd.
+                    cc_.loss(&cwnd_);
                     snd_wnd = xq::tools::MIN(cwnd_, rwnd_);
-                    to_resend++;
                 }
-                else if (psh->fastack >= UDX_FAS_MAX) {
+                else if (seg_psh->fastack >= UDX_FAS_MAX) {
+                    // 快重传
                     needsend = 1;
-                    // TODO: 快重传, 这里需要进入快恢复
-                    psh->fastack = 0;
-                    fa_resend++;
+                    seg_psh->fastack = 0;
+                    
+                    cc_.fast(&cwnd_);
+                    snd_wnd = xq::tools::MIN(cwnd_, rwnd_);
                 }
 
                 if (needsend) {
                     // 所有需要重新发送的包 都需要打上当前时间戳.
-                    psh->ts = now_ts;
-                    psh->wnd = rcv_buf_.size() < UDX_RWND_MAX ? UDX_RWND_MAX - rcv_buf_.size() : 0;
-                    n = psh->encode(p, UDX_MTU - UDX_UID_LEN - nbuf);
+                    seg_psh->ts = now_ts;
+                    seg_psh->wnd = rcv_buf_.size() < UDX_RWND_MAX ? UDX_RWND_MAX - rcv_buf_.size() : 0;
+                    n = seg_psh->encode(p, UDX_MTU - UDX_UID_LEN - nbuf);
                     ASSERT(n > 0);
                     p += n;
                     nbuf += n;
-                    psh->xmit++;
+                    seg_psh->xmit++;
                     needsend = 0;
                     i++;
-                    if (pon_flag_) {
-                        pon_flag_ = false;
+                    if (probe_flag_) {
+                        probe_flag_ = 0;
                     }
                 }
             } // for
         }
-
-        if (rwnd_ == 0) {
+        
+        // step 4: 检查 Ping
+        if (probe_flag_ & UDX_PRB_PIN_FLAG) {
             seg.cmd = UDX_CMD_PIN;
             seg.ts = now_ts;
             seg.sn = snd_nxt_++;
@@ -765,12 +820,11 @@ public:
             n = seg.encode(p, UDX_MTU - UDX_UID_LEN - nbuf);
             p += n;
             nbuf += n;
-            if (pon_flag_) {
-                pon_flag_ = false;
-            }
+            probe_flag_ = 0;
         }
 
-        if (pon_flag_) {
+        // step 5: 检查 Pong
+        if (probe_flag_ & UDX_PRB_PON_FLAG) {
             seg.cmd = UDX_CMD_PON;
             seg.ts = now_ts;
             seg.sn = snd_nxt_++;
@@ -778,19 +832,22 @@ public:
             n = seg.encode(p, UDX_MTU - UDX_UID_LEN - nbuf);
             p += n;
             nbuf += n;
+            probe_flag_ = 0;
         }
 
-        ASSERT(nbuf == 0 || nbuf >= UDX_HDR_LEN);
-        if (nbuf == 0) {
-            Datagram::put(dg);
+        ASSERT(di == 0 || di <= IO_SMSG_SIZE);
+        ASSERT(nbuf == 0 || (nbuf >= UDX_HDR_LEN && nbuf <= UDX_MTU - 3));
+        if (nbuf > 0) {
+            nbuf += _u24_encode(uid_, dg->data);
+            dg->datalen = nbuf;
+            dbuf[di++] = dg;
+        }
+
+        if (di == 0) {
             return 0;
         }
 
-        nbuf += _u24_encode(uid_, dg->data);
-        dg->datalen = nbuf;
-        dgs[idx++] = dg;
-
-        output_(dgs, idx);
+        output_(dbuf, di);
         return 0;
     }
 
@@ -800,14 +857,14 @@ private:
         : addr_({0,{0}})
         , addrlen_(sizeof(addr_))
         , active_(false)
-        , pon_flag_(false)
+        , probe_flag_(0)
         , cwnd_(UDX_RWND_MIN)
         , rwnd_(UDX_RWND_MIN)
         , rto_(UDX_RTO_MIN)
         , srtt_(0)
         , rttvar_(0)
         , uid_(uid)
-        , start_us_(xq::tools::now_us())
+        , base_us_(xq::tools::now_us())
         , last_sn_(0)
         , rcv_nxt_(0)
         , snd_nxt_(0)
@@ -817,7 +874,7 @@ private:
 
     void _reset(int64_t now_us) {
         cwnd_ = UDX_RWND_MIN;
-        start_us_ = now_us;
+        base_us_ = now_us;
         rto_ = UDX_RTO_MIN;
         snd_nxt_ = rcv_nxt_ = last_sn_ = srtt_ = 0;
 
@@ -855,7 +912,7 @@ private:
 
 
     __inline__ int _update_pin() {
-        pon_flag_ = true;
+        probe_flag_ |= UDX_PRB_PON_FLAG;
         return 0;
     }
 
@@ -925,8 +982,6 @@ private:
             return 0;
         }
 
-        cc_.update_ack(rtt, &cwnd_);
-
         if (srtt_ == 0) {
             srtt_ = rtt;
             rttvar_ = rtt / 2;
@@ -955,7 +1010,7 @@ private:
     socklen_t addrlen_;
 
     bool active_;
-    bool pon_flag_;
+    uint8_t probe_flag_;
     int cwnd_; // 本端拥塞窗口
     int rwnd_; // 对端接收窗口
     int rto_;
@@ -964,7 +1019,7 @@ private:
     TCC cc_; // congestion controller
     
     uint32_t uid_;
-    uint64_t start_us_;
+    uint64_t base_us_;
     uint64_t last_sn_;
     uint64_t rcv_nxt_;
     uint64_t snd_nxt_;
@@ -981,4 +1036,4 @@ private:
 } // namespace net;
 } // namespace xq;
 
-#endif // !__XQ_NET_XDG__
+#endif // !__XQ_NET_UDX__
