@@ -1,6 +1,6 @@
-project(timer)
+project(unit_test)
 
-add_executable(${PROJECT_NAME} timer.cpp)
+add_executable(${PROJECT_NAME} unit_test.cpp)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)

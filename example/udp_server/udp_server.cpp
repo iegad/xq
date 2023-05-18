@@ -7,21 +7,19 @@
 
 class EchoEvent {
 public:
-    using Datagram = xq::net::Datagram;
+    using Frame = xq::net::Frame;
     typedef xq::net::UdpSession<EchoEvent> UdpSession;
 
 
-    int on_recv(UdpSession* sess, const Datagram* dg) {
+    int on_recv(UdpSession* sess, const Frame* frm) {
         static int count = 0;
         count++;
-        auto p = *(Datagram**)&dg;
-        p->data[p->datalen] = 0;
-        std::printf("%d => %s\n", count, (char *)p->data/*xq::tools::bin2hex(dg->data, dg->datalen).c_str()*/);
+        std::printf("%d => %s\n", count, xq::tools::bin2hex(frm->raw, frm->rawlen).c_str());
         return 0;
     }
 
 
-    int on_send(const Datagram* dg) {
+    int on_send(const Frame* dg) {
         return 0;
     }
 

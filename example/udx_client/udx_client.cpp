@@ -1,87 +1,134 @@
-#include "xq/net/udp_session.hpp"
-#include "xq/net/udx.hpp"
+#include "xq/net/rux_client.hpp"
 
 
-using Udx = xq::net::Udx<>;
-static int COUNT = 0;
-static Udx::ptr udx;
-
-class EchoEvent {
-public:
-    using UdpSession = xq::net::UdpSession<EchoEvent>;
-    using Datagram = xq::net::Datagram;
+xq::net::RuxClient* client;
 
 
-    static UdpSession* Session() {
-        static UdpSession::Ptr sess;
-        if (!sess) {
-            sess = UdpSession::create();
-        }
-        return sess.get();
-    }
+void
+snd_worker() {
+    int res;
+    uint64_t now_us;
 
+    for (int i = 0; i < 10; i++) {
+        now_us = sys_clock();
 
-    int on_recv(UdpSession* sess, const Datagram* dg) {
-        static uint8_t* rbuf = new uint8_t[xq::net::UDX_MSG_MAX];
-
-        int n = udx->input(dg->data, dg->datalen, &dg->name, dg->namelen, dg->time_us);
-        if (n < 0) {
-            std::printf("input failed: %d\n", n);
-            return -1;
+        res = client->send("127.0.0.1:6688", (uint8_t*)"Hello world", 11);
+        if (res < 0) {
+            std::printf("error: %d\n", res);
+            continue;
         }
 
-        n = udx->recv(rbuf, xq::net::UDX_MSG_MAX);
-        if (n > 0) {
-            rbuf[n] = 0;
-            std::printf("%s\n", (char*)rbuf);
-            if (COUNT == 1000) {
-                udx->flush(dg->time_us);
-                sess->stop();
-                return 0;
-            }
-
-            n = sprintf((char*)rbuf, "Hello world: %d", COUNT++);
-            udx->send(rbuf, n);
+        res = client->flush(now_us);
+        if (res) {
+            std::printf("error: %d\n", errcode);
         }
-
-        udx->flush(dg->time_us);
-        return 0;
     }
+}
 
 
-    static int output(const Datagram::ptr *dgs, int ndg) {
-        return EchoEvent::Session()->flush(dgs, ndg);
-    }
-};
+int 
+main(int argc, char** argv) {
+    ASSERT(!rux_env_init());
+    client = new xq::net::RuxClient(1);
+    client->add_node("127.0.0.1:6688");
+    std::thread t(snd_worker);
+    client->run();
+    t.join();
+    client->wait();
+
+    /*int n;
+
+    SOCKET sockfd = udp_bind("0.0.0.0", "0");
+    ASSERT(sockfd != INVALID_SOCKET);
+
+    xq::net::PRUX_FRM f1 = new xq::net::RUX_FRM;
+    f1->rid = 1;
+    f1->wnd = 128;
+    f1->name.ss_family = AF_INET;
+    str2addr("127.0.0.1:6688", &f1->name, &f1->namelen);
+    f1->raw + xq::net::RUX_FRM_HDR_SIZE;
+    xq::net::PRUX_SEG s1 = new xq::net::RUX_SEG;
+    s1->cmd = xq::net::RUX_CMD_CON;
+    s1->sn = 0;
+    s1->us = 0;
+    s1->frg = 4;
+    s1->set_data((uint8_t*)"Hello world: 1", 14);
+    f1->len = s1->encode(f1->raw + xq::net::RUX_FRM_HDR_SIZE, xq::net::RUX_MTU - xq::net::RUX_FRM_HDR_SIZE) + xq::net::RUX_FRM_HDR_SIZE;
+    f1->setup();
+
+    xq::net::PRUX_FRM f2 = new xq::net::RUX_FRM;
+    f2->rid = 1;
+    f2->wnd = 128;
+    f2->name.ss_family = AF_INET;
+    str2addr("127.0.0.1:6688", &f2->name, &f2->namelen);
+    f2->raw + xq::net::RUX_FRM_HDR_SIZE;
+    xq::net::PRUX_SEG s2 = new xq::net::RUX_SEG;
+    s2->cmd = xq::net::RUX_CMD_PSH;
+    s2->sn = 1;
+    s2->us = 1;
+    s2->frg = 3;
+    s2->set_data((uint8_t*)"Hello world: 2", 14);
+    f2->len = s2->encode(f2->raw + xq::net::RUX_FRM_HDR_SIZE, xq::net::RUX_MTU - xq::net::RUX_FRM_HDR_SIZE) + xq::net::RUX_FRM_HDR_SIZE;
+    f2->setup();
+
+    xq::net::PRUX_FRM f3 = new xq::net::RUX_FRM;
+    f3->rid = 1;
+    f3->wnd = 128;
+    f3->name.ss_family = AF_INET;
+    str2addr("127.0.0.1:6688", &f3->name, &f3->namelen);
+    f3->raw + xq::net::RUX_FRM_HDR_SIZE;
+    xq::net::PRUX_SEG s3 = new xq::net::RUX_SEG;
+    s3->cmd = xq::net::RUX_CMD_PSH;
+    s3->sn = 2;
+    s3->us = 2;
+    s3->frg = 2;
+    s3->set_data((uint8_t*)"Hello world: 3", 14);
+    f3->len = s3->encode(f3->raw + xq::net::RUX_FRM_HDR_SIZE, xq::net::RUX_MTU - xq::net::RUX_FRM_HDR_SIZE) + xq::net::RUX_FRM_HDR_SIZE;
+    f3->setup();
+
+    xq::net::PRUX_FRM f4 = new xq::net::RUX_FRM;
+    f4->rid = 1;
+    f4->wnd = 128;
+    f4->name.ss_family = AF_INET;
+    str2addr("127.0.0.1:6688", &f4->name, &f4->namelen);
+    f4->raw + xq::net::RUX_FRM_HDR_SIZE;
+    xq::net::PRUX_SEG s4 = new xq::net::RUX_SEG;
+    s4->cmd = xq::net::RUX_CMD_PSH;
+    s4->sn = 3;
+    s4->us = 3;
+    s4->frg = 1;
+    s4->set_data((uint8_t*)"Hello world: 4", 14);
+    f4->len = s4->encode(f4->raw + xq::net::RUX_FRM_HDR_SIZE, xq::net::RUX_MTU - xq::net::RUX_FRM_HDR_SIZE) + xq::net::RUX_FRM_HDR_SIZE;
+    f4->setup();
+
+    xq::net::PRUX_FRM f5 = new xq::net::RUX_FRM;
+    f5->rid = 1;
+    f5->wnd = 128;
+    f5->name.ss_family = AF_INET;
+    str2addr("127.0.0.1:6688", &f5->name, &f5->namelen);
+    f5->raw + xq::net::RUX_FRM_HDR_SIZE;
+    xq::net::PRUX_SEG s5 = new xq::net::RUX_SEG;
+    s5->cmd = xq::net::RUX_CMD_PSH;
+    s5->sn = 4;
+    s5->us = 4;
+    s5->frg = 0;
+    s5->set_data((uint8_t*)"Hello world: 5", 14);
+    f5->len = s5->encode(f5->raw + xq::net::RUX_FRM_HDR_SIZE, xq::net::RUX_MTU - xq::net::RUX_FRM_HDR_SIZE) + xq::net::RUX_FRM_HDR_SIZE;
+    f5->setup();
+
+    n = ::sendto(sockfd, (char*)f1->raw, f1->len, 0, (sockaddr*)&f1->name, f1->namelen);
+    ASSERT(n == f1->len);
+    n = ::sendto(sockfd, (char*)f5->raw, f5->len, 0, (sockaddr*)&f5->name, f5->namelen);
+    ASSERT(n == f5->len);
+    n = ::sendto(sockfd, (char*)f3->raw, f3->len, 0, (sockaddr*)&f3->name, f3->namelen);
+    ASSERT(n == f3->len);
+    n = ::sendto(sockfd, (char*)f2->raw, f2->len, 0, (sockaddr*)&f2->name, f2->namelen);
+    ASSERT(n == f2->len);
+    n = ::sendto(sockfd, (char*)f4->raw, f4->len, 0, (sockaddr*)&f4->name, f4->namelen);
+    ASSERT(n == f4->len);
 
 
-
-int main(int argc, char** argv) {
-#ifdef WIN32
-    WSADATA wdata;
-    if (WSAStartup(0x0202, &wdata) || wdata.wHighVersion != 0x0202) {
-        exit(EXIT_FAILURE);
-    }
-#endif // WIN32
-    auto sess = EchoEvent::Session();
-    sess->run();
-    udx = Udx::create(1, &EchoEvent::output);
-    udx->connect("1.15.81.179:6688");
-    char buf[10000] = {0};
-    int64_t beg = xq::tools::now_ms();
-    sprintf(buf, "Hello world: %d", COUNT++);
-    int n = udx->send((uint8_t*)buf, strlen(buf));
-    if (n < 0) {
-        std::printf("send failed: %d\n", n);
-    }
-    
-    udx->flush(xq::tools::now_us());
-    sess->wait();
-    sess->close();
-    std::printf(">>>> takes %lld ms\n", xq::tools::now_ms() - beg);
-
-#ifdef WIN32
-    WSACleanup();
-#endif // WIN32
+    close(sockfd);*/
+    ASSERT(!rux_env_release());
     exit(EXIT_SUCCESS);
 }
