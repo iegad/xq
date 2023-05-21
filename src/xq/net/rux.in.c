@@ -35,7 +35,7 @@ udp_bind(const char* host, const char* svc) {
     struct addrinfo hints;
     struct addrinfo *result = NULL, *rp = NULL;
 
-    memset(&hints, 0, sizeof(struct addrinfo));
+    memset(&hints, 0, sizeof(hints));
     hints.ai_family = AF_UNSPEC;
     hints.ai_socktype = SOCK_DGRAM;
     hints.ai_flags = AI_PASSIVE;
@@ -56,7 +56,7 @@ udp_bind(const char* host, const char* svc) {
         }
 
 #ifndef WIN32
-        if (::setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &ON, sizeof(int))) {
+        if (setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &ON, sizeof(int))) {
             close(fd);
             return INVALID_SOCKET;
         }
@@ -179,6 +179,9 @@ sys_clock() {
     ASSERT(QueryPerformanceCounter(&l));
     return l.QuadPart;
 #else
+    struct timespec t;
+    ASSERT(!clock_gettime(CLOCK_MONOTONIC, &t));
+    return t.tv_sec * 1000000 + t.tv_nsec / 1000;
 #endif // !WIN32
 }
 
@@ -190,6 +193,7 @@ sys_cpus() {
     GetSystemInfo(&si);
     return si.dwNumberOfProcessors;
 #else
+    return (int)sysconf(_SC_NPROCESSORS_ONLN);
 #endif // !WIN32
 }
 

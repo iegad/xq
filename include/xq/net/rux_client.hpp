@@ -18,11 +18,12 @@ public:
     RuxClient(uint32_t rid)
         : sockfd_(INVALID_SOCKET)
         , rid_(rid)
+        , output_que_()
     {}
 
 
     void run() {
-        rcv_thread_ = std::thread(std::bind(&RuxClient::_run, this));
+        rcv_thread_ = std::thread(std::bind(&RuxClient::_rcv_thread, this));
     }
 
 
@@ -61,17 +62,22 @@ public:
     }
 
 
-    int flush(uint64_t now_us) {
+    int output(uint64_t now_us) {
+        int n = 0, res;
         for (auto& itr : rux_map_) {
-            ASSERT(!itr.second->flush(now_us));
+            res = itr.second->output(now_us);
+            if (res < 0) {
+                return -1;
+            }
+            n += res;
         }
 
-        return 0;
+        return n;
     }
 
 
 private:
-    void _run() {
+    void _rcv_thread() {
         sockfd_ = udp_bind("0.0.0.0", "0");
         ASSERT(sockfd_ != INVALID_SOCKET);
 
@@ -119,8 +125,6 @@ private:
                 n = bin2hex(msg, n, hex, n * 2);
                 hex[n] = 0;
             }
-
-            rux->flush(sys_clock());
         }
 
         snd_thread_.join();
@@ -130,20 +134,22 @@ private:
 
 
     void _snd_thread() {
-        PRUX_FRM frms[64], frm;
+        constexpr int FRMS_MAX = 64;
+
+        PRUX_FRM frms[FRMS_MAX], frm;
         int n, i;
         while (sockfd_ != INVALID_SOCKET) {
-            n = output_que_.wait_dequeue_bulk_timed(frms, 64, 50000);
+            n = output_que_.wait_dequeue_bulk_timed(frms, FRMS_MAX, 50000);
             for (i = 0; i < n; i++) {
                 frm = frms[i];
                 if (::sendto(sockfd_, (char*)frm->raw, frm->len, 0, (sockaddr*)&frm->name, frm->namelen) < 0) {
                     // TODO: ...
-                    std::printf("sendto failed: %d\n", errcode);
+                    DLOG("sendto failed: %d\n", errcode);
                 }
             }
         }
 
-        while (n = output_que_.try_dequeue_bulk(frms, 64), n > 0) {
+        while (n = output_que_.try_dequeue_bulk(frms, FRMS_MAX), n > 0) {
             for (i = 0; i < n; i++) {
                 delete frms[i];
             }

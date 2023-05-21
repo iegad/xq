@@ -9,21 +9,28 @@ snd_worker() {
     int res;
     uint64_t now_us;
 
-    for (int i = 0; i < 10; i++) {
+    for (int i = 0; i < 1000; i++) {
         now_us = sys_clock();
 
-        res = client->send("127.0.0.1:6688", (uint8_t*)"Hello world", 11);
-        if (res < 0) {
-            std::printf("error: %d\n", res);
-            continue;
+        char buf[20] = { 0 };
+        sprintf(buf, "Hello world: %d", i + 1);
+        while (client->send("127.0.0.1:6688", (uint8_t*)buf, strlen(buf))) {
+            _mm_pause();
         }
 
-        res = client->flush(now_us);
-        if (res) {
-            std::printf("error: %d\n", errcode);
+        while (1) {
+            res = client->output(now_us);
+            if (res < 0) {
+                std::printf("snd_worker error: %d\n", errcode);
+                ASSERT(0 && " BBBBBBBBBBBBBBBBBBBBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADDDDDDDDDDDDDDDDDDDD");
+            }
+            else if (res == 0) {
+                break;
+            }
         }
     }
 }
+
 
 
 int 

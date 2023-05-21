@@ -28,6 +28,8 @@
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <time.h>
+#include <memory.h>
 #endif
 
 #include <stdint.h>
@@ -92,7 +94,16 @@ extern "C" {
 #define ASSERT(expr) if (!(expr)){ fprintf(stderr, "%s:%d %s", __FILE__, __LINE__, #expr); abort(); }
 #define MAX(a, b) ((a) > (b) ? (a) : (b))
 #define MIN(a, b) ((a) > (b) ? (b) : (a))
+#define MIN3(a, b, c) (MIN(MIN(a, b), (c)))
 #define MID(a, b, c) (MIN(MAX(a, b), c))
+
+
+#if (_DEBUG == 1)
+#define DLOG(fmt, ...) (printf(fmt, __VA_ARGS__))
+#else
+#define DLOG(fmt, ...) ()
+#endif // DEBUG
+
 
 
 /* ********************************************************************************************************************************************
