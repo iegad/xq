@@ -37,15 +37,15 @@ constexpr int           RUX_CMD_PSH             = 0x05;                         
 /* rux limits */
 constexpr int           RUX_RID_MAX             = 100000;                                                       // Maximum rux id
 constexpr int           RUX_RWND_MAX            = 128;                                                          // Maximum receive window size
-constexpr int           RUX_SWND_MAX            = RUX_RWND_MAX / 4;                                             // Maximum send window size
+constexpr int           RUX_SWND_MAX            = RUX_RWND_MAX / 2;                                             // Maximum send window size
 constexpr int           RUX_SWND_MIN            = 1;
 constexpr uint64_t      RUX_SN_MAX              = 0x0000FFFFFFFFFFFF;                                           // Maximum sequnce number
 constexpr uint64_t      RUX_US_MAX              = 0x0000FFFFFFFFFFFF;                                           // Maximum timestamp(us)
 constexpr int           RUX_FRM_MAX             = 92;                                                           // Maximum fragment size
 constexpr int           RUX_MSG_MAX             = RUX_FRM_MAX * RUX_MSS;                                        // Maximum signle massage's length
 constexpr int           RUX_RTO_MIN             = 200000;
-constexpr int           RUX_RTO_MAX             = 60000000;
-constexpr int           RUX_RTO_TIMEOUT         = RUX_RTO_MAX * 5;
+constexpr int           RUX_RTO_MAX             = 15000000;
+constexpr int           RUX_TIMEOUT             = RUX_RTO_MAX * 20;
 constexpr int           RUX_FAST_ACK            = 3;
 constexpr int           RUX_XMIT_MAX            = 10;
 
@@ -354,9 +354,9 @@ typedef struct __snd_buf_ {
     }
 
 
-    void get_segs(size_t snd_wnd, std::list<PRUX_SEG> *segs, uint64_t now_us) {
+    int get_segs(size_t snd_wnd, std::list<PRUX_SEG> *segs, uint64_t now_us) {
         PRUX_SEG seg;
-
+        int ret = 0;
         lkr_.lock();
         auto itr = buf_.begin();
         
@@ -367,9 +367,8 @@ typedef struct __snd_buf_ {
 
             seg = itr->second;
             if (seg->xmit >= RUX_XMIT_MAX) {
-                delete seg;
-                buf_.erase(itr++);
-                continue;
+                ret = -1;
+                break;
             }
 
             if (seg->xmit == 0) {
@@ -385,6 +384,7 @@ typedef struct __snd_buf_ {
             itr++;
         }
         lkr_.unlock();
+        return ret;
     }
 
 
@@ -412,6 +412,14 @@ typedef struct __ack_que_ {
         lkr_.lock();
         que_.emplace_back(ack);
         lkr_.unlock();
+    }
+
+
+    size_t size() {
+        lkr_.lock();
+        size_t n = que_.size();
+        lkr_.unlock();
+        return n;
     }
 
 

@@ -18,8 +18,9 @@ public:
     RuxClient(uint32_t rid)
         : sockfd_(INVALID_SOCKET)
         , rid_(rid)
-        , output_que_()
-    {}
+        , output_que_() {
+        ASSERT(rid > 0 && rid <= RUX_RID_MAX);
+    }
 
 
     void run() {

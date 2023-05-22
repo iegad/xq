@@ -9,7 +9,7 @@ snd_worker() {
     int res;
     uint64_t now_us;
 
-    for (int i = 0; i < 1000; i++) {
+    for (int i = 0; i < 100000; i++) {
         now_us = sys_clock();
 
         char buf[20] = { 0 };
@@ -21,13 +21,12 @@ snd_worker() {
         while (1) {
             res = client->output(now_us);
             if (res < 0) {
-                std::printf("snd_worker error: %d\n", errcode);
-                ASSERT(0 && " BBBBBBBBBBBBBBBBBBBBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADDDDDDDDDDDDDDDDDDDD");
+                DLOG("snd_worker error: %d\n", errcode);
             }
             else if (res == 0) {
                 break;
             }
-        }
+        } // while(1);
     }
 }
 
