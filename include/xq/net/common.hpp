@@ -289,6 +289,7 @@ private:
 } RUX_ACK, *PRUX_ACK;
 
 
+#ifdef WIN32
 typedef struct __spin_lock_ {
     void lock() {
         while (InterlockedCompareExchange(&m_, 1, 0) != 0) {
@@ -306,6 +307,30 @@ typedef struct __spin_lock_ {
 private:
     long m_;
 } SPIN_LOCK, * PSPIN_LOCK;
+#else
+typedef struct __spin_lock_ {
+    void lock() {
+        ASSERT(!pthread_spin_lock(&m_));
+    }
+
+    void unlock() {
+        ASSERT(!pthread_spin_unlock(&m_));
+    }
+
+
+    __spin_lock_() {
+        ASSERT(!pthread_spin_init(&m_, PTHREAD_PROCESS_PRIVATE));
+    }
+
+
+    ~__spin_lock_() {
+        ASSERT(!pthread_spin_destroy(&m_));
+    }
+
+private:
+    pthread_spinlock_t m_;
+} SPIN_LOCK, * PSPIN_LOCK;
+#endif // WIN32
 
 
 typedef struct __snd_buf_ {
@@ -437,6 +462,47 @@ private:
     std::list<PRUX_ACK> que_;
     SPIN_LOCK lkr_;
 } RUX_ACKQ, *PRUX_ACKQ;
+
+
+typedef struct __rcv_buf_ {
+    int size() {
+        return (int)buf_.size();
+    }
+
+
+    std::map<uint64_t, PRUX_SEG>::iterator begin() {
+        return buf_.begin();
+    }
+
+
+    std::map<uint64_t, PRUX_SEG>::iterator end() {
+        return buf_.end();
+    }
+
+
+    void erase(std::map<uint64_t, PRUX_SEG>::iterator beg, std::map<uint64_t, PRUX_SEG>::iterator end) {
+        buf_.erase(beg, end);
+    }
+
+
+    bool insert(PRUX_SEG seg) {
+        if (!buf_.count(seg->sn)) {
+            auto res = buf_.insert(std::make_pair(seg->sn, seg));
+            return res.second;
+        }
+
+        return false;
+    }
+
+
+    int count(uint64_t sn) {
+        return (int)buf_.count(sn);
+    }
+
+
+private:
+    std::map<uint64_t, PRUX_SEG> buf_;
+} RUX_RBUF, *PRUX_RBUF;
 
 
 } // namespace net

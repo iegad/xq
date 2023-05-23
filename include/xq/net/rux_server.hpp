@@ -97,7 +97,7 @@ private:
 
         PRUX_FRM frm = new RUX_FRM;
         Rux* rux;
-        int n;
+        int n, qid = 0;
 
         // Step 4: recv thread
         while (sockfd_ != INVALID_SOCKET) {
@@ -120,7 +120,14 @@ private:
             frm->time_us = sys_clock();
             frm->rux = rux = sessions_[frm->rid - 1];
 
-            frm_ques_[frm->rid % frm_ques_.size()]->enqueue(frm);
+            if (rux->qid() == -1) {
+                rux->set_qid(qid++);
+                if (qid == frm_ques_.size()) {
+                    qid = 0;
+                }
+            }
+
+            frm_ques_[rux->qid()]->enqueue(frm);
             frm = new RUX_FRM;
         }
 
@@ -191,7 +198,7 @@ private:
 
         for (i = 0; i < CPUS; i++) {
             auto q = new moodycamel::BlockingConcurrentQueue<PRUX_FRM>;
-            job_ques_.emplace_back(q);
+            frm_ques_.emplace_back(q);
             thread_pool_.emplace_back(std::thread(std::bind(&RuxServer::_rux_thread, this, q)));
             wkr_frms[i] = new RUX_FRM*[RCVMMSG_SIZE];
             nwkr_frms[i] = 0;
@@ -247,7 +254,7 @@ private:
 
                 frm->time_us = now_us;
                 frm->rux = rux = sessions_[frm->rid - 1];
-                rux_qid = rux->get_qid();
+                rux_qid = rux->qid();
                 if (rux_qid == -1) {
                     rux->set_qid(qid);
                     rux_qid = qid;
@@ -269,7 +276,7 @@ private:
 
             for (i = 0; i < CPUS; i++) {
                 if (nwkr_frms[i] > 0) {
-                    job_ques_[i]->enqueue_bulk(wkr_frms[i], nwkr_frms[i]);
+                    frm_ques_[i]->enqueue_bulk(wkr_frms[i], nwkr_frms[i]);
                     nwkr_frms[i] = 0;
                 }
             }
@@ -315,6 +322,7 @@ private:
                 for (i = 0; i < n; i++) {
                     delete frms[i];
                 }
+
                 if (res < 0) {
                     // TODO: error
                 }
@@ -322,12 +330,11 @@ private:
         }
 
         // 清理数据
-        do {
-            n = output_que_.try_dequeue_bulk(frms, SNDMMSG_SIZE);
+        while (n = output_que_.try_dequeue_bulk(frms, SNDMMSG_SIZE), n > 0) {
             for (i = 0; i < n; i++) {
                 delete frms[i];
             }
-        } while (n > 0);
+        }
     }
 #endif
 
@@ -353,7 +360,7 @@ private:
                         break;
                     }
 
-                    while (nmsg = rux->recv(msg, RUX_MSG_MAX), nmsg > 0) {
+                    while (nmsg = rux->recv(msg), nmsg > 0) {
                         // TODO: event handle
                         msg[nmsg] = 0;
                         DLOG("%s\n", (char*)msg);

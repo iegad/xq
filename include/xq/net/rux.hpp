@@ -37,11 +37,11 @@ public:
     // @output_que: io output队列
     // ========================================================================================================
     explicit Rux(uint32_t rid, uint64_t now_us, moodycamel::BlockingConcurrentQueue<PRUX_FRM>& output_que)
-        : state_(-1)
-        , rid_(rid)
+        : rid_(rid)
         , cwnd_(RUX_SWND_MIN)
         , rmt_wnd_(RUX_SWND_MIN)
         , probe_(0)
+        , qid_(-1)
         , rto_(RUX_RTO_MIN)
         , srtt_(0)
         , rttval_(0)
@@ -50,7 +50,6 @@ public:
         , rcv_nxt_(0)
         , snd_nxt_(0)
         , last_us_(0)
-        , snd_us_(-1)
 
         , addr_({0,{0},0})
         , addrlen_(sizeof(addr_))
@@ -73,6 +72,15 @@ public:
     // ========================================================================================================
     socklen_t* addrlen() {
         return &addrlen_;
+    }
+
+
+    int qid() {
+        return qid_;
+    }
+
+    void set_qid(int qid) {
+        qid_ = qid;
     }
 
 
@@ -148,7 +156,7 @@ public:
                     rto_ = MID(RUX_RTO_MIN, srtt_ + 4 * rttval_, RUX_RTO_MAX);
                 }
                 else if (rtt >= RUX_TIMEOUT) {
-                    state_ = -1;
+                    qid_ = -1;
                     return -1;
                 }
 
@@ -163,7 +171,6 @@ public:
              */
             case RUX_CMD_PIN: {
                 probe_ = 1;
-                snd_us_ = 0;
             }break;
 
             /* ------------- RUX_CMD_PON -------------
@@ -185,19 +192,17 @@ public:
                     delete seg;
                 }
                 else {
-                    if (rcv_buf_.count(seg->sn) == 0) {
+                    if (rcv_buf_.insert(seg)) {
                         seg->rid = frm->rid;
                         seg->time_us = frm->time_us;
                         seg->addr = &frm->name;
                         seg->addrlen = frm->namelen;
-                        rcv_buf_.insert(std::make_pair(seg->sn, seg));
                         if (rcv_buf_.size() > RUX_SWND_MAX) {
                             DLOG("###################################################################### %llu\n", rcv_buf_.size());
                         }
                     }
 
                     ack_que_.insert(seg->sn, seg->us);
-                    snd_us_ = 0;
                 }
             }break;
 
@@ -214,17 +219,15 @@ public:
                     return -1;
                 }
                 
-                if (rcv_buf_.count(seg->sn) == 0) {
+                if (rcv_buf_.insert(seg)) {
                     seg->rid = frm->rid;
                     seg->time_us = frm->time_us;
                     seg->addr = &frm->name;
                     seg->addrlen = frm->namelen;
-                    active(seg->time_us);
-                    rcv_buf_.insert(std::make_pair(seg->sn, seg));
+                    reset(seg->time_us);
                 }
 
                 ack_que_.insert(seg->sn, seg->us);
-                snd_us_ = 0;
             }break;
 
             default: delete seg; break;
@@ -238,9 +241,6 @@ public:
         if (last_us_ <= last_us) {
             last_us_ = last_us;
             rmt_wnd_ = frm->wnd;
-            if (rmt_wnd_ == 0) {
-                snd_us_ = 0;
-            }
         }
 
         // Step 4: 拥塞控制
@@ -256,8 +256,8 @@ public:
     // recv 从读缓冲区获取rux message
     // @return 读缓冲区中有数据返回 msg数据长度, 否则返回 0
     // ========================================================================================================
-    int recv(uint8_t* msg, int n) {
-        int i, ok = 0, nsegs = 0;
+    int recv(uint8_t* msg) {
+        int i, ok = 0, n = 0;
 
         uint64_t                                nxt = rcv_nxt_;
         PRUX_SEG                                seg;
@@ -271,7 +271,7 @@ public:
             }
 
             nxt++;
-            segs[nsegs++] = seg;
+            segs[n++] = seg;
             if (!seg->frg) {
                 ok = 1;
                 itr++;
@@ -284,7 +284,7 @@ public:
             rcv_buf_.erase(rcv_buf_.begin(), itr);
 
             uint8_t* p = msg;
-            for (i = 0; i < nsegs; i++) {
+            for (i = 0; i < n; i++) {
                 seg = segs[i];
                 ::memcpy(p, seg->data, seg->len);
                 p += seg->len;
@@ -324,7 +324,6 @@ public:
             msglen -= len;
         }
 
-        snd_us_ = 0;
         return 0;
     }
 
@@ -333,7 +332,7 @@ public:
     // output 将需要发送的协议数据投递到 output_que中
     // ========================================================================================================
     int output(uint64_t now_us) {
-        if (state_) {
+        if (qid_ == -1) {
             return -1;
         }
 
@@ -403,7 +402,7 @@ public:
                     delete frm;
                 }
 
-                state_ = -1;
+                qid_ = -1;
                 return -1;
             }
             
@@ -528,11 +527,11 @@ public:
     // ========================================================================================================
     // active 激活当前rux, 并重置当前rux
     // ========================================================================================================
-    void active(uint64_t now_us) {
+    void reset(uint64_t now_us) {
         ack_que_.clear();
         snd_buf_.clear();
 
-        state_ = rttval_ = srtt_ = probe_ = 0;
+        rttval_ = srtt_ = probe_ = 0;
         rmt_wnd_ = cwnd_ = RUX_SWND_MIN;
         rto_ = RUX_RTO_MIN;
 
@@ -541,20 +540,11 @@ public:
     }
 
 
-    int update(int64_t now_us) {
-        if (snd_us_ == 0 || snd_us_ <= now_us) {
-            return output((uint64_t)now_us);
-        }
-
-        return 0;
-    }
-
-
 private:
     PRUX_FRM _new_frm() {
         PRUX_FRM frm = new RUX_FRM;
         frm->rid = rid_;
-        frm->wnd = rcv_buf_.size() > RUX_RWND_MAX ? 0 : RUX_RWND_MAX - rcv_buf_.size();
+        frm->wnd = (uint8_t)(rcv_buf_.size() > RUX_RWND_MAX ? 0 : RUX_RWND_MAX - rcv_buf_.size());
         ::memcpy(&frm->name, &addr_, addrlen_);
         frm->namelen = addrlen_;
         return frm;
@@ -572,27 +562,26 @@ private:
     }
 
 
-    int                                             state_;                     // 状态
-    uint32_t                                        rid_;                       // id
+    uint32_t                                        rid_;                       // rux id
     uint8_t                                         cwnd_;                      // 拥塞控制
     uint8_t                                         rmt_wnd_;                   // 对端窗口
     uint8_t                                         probe_;                     // 探针
+    int                                             qid_;                       // worker queue id
     int                                             rto_;                       // RTO
-    int                                             srtt_;                      // smooth rtt
+    int                                             srtt_;                      // smooth RTT
     int                                             rttval_;                    
     uint64_t                                        base_us_;                   // 启始时间(微秒)
     
     uint64_t                                        rcv_nxt_;                   // 下一次接收 sn
     uint64_t                                        snd_nxt_;                   // 下一次发送 sn
     uint64_t                                        last_us_;                   // 上一次sn
-    int64_t                                         snd_us_;                    // 发送时间
 
     sockaddr_storage                                addr_;                      // 对端地址
     socklen_t                                       addrlen_;                   // 对端地址长度
 
     RUX_ACKQ                                        ack_que_;                   // ACK队列
     RUX_SBUF                                        snd_buf_;                   // 发送缓冲区
-    std::map<uint64_t, PRUX_SEG>                    rcv_buf_;                   // 接收队列
+    RUX_RBUF                                        rcv_buf_;                   // 接收队列
 
     moodycamel::BlockingConcurrentQueue<PRUX_FRM>   &output_que_;               // io output queue 引用
 }; // class Rux;

@@ -3,6 +3,8 @@
 
 xq::net::RuxClient* client;
 
+#define SERVER_ENDPOINT ("127.0.0.1:6688")
+
 
 void
 snd_worker() {
@@ -14,7 +16,7 @@ snd_worker() {
 
         char buf[20] = { 0 };
         sprintf(buf, "Hello world: %d", i + 1);
-        while (client->send("127.0.0.1:6688", (uint8_t*)buf, strlen(buf))) {
+        while (client->send(SERVER_ENDPOINT, (uint8_t*)buf, strlen(buf))) {
             _mm_pause();
         }
 
@@ -36,7 +38,7 @@ int
 main(int argc, char** argv) {
     ASSERT(!rux_env_init());
     client = new xq::net::RuxClient(1);
-    client->add_node("127.0.0.1:6688");
+    client->add_node(SERVER_ENDPOINT);
     std::thread t(snd_worker);
     client->run();
     t.join();
