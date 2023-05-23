@@ -11,7 +11,7 @@ snd_worker() {
     int res;
     uint64_t now_us;
 
-    for (int i = 0; i < 100000; i++) {
+    for (int i = 0; i < 1000; i++) {
         now_us = sys_clock();
 
         char buf[20] = { 0 };

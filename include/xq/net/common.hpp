@@ -63,7 +63,8 @@ inline int get_ip_type(const std::string& ip) {
     if (std::regex_match(ip, REG_V6)) {
         return AF_INET6;
     }
-    else if (std::regex_match(ip, REG_V4)) {
+
+    if (std::regex_match(ip, REG_V4)) {
         return AF_INET;
     }
 

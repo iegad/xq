@@ -345,12 +345,12 @@ public:
         uint8_t*    p       = nullptr;
         uint16_t    nleft   = 0;
         uint16_t    n;
-        RUX_SEG     seg;
 
         // ACK
         if (ack_que_.size() > 0) {
             std::list<PRUX_ACK> ack_list;
             PRUX_ACK ack;
+            RUX_SEG  seg;
 
             ack_que_.get_all(&ack_list);
 
@@ -451,6 +451,8 @@ public:
 
         // check ping
         if (rmt_wnd_ == 0) {
+            RUX_SEG seg;
+
             if (frm && nleft < RUX_SEG_HDR_SIZE) {
                 frm->len = p - frm->raw;
                 ASSERT(!frm->setup());
@@ -483,6 +485,8 @@ public:
 
         // pong
         if (probe_) {
+            RUX_SEG seg;
+
             if (frm && nleft < RUX_SEG_HDR_SIZE) {
                 frm->len = p - frm->raw;
                 ASSERT(!frm->setup());
