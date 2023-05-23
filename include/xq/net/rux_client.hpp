@@ -148,6 +148,7 @@ private:
                     // TODO: ...
                     DLOG("sendto failed: %d\n", errcode);
                 }
+                delete frm;
             }
         }
 
