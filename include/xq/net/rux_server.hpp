@@ -5,6 +5,7 @@
 #include <functional>
 #include <vector>
 #include <thread>
+#include <unordered_set>
 #include "xq/net/rux.hpp"
 
 
@@ -12,33 +13,64 @@ namespace xq {
 namespace net {
 
 
+// ############################################################################################################
+// Rux 服务端
+// ############################################################################################################
 class RuxServer {
 public:
+
+
+    // ========================================================================================================
+    // 构造函数.
+    // ========================================================================================================
     RuxServer() 
-        : sockfd_(INVALID_SOCKET) {
-        int64_t now_us = sys_clock();
+        : sockfd_(INVALID_SOCKET)
+        , start_us_(sys_clock()) {
+
+        // new RUX_RID_MAX Rux Sessions
         for (int i = 1; i <= RUX_RID_MAX; i++) {
-            sessions_.emplace_back(new Rux(i, now_us, output_que_));
+            sessions_.emplace_back(new Rux(i, start_us_, output_que_));
         }
     }
 
 
+    // ========================================================================================================
+    // 析构函数
+    // ========================================================================================================
     ~RuxServer() {
         if (sockfd_ != INVALID_SOCKET) {
             this->stop();
         }
 
+        // delete RUX_RID_MAX Rux Sessions
         for (auto s : sessions_) {
             delete s;
         }
     }
 
 
-    void run(const char *host, const char *svc) {
-        rcv_thread_ = std::thread(std::bind(&RuxServer::_rcv_thread, this, host, svc));
+    // ========================================================================================================
+    // 启动服务
+    //      该方法分为同步和异步启动.
+    //      异步启动需要通过 wait方法等待 run 的结束
+    // -------------------------------
+    // @host:   IP/domain
+    // @svc:    port/service
+    // @async:  是否异步启动
+    // ========================================================================================================
+    inline void run(const char *host, const char *svc, bool async = true) {
+        if (async) {
+            rcv_thread_ = std::thread(std::bind(&RuxServer::_rcv_thread, this, host, svc));
+        }
+        else {
+            _rcv_thread(host, svc);
+        }
     }
 
 
+    // ========================================================================================================
+    // 等待异步服务结束
+    // ========================================================================================================
     void wait() {
         if (rcv_thread_.joinable()) {
             rcv_thread_.join();
@@ -46,12 +78,22 @@ public:
     }
 
 
+    // ========================================================================================================
+    // 停止服务
+    // ========================================================================================================
     void stop() {
         close(sockfd_);
         sockfd_ = INVALID_SOCKET;
     }
 
 
+    // ========================================================================================================
+    // 加入组播, 预留功能. 
+    //      目前可支持IPV4组播
+    // -------------------------------
+    // @multi_local_ip: 组播地址
+    // @multi_route_ip: 本机路由地址
+    // ========================================================================================================
     int join_multicast(const std::string& multi_local_ip, const std::string& multi_route_ip) {
         ASSERT(multi_local_ip.size() > 0 && multi_route_ip.size() > 0);
 
@@ -78,42 +120,56 @@ public:
 
 private:
 #ifdef WIN32
+    // ========================================================================================================
+    // input 线程
+    // ========================================================================================================
     void _rcv_thread(const char* host, const char* svc) {
+        ASSERT(host, svc);
+
         /* ---------------------------------- 开启服务 ---------------------------------- */
+
         // Step 1: make udp socket
         sockfd_ = udp_bind(host, svc);
         ASSERT(sockfd_ != INVALID_SOCKET);
 
-        // Step 2: send thread
+        // Step 2: 启动 output线程
         snd_thread_ = std::thread(std::bind(&RuxServer::_snd_thread, this));
 
-        // Step 3: rux worker threads
+        // Step 3: 启动 rux update 线程
+        upd_thread_ = std::thread(std::bind(&RuxServer::_update_thread, this));
+
+        // Step 4: 启动 rux 协议 线程
+        //      启动线程的同时, 为每个 rux 线程分配 帧工作队列
         const int CPUS = sys_cpus();
         for (int i = 0; i < CPUS; i++) {
             auto q = new moodycamel::BlockingConcurrentQueue<PRUX_FRM>();
-            frm_ques_.emplace_back(q);
-            thread_pool_.emplace_back(std::thread(std::bind(&RuxServer::_rux_thread, this, q)));
+            frm_ques_.insert(std::make_pair(i, q));
+            rux_thread_pool_.emplace_back(std::thread(std::bind(&RuxServer::_rux_thread, this, q)));
         }
 
-        PRUX_FRM frm = new RUX_FRM;
-        Rux* rux;
-        int n, qid = 0;
+        // Step 5: loop recvfrom
+        PRUX_FRM    frm = new RUX_FRM;
+        int         qid = 0;            // rux queue id, RoundRobin方式
+        int         n;
+        Rux*        rux;
 
-        // Step 4: recv thread
         while (sockfd_ != INVALID_SOCKET) {
             n = recvfrom(sockfd_, (char *)frm->raw, sizeof(frm->raw), 0, (sockaddr *)&frm->name, &frm->namelen);
             if (n < 0) {
+                // IO recv error
                 // TODO: err event
                 continue;
             }
 
             if (n > RUX_MTU || n < RUX_FRM_HDR_SIZE + RUX_SEG_HDR_SIZE) {
+                // rux frame's length error
                 // TODO: err
                 continue;
             }
             
             frm->len = n;
             if (frm->check()) {
+                // rux frame error
                 continue;
             }
 
@@ -121,12 +177,16 @@ private:
             frm->rux = rux = sessions_[frm->rid - 1];
 
             if (rux->qid() == -1) {
+                sess_lkr_.lock();
+                active_session_.insert(rux->rid());
+                sess_lkr_.unlock();
                 rux->set_qid(qid++);
                 if (qid == frm_ques_.size()) {
                     qid = 0;
                 }
             }
 
+            // move frm to frm queue
             frm_ques_[rux->qid()]->enqueue(frm);
             frm = new RUX_FRM;
         }
@@ -140,18 +200,21 @@ private:
 
         // Step 2: join send thread
         snd_thread_.join();
+        
+        // Step 3: join rux update thread
+        upd_thread_.join();
 
-        // Step 3: join rux worker threads
-        for (auto& wkr : thread_pool_) {
-            if (wkr.joinable()) {
-                wkr.join();
-            }
+        // Step 4: join rux worker threads
+        while (frm_ques_.size() > 0) {
+            auto itr = rux_thread_pool_.begin();
+            itr->join();
+            rux_thread_pool_.erase(itr);
         }
-        thread_pool_.clear();
 
+        // Step 5: delete all frames queues
         while (frm_ques_.size() > 0) {
             auto itr = frm_ques_.begin();
-            delete *itr;
+            delete itr->second;
             frm_ques_.erase(itr);
         }
     }
@@ -168,6 +231,7 @@ private:
                 if (::sendto(sockfd_, (char*)frm->raw, frm->len, 0, (sockaddr*)&frm->name, frm->namelen) != frm->len) {
                     // TODO: error
                 }
+                delete frm;
             }
         }
 
@@ -198,8 +262,8 @@ private:
 
         for (i = 0; i < CPUS; i++) {
             auto q = new moodycamel::BlockingConcurrentQueue<PRUX_FRM>;
-            frm_ques_.emplace_back(q);
-            thread_pool_.emplace_back(std::thread(std::bind(&RuxServer::_rux_thread, this, q)));
+            frm_ques_.insert(std::make_pair(i, q));
+            rux_thread_pool_.emplace_back(std::thread(std::bind(&RuxServer::_rux_thread, this, q)));
             wkr_frms[i] = new RUX_FRM*[RCVMMSG_SIZE];
             nwkr_frms[i] = 0;
         }
@@ -366,7 +430,6 @@ private:
                         DLOG("%s\n", (char*)msg);
                     }
 
-                    rux->output(frm->time_us);
                     delete frm;
                 }
             }
@@ -383,15 +446,52 @@ private:
     }
 
 
-    SOCKET sockfd_;
-    std::vector<Rux*> sessions_;
-    std::vector<uint32_t> active_session_;
+    void _update_thread() {
+        uint32_t rid;
+        uint64_t now_us;
 
-    std::thread rcv_thread_;
-    std::thread snd_thread_;
-    std::vector<std::thread> thread_pool_;
-    std::vector<moodycamel::BlockingConcurrentQueue<PRUX_FRM>*> frm_ques_;
-    moodycamel::BlockingConcurrentQueue<PRUX_FRM> output_que_;
+        std::list<uint32_t>::iterator  itr;
+        std::list<uint32_t>                     sessions;
+
+        while (sockfd_ != INVALID_SOCKET) {
+            now_us = sys_clock();
+            sess_lkr_.lock();
+            if (active_session_.size() > 0) {
+                std::copy(active_session_.begin(), active_session_.end(), std::back_inserter(sessions));
+            }
+            sess_lkr_.unlock();
+
+            itr = sessions.begin();
+            while (itr != sessions.end()) {
+                rid = *itr;
+                if (sessions_[rid - 1]->output(now_us) < 0) {
+                    sess_lkr_.lock();
+                    active_session_.erase(rid);
+                    sess_lkr_.unlock();
+                    continue;
+                }
+                ++itr;
+            }
+
+            std::this_thread::yield();
+        }
+    }
+
+
+    SOCKET                                                                  sockfd_;            // 服务端 UDP 套接字
+    uint64_t                                                                start_us_;
+
+    std::thread                                                             rcv_thread_;        // input 线程
+    std::thread                                                             snd_thread_;        // output 线程
+    std::thread                                                             upd_thread_;        // rux update 线程
+    std::list<std::thread>                                                  rux_thread_pool_;   // rux 线程
+
+    moodycamel::BlockingConcurrentQueue<PRUX_FRM>                           output_que_;        // output 队列; 
+    std::unordered_map<int, moodycamel::BlockingConcurrentQueue<PRUX_FRM>*> frm_ques_;          // 帧工作队列;  input 线程为生产者, rux 线程为消费者
+    
+    SPIN_LOCK                                                               sess_lkr_;
+    std::vector<Rux*>                                                       sessions_;
+    std::unordered_set<uint32_t>                                            active_session_;
 
 
     RuxServer(const RuxServer&) = delete;

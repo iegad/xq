@@ -11,10 +11,10 @@ snd_worker() {
     int res;
     uint64_t now_us;
 
-    for (int i = 0; i < 1000; i++) {
+    for (int i = 0; i < 1000000; i++) {
         now_us = sys_clock();
 
-        char buf[20] = { 0 };
+        char buf[60] = { 0 };
         sprintf(buf, "Hello world: %d", i + 1);
         while (client->send(SERVER_ENDPOINT, (uint8_t*)buf, strlen(buf))) {
             _mm_pause();
