@@ -105,14 +105,10 @@ typedef struct __frame_ {
         , time_us(0)
         , rux(nullptr) {
         ::memset(raw, 0, RUX_MTU + 1);
-        static int ncount = 0;
-        DLOG("new Frame: %d\n", ++ncount);
     }
 
     
     ~__frame_() {
-        static int ncount = 0;
-        DLOG("delete Frame: %d\n", ++ncount);
     }
 
 
@@ -206,6 +202,10 @@ typedef struct __segment_ {
         , addr(nullptr)
         , addrlen(sizeof(sockaddr_storage)) {
         ::memset(data, 0, RUX_MSS);
+    }
+
+
+    ~__segment_() {
     }
 
 
@@ -544,6 +544,15 @@ typedef struct __rcv_buf_ {
     }
 
 
+    void clear() {
+        auto itr = buf_.begin();
+        while(itr != buf_.end()) {
+            delete itr->second;
+            buf_.erase(itr++);
+        }
+    }
+
+
     std::map<uint64_t, PRUX_SEG>::iterator begin() {
         return buf_.begin();
     }
@@ -559,13 +568,8 @@ typedef struct __rcv_buf_ {
     }
 
 
-    bool insert(PRUX_SEG seg) {
-        if (!buf_.count(seg->sn)) {
-            auto res = buf_.insert(std::make_pair(seg->sn, seg));
-            return res.second;
-        }
-
-        return false;
+    void insert(PRUX_SEG seg) {
+        buf_.insert(std::make_pair(seg->sn, seg));
     }
 
 

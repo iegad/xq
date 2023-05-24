@@ -7,6 +7,7 @@
 #include <thread>
 #include <unordered_set>
 #include "xq/net/rux.hpp"
+#include <emmintrin.h>
 
 
 namespace xq {
@@ -248,24 +249,34 @@ private:
         constexpr int RCVMMSG_SIZE = 128;
         constexpr static timeval TIMEOUT{0, 500000};
 
+        // Step 1: init socket
         sockfd_ = udp_bind(host, svc);
         ASSERT(sockfd_ != INVALID_SOCKET);
         ASSERT(!::setsockopt(sockfd_, SOL_SOCKET, SO_RCVTIMEO, &TIMEOUT, sizeof(TIMEOUT)));
 
+        // Step 2: start IO output thread
         snd_thread_ = std::thread(std::bind(&RuxServer::_snd_thread, this));
 
-        const int CPUS = sys_cpus();
+        // Step 3: start rux update thread
+        upd_thread_ = std::thread(std::bind(&RuxServer::_update_thread, this));
+
+        // Step 4: init frame's queues and start rux protocol work threads.
+        int CPUS = sys_cpus() - 1;
+        if (CPUS == 0) {
+            CPUS = 1;
+        }
+
         int i, n = RCVMMSG_SIZE, err, qid = 0, rux_qid;
         uint64_t now_us;
-        PRUX_FRM** wkr_frms = new PRUX_FRM*[CPUS];
-        int* nwkr_frms = new int[CPUS];
+        PRUX_FRM** rux_frms = new PRUX_FRM*[CPUS];
+        int* rux_frms_count = new int[CPUS];
 
         for (i = 0; i < CPUS; i++) {
             auto q = new moodycamel::BlockingConcurrentQueue<PRUX_FRM>;
             frm_ques_.insert(std::make_pair(i, q));
             rux_thread_pool_.emplace_back(std::thread(std::bind(&RuxServer::_rux_thread, this, q)));
-            wkr_frms[i] = new RUX_FRM*[RCVMMSG_SIZE];
-            nwkr_frms[i] = 0;
+            rux_frms[i] = new RUX_FRM*[RCVMMSG_SIZE];
+            rux_frms_count[i] = 0;
         }
 
         mmsghdr msgs[RCVMMSG_SIZE];
@@ -325,9 +336,12 @@ private:
                     if (++qid == CPUS) {
                         qid = 0;
                     }
+                    sess_lkr_.lock();
+                    active_session_.insert(rux->rid());
+                    sess_lkr_.unlock();
                 }
 
-                wkr_frms[rux_qid][nwkr_frms[rux_qid]++] = frm;
+                rux_frms[rux_qid][rux_frms_count[rux_qid]++] = frm;
                 frm = frms[i] = new RUX_FRM;
                 hdr = &msgs[i].msg_hdr;
                 hdr->msg_name = &frm->name;
@@ -339,20 +353,43 @@ private:
             }
 
             for (i = 0; i < CPUS; i++) {
-                if (nwkr_frms[i] > 0) {
-                    frm_ques_[i]->enqueue_bulk(wkr_frms[i], nwkr_frms[i]);
-                    nwkr_frms[i] = 0;
+                if (rux_frms_count[i] > 0) {
+                    frm_ques_[i]->enqueue_bulk(rux_frms[i], rux_frms_count[i]);
+                    rux_frms_count[i] = 0;
                 }
             }
         } // while(sockfd_ != INVALID_SOCKET;
 
-        for (i = 0; i < CPUS; i++) {
-            delete[] wkr_frms[i];
-        }
+        ASSERT(sockfd_ == INVALID_SOCKET);
 
-        delete[] nwkr_frms;
+        for (i = 0; i < CPUS; i++) {
+            delete[] rux_frms[i];
+        }
+        delete[] rux_frms;
+        delete[] rux_frms_count;
+
         for (i = 0; i < RCVMMSG_SIZE; i++) {
             delete frms[i];
+        }
+
+        if (snd_thread_.joinable()) {
+            snd_thread_.join();
+        }
+
+        if (upd_thread_.joinable()) {
+            upd_thread_.join();
+        }
+
+        while(rux_thread_pool_.size() > 0) {
+            auto itr = rux_thread_pool_.begin();
+            itr->join();
+            rux_thread_pool_.erase(itr);
+        }
+
+        while(frm_ques_.size() > 0) {
+            auto itr = frm_ques_.begin();
+            delete itr->second;
+            frm_ques_.erase(itr);
         }
     }
 
@@ -411,6 +448,7 @@ private:
         int nfrms, i, nmsg;
         uint8_t* msg = new uint8_t[RUX_MSG_MAX];
         Rux* rux;
+        static int ncount = 0;
 
         while (sockfd_ != INVALID_SOCKET) {
             nfrms = que->wait_dequeue_bulk_timed(frms, FRMS_MAX, QUE_TIMEOUT);
@@ -418,16 +456,15 @@ private:
                 for (i = 0; i < nfrms; i++) {
                     frm = frms[i];
                     rux = (Rux*)frm->rux;
-                    if (rux->input(frm)) {
-                        // TODO: remove active session
-                        delete frm;
-                        break;
-                    }
-
-                    while (nmsg = rux->recv(msg), nmsg > 0) {
-                        // TODO: event handle
-                        msg[nmsg] = 0;
-                        DLOG("%s\n", (char*)msg);
+                    if (!rux->input(frm)) {
+                        while (nmsg = rux->recv(msg), nmsg > 0) {
+                            // TODO: event handle
+                            msg[nmsg] = 0;
+                            DLOG("%s\n", (char*)msg);
+                            if (ncount == 100000) {
+                                stop();
+                            }
+                        }
                     }
 
                     delete frm;
@@ -449,31 +486,43 @@ private:
     void _update_thread() {
         uint32_t rid;
         uint64_t now_us;
+        size_t n = 0;
+        bool res = false;
 
-        std::list<uint32_t>::iterator  itr;
-        std::list<uint32_t>                     sessions;
+        std::unordered_set<uint32_t>::iterator itr;
 
         while (sockfd_ != INVALID_SOCKET) {
             now_us = sys_clock();
             sess_lkr_.lock();
-            if (active_session_.size() > 0) {
-                std::copy(active_session_.begin(), active_session_.end(), std::back_inserter(sessions));
-            }
+            n = active_session_.size();
             sess_lkr_.unlock();
 
-            itr = sessions.begin();
-            while (itr != sessions.end()) {
-                rid = *itr;
-                if (sessions_[rid - 1]->output(now_us) < 0) {
+            if (n > 0) {
+                sess_lkr_.lock();
+                itr = active_session_.begin();
+                sess_lkr_.unlock();
+                while (1) {
                     sess_lkr_.lock();
-                    active_session_.erase(rid);
+                    res = itr == active_session_.end();
                     sess_lkr_.unlock();
-                    continue;
+
+                    if (res) {
+                        break;
+                    }
+
+                    rid = *itr;
+                    if (sessions_[rid - 1]->output(now_us) < 0) {
+                        sess_lkr_.lock();
+                        active_session_.erase(rid);
+                        sess_lkr_.unlock();
+                        continue;
+                    }
+                    ++itr;
                 }
-                ++itr;
             }
 
-            std::this_thread::yield();
+//            std::this_thread::yield();
+            _mm_pause();
         }
     }
 

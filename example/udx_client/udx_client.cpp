@@ -3,7 +3,7 @@
 
 xq::net::RuxClient* client;
 
-#define SERVER_ENDPOINT ("127.0.0.1:6688")
+#define SERVER_ENDPOINT ("192.168.0.104:6688")
 
 
 void
@@ -11,7 +11,7 @@ snd_worker() {
     int res;
     uint64_t now_us;
 
-    for (int i = 0; i < 1000000; i++) {
+    for (int i = 0; i < 10000; i++) {
         now_us = sys_clock();
 
         char buf[60] = { 0 };

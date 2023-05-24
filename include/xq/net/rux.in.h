@@ -98,10 +98,10 @@ extern "C" {
 #define MID(a, b, c) (MIN(MAX(a, b), c))
 
 
-#if (_DEBUG == 1 || NDEBUG == 1 || __linux__ == 1)
+#if (_DEBUG == 1 || NDEBUG == 1)
 #define DLOG(fmt, ...) (printf(fmt, __VA_ARGS__))
 #else
-#define DLOG(fmt, ...)
+#define DLOG(...) //(printf(__VA_ARGS__))
 #endif // DEBUG
 
 

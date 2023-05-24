@@ -59,6 +59,13 @@ public:
     }
 
 
+    ~Rux() {
+        snd_buf_.clear();
+        rcv_buf_.clear();
+        ack_que_.clear();
+    }
+
+
     // ========================================================================================================
     // rux remote 地址
     // ========================================================================================================
@@ -107,6 +114,7 @@ public:
             n = seg->decode(p, datalen);
             if (n < 0) {
                 delete seg;
+                qid_ = -1;
                 return -1;
             }
 
@@ -176,12 +184,13 @@ public:
              */
             case RUX_CMD_PIN: {
                 probe_ = 1;
+                delete seg;
             }break;
 
             /* ------------- RUX_CMD_PON -------------
              * nothing todo
              */
-            case RUX_CMD_PON: break;
+            case RUX_CMD_PON: delete seg; break;
 
             /* ------------- RUX_CMD_PSH -------------
              * 1, 检查seg->sn范围;
@@ -197,11 +206,12 @@ public:
                     delete seg;
                 }
                 else {
-                    if (rcv_buf_.insert(seg)) {
+                    if (!rcv_buf_.count(seg->sn)) {
                         seg->rid = frm->rid;
                         seg->time_us = frm->time_us;
                         seg->addr = &frm->name;
                         seg->addrlen = frm->namelen;
+                        rcv_buf_.insert(seg);
                         if (rcv_buf_.size() > RUX_SWND_MAX) {
                             DLOG("###################################################################### %lu\n", rcv_buf_.size());
                         }
@@ -224,14 +234,15 @@ public:
                     return -1;
                 }
                 
-                if (rcv_buf_.insert(seg)) {
+                if (!rcv_buf_.count(seg->sn)) {
                     seg->rid = frm->rid;
                     seg->time_us = frm->time_us;
                     seg->addr = &frm->name;
                     seg->addrlen = frm->namelen;
                     reset(seg->time_us);
+                    rcv_buf_.insert(seg);
                 }
-
+                DLOG("seg->sn[%lu], seg->us[%lu]\n", seg->sn, seg->us);
                 ack_que_.insert(seg->sn, seg->us);
             }break;
 
@@ -538,6 +549,7 @@ public:
     // ========================================================================================================
     void reset(uint64_t now_us) {
         ack_que_.clear();
+        rcv_buf_.clear();
         snd_buf_.clear();
 
         rttval_ = srtt_ = probe_ = 0;
