@@ -84,6 +84,7 @@ private:
         ASSERT(sockfd_ != INVALID_SOCKET);
 
         snd_thread_ = std::thread(std::bind(&RuxClient::_snd_thread, this));
+        upd_thread_ = std::thread(std::bind(&RuxClient::_update_thread, this));
 
         PRUX_FRM frm = new RUX_FRM;
         int n;
@@ -129,7 +130,9 @@ private:
             }
         }
 
+        upd_thread_.join();
         snd_thread_.join();
+
         delete frm;
         delete[] msg;
     }
@@ -297,11 +300,31 @@ private:
 #endif
 
 
+    void _update_thread() {
+        std::unordered_map<std::string, Rux*>::iterator itr;
+        Rux* rux;
+        uint64_t now_us;
+
+        while (sockfd_ != INVALID_SOCKET) {
+            now_us = sys_clock();
+
+            itr = rux_map_.begin();
+            while (itr != rux_map_.end()) {
+                rux = itr->second;
+                if (rux->output(now_us) < 0) {
+                    // TODO
+                }
+            }
+        }
+    }
+
+
     SOCKET sockfd_;
     uint32_t rid_;
 
     std::thread rcv_thread_;
     std::thread snd_thread_;
+    std::thread upd_thread_;
 
     std::unordered_map<std::string, Rux*> rux_map_;
     moodycamel::BlockingConcurrentQueue<PRUX_FRM> output_que_;

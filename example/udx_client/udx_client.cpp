@@ -3,7 +3,7 @@
 
 xq::net::RuxClient* client;
 
-#define SERVER_ENDPOINT ("192.168.0.104:6688")
+#define SERVER_ENDPOINT ("127.0.0.1:6688")
 
 
 void
@@ -19,16 +19,6 @@ snd_worker() {
         while (client->send(SERVER_ENDPOINT, (uint8_t*)buf, strlen(buf))) {
             _mm_pause();
         }
-
-        while (1) {
-            res = client->output(now_us);
-            if (res < 0) {
-                DLOG("snd_worker error: %d\n", errcode);
-            }
-            else if (res == 0) {
-                break;
-            }
-        } // while(1);
     }
 }
 

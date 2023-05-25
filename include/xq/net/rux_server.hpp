@@ -83,8 +83,10 @@ public:
     // 停止服务
     // ========================================================================================================
     void stop() {
-        close(sockfd_);
-        sockfd_ = INVALID_SOCKET;
+        if (sockfd_ != INVALID_SOCKET) {
+            close(sockfd_);
+            sockfd_ = INVALID_SOCKET;
+        }
     }
 
 
@@ -194,10 +196,6 @@ private:
 
         /* ---------------------------------- 停止服务 ---------------------------------- */
         delete frm;
-
-        // Step 1: close udp socket
-        close(sockfd_);
-        sockfd_ = INVALID_SOCKET;
 
         // Step 2: join send thread
         snd_thread_.join();
