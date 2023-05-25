@@ -171,6 +171,7 @@ private:
         ASSERT(!::setsockopt(sockfd_, SOL_SOCKET, SO_RCVTIMEO, &TIMEOUT, sizeof(TIMEOUT)));
 
         snd_thread_ = std::thread(std::bind(&RuxClient::_snd_thread, this));
+        upd_thread_ = std::thread(std::bind(&RuxClient::_update_thread, this));
 
         int i, n = RCVMMSG_SIZE, err;
         uint64_t now_us;
@@ -229,7 +230,7 @@ private:
 
                 frm->time_us = now_us;
                 ::memset(endpoint, 0, sizeof(endpoint));
-                ASSERT(!addr2str(&frm->name, endpoint, INET_ADDRSTRLEN + 7));
+                ASSERT(!addr2str(&frm->name, endpoint, sizeof(endpoint)));
                 itr = rux_map_.find(endpoint);
                 if (itr == rux_map_.end()) {
                     continue;
@@ -251,6 +252,9 @@ private:
         }
 
         delete[] msg;
+
+        upd_thread_.join();
+        snd_thread_.join();
     }
 
 
@@ -304,6 +308,9 @@ private:
         std::unordered_map<std::string, Rux*>::iterator itr;
         Rux* rux;
         uint64_t now_us;
+#ifndef WIN32
+        timeval timeout = {0, 0};
+#endif
 
         while (sockfd_ != INVALID_SOCKET) {
             now_us = sys_clock();
@@ -315,6 +322,12 @@ private:
                     // TODO
                 }
             }
+#ifdef WIN32
+            std::this_thread::sleep_for(std::chrono::microseconds(500));
+#else
+            timeout.tv_usec = 500;
+            ::select(0, nullptr, nullptr, nullptr, &timeout);
+#endif
         }
     }
 

@@ -43,11 +43,11 @@ constexpr uint64_t      RUX_SN_MAX              = 0x0000FFFFFFFFFFFF;           
 constexpr uint64_t      RUX_US_MAX              = 0x0000FFFFFFFFFFFF;                                           // Maximum timestamp(us)
 constexpr int           RUX_FRM_MAX             = 92;                                                           // Maximum fragment size
 constexpr int           RUX_MSG_MAX             = RUX_FRM_MAX * RUX_MSS;                                        // Maximum signle massage's length
-constexpr int           RUX_RTO_MIN             = 200000;
-constexpr int           RUX_RTO_MAX             = 15000000;
-constexpr int           RUX_TIMEOUT             = RUX_RTO_MAX * 20;
+constexpr int           RUX_RTO_MIN             = 200 *1000;
+constexpr int           RUX_RTO_MAX             = 1000 * 1000 * 30;
+constexpr int           RUX_TIMEOUT             = RUX_RTO_MAX * 2 * 10;
 constexpr int           RUX_FAST_ACK            = 3;
-constexpr int           RUX_XMIT_MAX            = 10;
+constexpr int           RUX_XMIT_MAX            = 20;
 
 
 // IPv4 regex

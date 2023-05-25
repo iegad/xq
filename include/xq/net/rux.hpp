@@ -140,7 +140,6 @@ public:
                 }
 
                 snd_buf_.update_ack(seg->sn);
-
                 /* ---------------------
                  * 这里可能会出现负值.
                  * 例如:
@@ -150,8 +149,13 @@ public:
                  *    4, 发送端此时收到滞留的 ack[sn:1, ts: 1], 这时就会出现RTT时间负数的情况.
                  */
                 int rtt = (int)(now_us - seg->us + 1);
-                if (rtt > 0) {
+                delete seg;
+                if (rtt >= RUX_TIMEOUT) {
+                    qid_ = -1;
+                    return -1;
+                }
 
+                if (rtt > 0) {
                     if (srtt_ == 0) {
                         srtt_ = rtt;
                         rttval_ = rtt / 2;
@@ -168,12 +172,6 @@ public:
 
                     rto_ = MID(RUX_RTO_MIN, srtt_ + 4 * rttval_, RUX_RTO_MAX);
                 }
-                else if (rtt >= RUX_TIMEOUT) {
-                    qid_ = -1;
-                    return -1;
-                }
-
-                delete seg;
             }break;
 
             /* ------------- RUX_CMD_PIN -------------
@@ -242,7 +240,7 @@ public:
                     reset(seg->time_us);
                     rcv_buf_.insert(seg);
                 }
-                DLOG("seg->sn[%lu], seg->us[%lu]\n", seg->sn, seg->us);
+
                 ack_que_.insert(seg->sn, seg->us);
             }break;
 
@@ -397,7 +395,7 @@ public:
                 p += n;
                 nleft -= n;
                 delete ack;
-                ack_list.erase(ack_itr);
+                ack_list.erase(ack_itr++);
             }
 
             if (probe_) {
@@ -437,7 +435,7 @@ public:
                     item->rto = rto_;
                 }
                 else if (item->resend_us <= now_us) {
-                    item->rto *= 1.3;
+                    item->rto *= 1.5;
                 }
                 else if (item->fastack >= RUX_FAST_ACK) {
                     item->fastack = 0;

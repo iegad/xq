@@ -3,7 +3,7 @@
 
 xq::net::RuxClient* client;
 
-#define SERVER_ENDPOINT ("127.0.0.1:6688")
+#define SERVER_ENDPOINT ("192.168.0.104:6688")
 
 
 void

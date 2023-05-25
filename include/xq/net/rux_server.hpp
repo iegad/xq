@@ -7,7 +7,6 @@
 #include <thread>
 #include <unordered_set>
 #include "xq/net/rux.hpp"
-#include <emmintrin.h>
 
 
 namespace xq {
@@ -486,6 +485,9 @@ private:
         uint64_t now_us;
         size_t n = 0;
         bool res = false;
+#ifndef WIN32
+        timeval timeout = {0, 0};
+#endif
 
         std::unordered_set<uint32_t>::iterator itr;
 
@@ -518,9 +520,12 @@ private:
                     ++itr;
                 }
             }
-
-//            std::this_thread::yield();
-            _mm_pause();
+#ifdef WIN32
+            std::this_thread::sleep_for(std::chrono::microseconds(500));
+#else
+            timeout.tv_usec = 500;
+            ::select(0, nullptr, nullptr, nullptr, &timeout);
+#endif
         }
     }
 
