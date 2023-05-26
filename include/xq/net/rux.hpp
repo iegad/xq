@@ -41,7 +41,7 @@ public:
         , cwnd_(RUX_SWND_MIN)
         , rmt_wnd_(RUX_SWND_MIN)
         , probe_(0)
-        , qid_(-1)
+        , state_(-1)
         , rto_(RUX_RTO_MIN)
         , srtt_(0)
         , rttval_(0)
@@ -54,6 +54,7 @@ public:
         , addr_({0,{0},0})
         , addrlen_(sizeof(addr_))
 
+        , rux_que_(nullptr)
         , output_que_(output_que) {
         ASSERT(rid > 0 && rid <= RUX_RID_MAX);
     }
@@ -82,12 +83,13 @@ public:
     }
 
 
-    inline int qid() const {
-        return qid_;
+    inline moodycamel::BlockingConcurrentQueue<PRUX_FRM>* rux_que() const {
+        return rux_que_;
     }
 
-    inline void set_qid(int qid) {
-        qid_ = qid;
+
+    inline void set_rux_que(moodycamel::BlockingConcurrentQueue<PRUX_FRM>* rux_que) {
+        rux_que_ = rux_que;
     }
 
 
@@ -96,13 +98,24 @@ public:
     }
 
 
+    inline int state() const {
+        return state_;
+    }
+
+
+    inline void set_state(int state) {
+        ASSERT(state == 0 || state == -1);
+        state_ = state;
+    }
+
+
     // ========================================================================================================
     // input 用于处理原始UDP数据
     // ========================================================================================================
     int input(PRUX_FRM frm) {
-        int         datalen     = frm->len - RUX_FRM_HDR_SIZE;  // 获取Frame Payload 长度
+        int         datalen     = frm->len - RUX_FRM_HDR_SIZE;  // Frame Payload 长度
         int         n;
-        uint8_t*    p           = frm->raw + RUX_FRM_HDR_SIZE;  // 获取Frame Payload 数据
+        uint8_t*    p           = frm->raw + RUX_FRM_HDR_SIZE;  // Frame Payload 数据
         uint64_t    last_us     = 0;                            // 当前 Frame 中最大的时间(微秒)
         uint64_t    now_us      = frm->time_us - base_us_;      // 当前时间
         PRUX_SEG    seg;
@@ -114,7 +127,7 @@ public:
             n = seg->decode(p, datalen);
             if (n < 0) {
                 delete seg;
-                qid_ = -1;
+                state_ = -1;
                 return -1;
             }
 
@@ -150,10 +163,6 @@ public:
                  */
                 int rtt = (int)(now_us - seg->us + 1);
                 delete seg;
-                if (rtt >= RUX_TIMEOUT) {
-                    qid_ = -1;
-                    return -1;
-                }
 
                 if (rtt > 0) {
                     if (srtt_ == 0) {
@@ -204,7 +213,7 @@ public:
                     delete seg;
                 }
                 else {
-                    if (!rcv_buf_.count(seg->sn)) {
+                    if (rcv_buf_.count(seg->sn) == 0) {
                         seg->rid = frm->rid;
                         seg->time_us = frm->time_us;
                         seg->addr = &frm->name;
@@ -232,7 +241,7 @@ public:
                     return -1;
                 }
                 
-                if (!rcv_buf_.count(seg->sn)) {
+                if (rcv_buf_.count(seg->sn) == 0) {
                     seg->rid = frm->rid;
                     seg->time_us = frm->time_us;
                     seg->addr = &frm->name;
@@ -346,7 +355,7 @@ public:
     // output 将需要发送的协议数据投递到 output_que中
     // ========================================================================================================
     int output(uint64_t now_us) {
-        if (qid_ == -1) {
+        if (state_ == -1) {
             return -1;
         }
 
@@ -366,10 +375,10 @@ public:
             PRUX_ACK ack;
             RUX_SEG  seg;
 
-            ack_que_.get_all(&ack_list);
+            ack_que_.move_in(&ack_list);
 
-            auto ack_itr = ack_list.begin();
             while (ack_list.size() > 0) {
+                auto ack_itr = ack_list.begin();
                 if (frm && nleft < RUX_SEG_HDR_SIZE) {
                     frm->len = p - frm->raw;
                     ASSERT(!frm->setup());
@@ -407,18 +416,7 @@ public:
         int snd_wnd = MIN3(rmt_wnd_, cwnd_, (int)snd_buf_.size());
         if (snd_wnd > 0) {
             std::list<PRUX_SEG> seg_list;
-            if (snd_buf_.get_segs(snd_wnd, &seg_list, now_us)) {
-                for (i = 0; i < nfrms; i++) {
-                    delete frms[i];
-                }
-
-                if (frm) {
-                    delete frm;
-                }
-
-                qid_ = -1;
-                return -1;
-            }
+            snd_buf_.get_segs(snd_wnd, &seg_list, now_us);
             
             for (auto& item : seg_list) {
                 if (frm && nleft < RUX_SEG_HDR_EX_SIZE + item->len) {
@@ -434,8 +432,22 @@ public:
                 if (item->xmit == 0) {
                     item->rto = rto_;
                 }
+                else if (item->xmit >= RUX_XMIT_MAX) {
+                    // 当重传到上限时, 将该rux 视频无效
+                    state_ = -1;
+
+                    for (i = 0; i < nfrms; i++) {
+                        delete frms[i];
+                    }
+
+                    if (frm) {
+                        delete frm;
+                    }
+
+                    return -1;
+                }
                 else if (item->resend_us <= now_us) {
-                    item->rto *= 1.5;
+                    item->rto *= 1.3;
                 }
                 else if (item->fastack >= RUX_FAST_ACK) {
                     item->fastack = 0;
@@ -545,7 +557,7 @@ public:
     // ========================================================================================================
     // active 激活当前rux, 并重置当前rux
     // ========================================================================================================
-    void reset(uint64_t now_us) {
+    inline void reset(uint64_t now_us) {
         ack_que_.clear();
         rcv_buf_.clear();
         snd_buf_.clear();
@@ -556,11 +568,12 @@ public:
 
         rcv_nxt_ = snd_nxt_ = last_us_ = 0;
         base_us_ = now_us;
+        state_ = 0;
     }
 
 
 private:
-    PRUX_FRM _new_frm() {
+    inline PRUX_FRM _new_frm() {
         PRUX_FRM frm = new RUX_FRM;
         frm->rid = rid_;
         frm->wnd = (uint8_t)(rcv_buf_.size() > RUX_RWND_MAX ? 0 : RUX_RWND_MAX - rcv_buf_.size());
@@ -570,7 +583,7 @@ private:
     }
 
 
-    void _set_remote_addr(const sockaddr_storage* addr, socklen_t addrlen) {
+    inline void _set_remote_addr(const sockaddr_storage* addr, socklen_t addrlen) {
         if (addrlen != addrlen_) {
             addrlen_ = addrlen;
         }
@@ -582,10 +595,12 @@ private:
 
 
     uint32_t                                        rid_;                       // rux id
+
     uint8_t                                         cwnd_;                      // 拥塞控制
     uint8_t                                         rmt_wnd_;                   // 对端窗口
+
     uint8_t                                         probe_;                     // 探针
-    int                                             qid_;                       // worker queue id
+    int                                             state_;
     int                                             rto_;                       // RTO
     int                                             srtt_;                      // smooth RTT
     int                                             rttval_;                    
@@ -602,6 +617,7 @@ private:
     RUX_SBUF                                        snd_buf_;                   // 发送缓冲区
     RUX_RBUF                                        rcv_buf_;                   // 接收队列
 
+    moodycamel::BlockingConcurrentQueue<PRUX_FRM>*  rux_que_;
     moodycamel::BlockingConcurrentQueue<PRUX_FRM>   &output_que_;               // io output queue 引用
 }; // class Rux;
 

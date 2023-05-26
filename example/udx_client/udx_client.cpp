@@ -11,7 +11,7 @@ snd_worker() {
     int res;
     uint64_t now_us;
 
-    for (int i = 0; i < 10000; i++) {
+    for (int i = 0; i < 100000; i++) {
         now_us = sys_clock();
 
         char buf[60] = { 0 };
@@ -28,7 +28,7 @@ int
 main(int argc, char** argv) {
     ASSERT(!rux_env_init());
     client = new xq::net::RuxClient(1);
-    client->add_node(SERVER_ENDPOINT);
+    client->connect_node(SERVER_ENDPOINT);
     std::thread t(snd_worker);
     client->run();
     t.join();

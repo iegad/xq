@@ -13,9 +13,17 @@ namespace xq {
 namespace net {
 
 
+// ############################################################################################################
+// Rux 客户端
+// ############################################################################################################
 class RuxClient {
 public:
-    RuxClient(uint32_t rid)
+
+
+    // ========================================================================================================
+    // 构造函数.
+    // ========================================================================================================
+    explicit RuxClient(uint32_t rid)
         : sockfd_(INVALID_SOCKET)
         , rid_(rid)
         , output_que_() {
@@ -23,11 +31,26 @@ public:
     }
 
 
-    void run() {
-        rcv_thread_ = std::thread(std::bind(&RuxClient::_rcv_thread, this));
+    // ========================================================================================================
+    // 启动服务
+    //      该方法分为同步和异步启动.
+    //      异步启动需要通过 wait方法等待 run 的结束
+    // -------------------------------
+    // @async:  是否异步启动
+    // ========================================================================================================
+    void run(bool async = true) {
+        if (async) {
+            rcv_thread_ = std::thread(std::bind(&RuxClient::_rcv_thread, this));
+            return;
+        }
+        
+        _rcv_thread();
     }
 
 
+    // ========================================================================================================
+    // 停止服务
+    // ========================================================================================================
     void stop() {
         if (sockfd_ != INVALID_SOCKET) {
             close(sockfd_);
@@ -36,6 +59,9 @@ public:
     }
 
 
+    // ========================================================================================================
+    // 等待异步服务结束
+    // ========================================================================================================
     void wait() {
         if (rcv_thread_.joinable()) {
             rcv_thread_.join();
@@ -43,19 +69,31 @@ public:
     }
 
 
-    void add_node(const char* endpoint) {
+    // ========================================================================================================
+    // 连接服务节点
+    // -------------------------------
+    // @endpoint: 服务节点
+    // ========================================================================================================
+    void connect_node(const char* endpoint) {
         uint64_t now_us = sys_clock();
         Rux* rux = new Rux(rid_, now_us, output_que_);
         rux->addr()->ss_family = AF_INET;
         ASSERT(!str2addr(endpoint, rux->addr(), rux->addrlen()));
         rux->set_qid(0);
-        rux_map_.insert(std::make_pair(endpoint, rux));
+        node_map_.insert(std::make_pair(endpoint, rux));
     }
 
 
+    // ========================================================================================================
+    // 向指定结点发送消息
+    // -------------------------------
+    // @endpoint: 服务节点
+    // @msg:      消息体
+    // @msglen:   消息长度
+    // ========================================================================================================
     int send(const char* endpoint, const uint8_t* msg, uint16_t msglen) {
-        auto itr = rux_map_.find(endpoint);
-        if (itr == rux_map_.end()) {
+        auto itr = node_map_.find(endpoint);
+        if (itr == node_map_.end()) {
             return -1;
         }
 
@@ -63,34 +101,32 @@ public:
     }
 
 
-    int output(uint64_t now_us) {
-        int n = 0, res;
-        for (auto& itr : rux_map_) {
-            res = itr.second->output(now_us);
-            if (res < 0) {
-                return -1;
-            }
-            n += res;
-        }
-
-        return n;
-    }
-
-
 private:
 #ifdef WIN32
+
+
+    // ========================================================================================================
+    // IO input 线程
+    // ========================================================================================================
     void _rcv_thread() {
+        constexpr int ENDPOINT_SIZE = INET6_ADDRSTRLEN + 7;
+
+        // Step 1, init udp socket
         sockfd_ = udp_bind("0.0.0.0", "0");
         ASSERT(sockfd_ != INVALID_SOCKET);
 
+        // Step 2, start output thread
         snd_thread_ = std::thread(std::bind(&RuxClient::_snd_thread, this));
+
+        // Step 3, start input thread
         upd_thread_ = std::thread(std::bind(&RuxClient::_update_thread, this));
 
+        // Step 4, start loop recfrom ...
+        char endpoint[ENDPOINT_SIZE];
+        uint8_t* msg = new uint8_t[RUX_MSG_MAX];
         PRUX_FRM frm = new RUX_FRM;
         int n;
-        char endpoint[INET6_ADDRSTRLEN + 7];
         Rux* rux;
-        uint8_t* msg = new uint8_t[RUX_MSG_MAX];
 
         while (sockfd_ != INVALID_SOCKET) {
             n = recvfrom(sockfd_, (char*)frm->raw, sizeof(frm->raw), 0, (sockaddr*)&frm->name, &frm->namelen);
@@ -112,9 +148,9 @@ private:
 
             frm->time_us = sys_clock();
             ::memset(endpoint, 0, sizeof(endpoint));
-            ASSERT(!addr2str(&frm->name, endpoint, INET6_ADDRSTRLEN + 7));
-            auto itr = rux_map_.find(endpoint);
-            if (itr == rux_map_.end()) {
+            ASSERT(!addr2str(&frm->name, endpoint, ENDPOINT_SIZE));
+            auto itr = node_map_.find(endpoint);
+            if (itr == node_map_.end()) {
                 continue;
             }
 
@@ -124,9 +160,7 @@ private:
             }
 
             while (n = rux->recv(msg), n > 0) {
-                char* hex = new char[n * 2 + 1];
-                n = bin2hex(msg, n, hex, n * 2);
-                hex[n] = 0;
+                // TODO: event msg handle
             }
         }
 
@@ -138,11 +172,15 @@ private:
     }
 
 
+    // ========================================================================================================
+    // IO output 线程
+    // ========================================================================================================
     void _snd_thread() {
         constexpr int FRMS_MAX = 64;
 
         PRUX_FRM frms[FRMS_MAX], frm;
         int n, i;
+
         while (sockfd_ != INVALID_SOCKET) {
             n = output_que_.wait_dequeue_bulk_timed(frms, FRMS_MAX, 50000);
             for (i = 0; i < n; i++) {
@@ -315,8 +353,8 @@ private:
         while (sockfd_ != INVALID_SOCKET) {
             now_us = sys_clock();
 
-            itr = rux_map_.begin();
-            while (itr != rux_map_.end()) {
+            itr = node_map_.begin();
+            while (itr != node_map_.end()) {
                 rux = itr->second;
                 if (rux->output(now_us) < 0) {
                     // TODO
@@ -332,15 +370,15 @@ private:
     }
 
 
-    SOCKET sockfd_;
-    uint32_t rid_;
+    SOCKET                                          sockfd_;
+    uint32_t                                        rid_;           // rux id
 
-    std::thread rcv_thread_;
-    std::thread snd_thread_;
-    std::thread upd_thread_;
+    std::thread                                     rcv_thread_;    // io input 线程
+    std::thread                                     snd_thread_;    // io output 线程
+    std::thread                                     upd_thread_;    // update 线程
 
-    std::unordered_map<std::string, Rux*> rux_map_;
-    moodycamel::BlockingConcurrentQueue<PRUX_FRM> output_que_;
+    std::unordered_map<std::string, Rux*>           node_map_;      // service node's map
+    moodycamel::BlockingConcurrentQueue<PRUX_FRM>   output_que_;
 
 
     RuxClient(const RuxClient&) = delete;

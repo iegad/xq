@@ -447,10 +447,14 @@ typedef struct __snd_buf_ {
     }
 
 
-    int get_segs(size_t snd_wnd, std::list<PRUX_SEG> *segs, uint64_t now_us) {
+    void get_segs(size_t snd_wnd, std::list<PRUX_SEG> *segs, uint64_t now_us) {
         PRUX_SEG seg;
-        int ret = 0;
         lkr_.lock();
+        if (buf_.size() == 0) {
+            lkr_.unlock();
+            return;
+        }
+
         auto itr = buf_.begin();
         
         while (itr != buf_.end()) {
@@ -459,10 +463,6 @@ typedef struct __snd_buf_ {
             }
 
             seg = itr->second;
-            if (seg->xmit >= RUX_XMIT_MAX) {
-                ret = -1;
-                break;
-            }
 
             if (seg->xmit == 0) {
                 segs->emplace_back(seg);
@@ -476,8 +476,8 @@ typedef struct __snd_buf_ {
 
             itr++;
         }
+
         lkr_.unlock();
-        return ret;
     }
 
 
@@ -519,7 +519,7 @@ typedef struct __ack_que_ {
     }
 
 
-    void get_all(std::list<PRUX_ACK>* ack_list) {
+    void move_in(std::list<PRUX_ACK>* ack_list) {
         std::list<PRUX_ACK>::iterator itr;
         lkr_.lock();
         if (que_.size() > 0) {
