@@ -39,7 +39,9 @@ public:
     explicit Rux(uint32_t rid, uint64_t now_us, moodycamel::BlockingConcurrentQueue<PRUX_FRM>& output_que)
         : rid_(rid)
         , cwnd_(RUX_SWND_MIN)
+        , ssthresh_(RUX_SSTHRESH_INIT)
         , rmt_wnd_(RUX_SWND_MIN)
+
         , probe_(0)
         , state_(-1)
         , rto_(RUX_RTO_MIN)
@@ -89,6 +91,7 @@ public:
 
 
     inline void set_rux_que(moodycamel::BlockingConcurrentQueue<PRUX_FRM>* rux_que) {
+        state_ = 0;
         rux_que_ = rux_que;
     }
 
@@ -119,6 +122,8 @@ public:
         uint64_t    last_us     = 0;                            // 当前 Frame 中最大的时间(微秒)
         uint64_t    now_us      = frm->time_us - base_us_;      // 当前时间
         PRUX_SEG    seg;
+
+        snd_buf_.update_ack(frm->una);
 
         while (datalen > 0) {
             seg = new RUX_SEG;
@@ -194,11 +199,6 @@ public:
                 delete seg;
             }break;
 
-            /* ------------- RUX_CMD_PON -------------
-             * nothing todo
-             */
-            case RUX_CMD_PON: delete seg; break;
-
             /* ------------- RUX_CMD_PSH -------------
              * 1, 检查seg->sn范围;
              * 2, 检查该包是否处理过;
@@ -261,13 +261,20 @@ public:
         }
 
         // Step 3: 设置新的 remote window
-        if (last_us_ <= last_us) {
+        if (last_us_ <= last_us || (last_us == 0 && frm->len == RUX_FRM_HDR_SIZE)) {
             last_us_ = last_us;
             rmt_wnd_ = frm->wnd;
         }
 
         // Step 4: 拥塞控制
-        // TODO: Congesion Controller
+        if (rmt_wnd_ > cwnd_) {
+            if (cwnd_ < ssthresh_) {
+                cwnd_ <<= 1;
+            }
+            else if (cwnd_ < RUX_SWND_MAX) {
+                cwnd_++;
+            }
+        }
 
         // Step 5: 设置对端地址
         _set_remote_addr(&frm->name, frm->namelen);
@@ -416,9 +423,13 @@ public:
         int snd_wnd = MIN3(rmt_wnd_, cwnd_, (int)snd_buf_.size());
         if (snd_wnd > 0) {
             std::list<PRUX_SEG> seg_list;
-            snd_buf_.get_segs(snd_wnd, &seg_list, now_us);
+            snd_buf_.get_segs(&seg_list, snd_wnd, now_us);
             
             for (auto& item : seg_list) {
+                if (snd_wnd == 0) {
+                    break;
+                }
+
                 if (frm && nleft < RUX_SEG_HDR_EX_SIZE + item->len) {
                     frm->len = p - frm->raw;
                     ASSERT(!frm->setup());
@@ -448,10 +459,13 @@ public:
                 }
                 else if (item->resend_us <= now_us) {
                     item->rto *= 1.3;
+                    // TODO 超时重传时, 重新计算 CWND
                 }
                 else if (item->fastack >= RUX_FAST_ACK) {
                     item->fastack = 0;
                     item->rto = rto_;
+
+                    // TODO 快速重传时, 重新计算CWND
                 }
 
                 item->xmit++;
@@ -468,6 +482,8 @@ public:
                 n = item->encode(p, nleft);
                 p += n;
                 nleft -= n;
+
+                snd_wnd--;
             }
 
             if (probe_ && seg_list.size()) {
@@ -511,8 +527,6 @@ public:
 
         // pong
         if (probe_) {
-            RUX_SEG seg;
-
             if (frm && nleft < RUX_SEG_HDR_SIZE) {
                 frm->len = p - frm->raw;
                 ASSERT(!frm->setup());
@@ -527,14 +541,6 @@ public:
                 p = frm->raw + RUX_FRM_HDR_SIZE;
                 nleft = RUX_MTU - RUX_FRM_HDR_SIZE;
             }
-
-            seg.sn = snd_nxt_;
-            seg.us = now_us;
-            seg.cmd = RUX_CMD_PON;
-            n = seg.encode(p, nleft);
-            p += n;
-            nleft -= n;
-            probe_ = 0;
         }
 
         if (nleft == 0) {
@@ -568,7 +574,6 @@ public:
 
         rcv_nxt_ = snd_nxt_ = last_us_ = 0;
         base_us_ = now_us;
-        state_ = 0;
     }
 
 
@@ -577,6 +582,7 @@ private:
         PRUX_FRM frm = new RUX_FRM;
         frm->rid = rid_;
         frm->wnd = (uint8_t)(rcv_buf_.size() > RUX_RWND_MAX ? 0 : RUX_RWND_MAX - rcv_buf_.size());
+        frm->una = rcv_nxt_;
         ::memcpy(&frm->name, &addr_, addrlen_);
         frm->namelen = addrlen_;
         return frm;
@@ -597,6 +603,7 @@ private:
     uint32_t                                        rid_;                       // rux id
 
     uint8_t                                         cwnd_;                      // 拥塞控制
+    uint8_t                                         ssthresh_;
     uint8_t                                         rmt_wnd_;                   // 对端窗口
 
     uint8_t                                         probe_;                     // 探针

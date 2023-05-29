@@ -22,14 +22,13 @@ constexpr int           ETH_FRM_SIZE            = 1500;                         
 constexpr int           RUX_MTU                 = ETH_FRM_SIZE - UDP_HDR_SIZE - IPV6_HDR_SIZE;                  // RUX Maximum Transmission Unit: 1452
 
 /* rux property */
-constexpr int           RUX_FRM_HDR_SIZE        = 4;                                                            // RUX Frame Header size: rid[3] + wnd[1]
+constexpr int           RUX_FRM_HDR_SIZE        = 10;                                                           // RUX Frame Header size: rid[3] + wnd[1]
 constexpr int           RUX_SEG_HDR_SIZE        = 13;                                                           // RUX Segment Header size: cmd[1] + sn[6] + us[6]
 constexpr int           RUX_SEG_HDR_EX_SIZE     = RUX_SEG_HDR_SIZE + 3;                                         // RUX Segment Header extension size: RUX_SEG_HDR_SIZE[13] + len[2] + frg[1]
 constexpr int           RUX_MSS                 = (RUX_MTU - RUX_SEG_HDR_EX_SIZE - RUX_FRM_HDR_SIZE) / 16 * 16; // RUX Maximum segment size
 
 /* rux command */
 constexpr int           RUX_CMD_ACK             = 0x01;                                                         // ACK
-constexpr int           RUX_CMD_PON             = 0x02;                                                         // Heart's beat: Pong
 constexpr int           RUX_CMD_PIN             = 0x03;                                                         // Heart's beat: Ping
 constexpr int           RUX_CMD_CON             = 0x04;                                                         // Connection
 constexpr int           RUX_CMD_PSH             = 0x05;                                                         // Push
@@ -48,6 +47,7 @@ constexpr int           RUX_RTO_MAX             = 1000 * 1000 * 30;
 constexpr int           RUX_TIMEOUT             = RUX_RTO_MAX * 2 * 10;
 constexpr int           RUX_FAST_ACK            = 3;
 constexpr int           RUX_XMIT_MAX            = 20;
+constexpr int           RUX_SSTHRESH_INIT       = 8;
 
 
 // IPv4 regex
@@ -89,6 +89,7 @@ typedef struct __frame_ {
     /* META */
     uint32_t             rid;                // RUX id
     uint8_t              wnd;                // receive window size
+    uint64_t             una;                // wnd una
     int64_t              time_us;            // receive timestamp(us)
     void*                rux;
 
@@ -102,6 +103,7 @@ typedef struct __frame_ {
         , name({0,{0},0})
         , rid(0)
         , wnd(0)
+        , una(0)
         , time_us(0)
         , rux(nullptr) {
         ::memset(raw, 0, RUX_MTU + 1);
@@ -132,6 +134,11 @@ typedef struct __frame_ {
             return -3;
         }
 
+        u48_decode(raw + 4, &una);
+        if (una > RUX_SN_MAX) {
+            return -4;
+        }
+
         return 0;
     }
 
@@ -147,6 +154,7 @@ typedef struct __frame_ {
 
         u24_encode(rid, raw);
         u8_encode(wnd, raw + 3);
+        u48_encode(una, raw + 4);
         return 0;
     }
 
@@ -428,6 +436,16 @@ typedef struct __snd_buf_ {
     }
 
 
+    void update_una(uint64_t una) {
+        lkr_.lock();
+        auto end = buf_.find(una);
+        if (end != buf_.end()) {
+            buf_.erase(buf_.begin(), end);
+        }
+        lkr_.unlock();
+    }
+
+
     void clear() {
         lkr_.lock();
         auto itr = buf_.begin();
@@ -447,7 +465,7 @@ typedef struct __snd_buf_ {
     }
 
 
-    void get_segs(size_t snd_wnd, std::list<PRUX_SEG> *segs, uint64_t now_us) {
+    void get_segs(std::list<PRUX_SEG> *segs, size_t n, uint64_t now_us) {
         PRUX_SEG seg;
         lkr_.lock();
         if (buf_.size() == 0) {
@@ -458,7 +476,7 @@ typedef struct __snd_buf_ {
         auto itr = buf_.begin();
         
         while (itr != buf_.end()) {
-            if (segs->size() == snd_wnd) {
+            if (segs->size() == n) {
                 break;
             }
 
@@ -588,4 +606,3 @@ private:
 
 
 #endif // __XQ_NET_COMMON__
-// 184

@@ -165,7 +165,7 @@ private:
                 continue;
             }
 
-            if (n > RUX_MTU || n < RUX_FRM_HDR_SIZE + RUX_SEG_HDR_SIZE) {
+            if (n > RUX_MTU || n < RUX_FRM_HDR_SIZE) {
                 // rux frame's length error
                 // TODO: err
                 continue;

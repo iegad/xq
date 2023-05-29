@@ -74,12 +74,12 @@ public:
     // -------------------------------
     // @endpoint: 服务节点
     // ========================================================================================================
-    void connect_node(const char* endpoint) {
-        uint64_t now_us = sys_clock();
+    void connect_node(const char* endpoint, uint64_t now_us) {
         Rux* rux = new Rux(rid_, now_us, output_que_);
         rux->addr()->ss_family = AF_INET;
         ASSERT(!str2addr(endpoint, rux->addr(), rux->addrlen()));
-        rux->set_qid(0);
+        rux->reset(now_us);
+        rux->set_state(0);
         node_map_.insert(std::make_pair(endpoint, rux));
     }
 
