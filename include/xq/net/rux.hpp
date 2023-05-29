@@ -123,7 +123,7 @@ public:
         uint64_t    now_us      = frm->time_us - base_us_;      // 当前时间
         PRUX_SEG    seg;
 
-        snd_buf_.update_ack(frm->una);
+        snd_buf_.update_una(frm->una);
 
         while (datalen > 0) {
             seg = new RUX_SEG;
