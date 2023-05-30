@@ -482,15 +482,12 @@ private:
     void _update_thread() {
         constexpr int TIMOUT_US = 500;
 
-        uint32_t rid;
         uint64_t now_us;
-        size_t n = 0;
-        bool res = false;
+        size_t n;
         Rux* rux;
 #ifndef WIN32
         timeval timeout = {0, 0};
 #endif
-
         std::unordered_set<uint32_t>::iterator itr;
 
         while (sockfd_ != INVALID_SOCKET) {
@@ -499,30 +496,23 @@ private:
             n = active_session_.size();
             sess_lkr_.unlock();
 
-            if (n > 0) {
-                sess_lkr_.lock();
-                itr = active_session_.begin();
-                sess_lkr_.unlock();
-                while (1) {
+            sess_lkr_.lock();
+            itr = active_session_.begin();
+            sess_lkr_.unlock();
+
+            while (n > 0) {
+                rux = sessions_[*itr - 1];
+                if (rux->output(now_us) < 0) {
                     sess_lkr_.lock();
-                    res = itr == active_session_.end();
+                    active_session_.erase(itr++);
                     sess_lkr_.unlock();
-
-                    if (res) {
-                        break;
-                    }
-
-                    rid = *itr;
-                    rux = sessions_[rid - 1];
-                    if (rux->output(now_us) < 0) {
-                        sess_lkr_.lock();
-                        active_session_.erase(rid);
-                        sess_lkr_.unlock();
-                        ev_.on_disconnected(rux);
-                        continue;
-                    }
-                    ++itr;
+                    ev_.on_disconnected(rux);
                 }
+                else {
+                    itr++;
+                }
+
+                n--;
             }
 #ifdef WIN32
             std::this_thread::sleep_for(std::chrono::microseconds(TIMOUT_US));
@@ -542,7 +532,7 @@ private:
     std::thread                                                             upd_thread_;        // rux update 线程
     std::list<std::thread>                                                  rux_thread_pool_;   // rux 线程
 
-    moodycamel::BlockingConcurrentQueue<PRUX_FRM>                           output_que_;        // output 队列; 
+    moodycamel::BlockingConcurrentQueue<PRUX_FRM>                           output_que_;        // output 队列;
     std::unordered_map<int, moodycamel::BlockingConcurrentQueue<PRUX_FRM>*> frm_ques_;          // 帧工作队列;  input 线程为生产者, rux 线程为消费者
     
     SPIN_LOCK                                                               sess_lkr_;

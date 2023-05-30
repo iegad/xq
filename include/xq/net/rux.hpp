@@ -52,6 +52,7 @@ public:
         , rcv_nxt_(0)
         , snd_nxt_(0)
         , last_us_(0)
+        , last_rcv_us_(0)
 
         , addr_({0,{0},0})
         , addrlen_(sizeof(addr_))
@@ -261,7 +262,7 @@ public:
         }
 
         // Step 3: 设置新的 remote window
-        if (last_us_ <= last_us || (last_us == 0 && frm->len == RUX_FRM_HDR_SIZE)) {
+        if (last_us_ < last_us || (last_us == 0 && frm->len == RUX_FRM_HDR_SIZE)) {
             last_us_ = last_us;
             rmt_wnd_ = frm->wnd;
         }
@@ -274,6 +275,10 @@ public:
             else if (cwnd_ < RUX_SWND_MAX) {
                 cwnd_++;
             }
+        }
+
+        if (last_rcv_us_ < now_us) {
+            last_rcv_us_ = now_us;
         }
 
         // Step 5: 设置对端地址
@@ -366,6 +371,11 @@ public:
         }
 
         now_us -= base_us_;
+
+        if (last_rcv_us_ > 0 && last_rcv_us_ + RUX_TIMEOUT < now_us) {
+            state_ = -1;
+            return -1;
+        }
 
         PRUX_FRM    frms[RUX_RWND_MAX * 2];
         int         nfrms   = 0, i;
@@ -615,6 +625,7 @@ private:
     uint64_t                                        rcv_nxt_;                   // 下一次接收 sn
     uint64_t                                        snd_nxt_;                   // 下一次发送 sn
     uint64_t                                        last_us_;                   // 上一次sn
+    uint64_t                                        last_rcv_us_;               // 最后一次接收时间
 
     sockaddr_storage                                addr_;                      // 对端地址
     socklen_t                                       addrlen_;                   // 对端地址长度
