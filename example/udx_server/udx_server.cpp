@@ -5,10 +5,31 @@
 #include "xq/net/rux_server.hpp"
 
 
+class EchoEvent {
+public:
+    void on_error(int err_type, void* arg) {
+
+    }
+
+    void on_message(xq::net::Rux* rux, const uint8_t *msg, int msglen) {
+        (*(uint8_t**)&msg)[msglen] = 0;
+        DLOG("%s\n", (char*)msg);
+    }
+
+    void on_connected(xq::net::Rux* rux) {
+        DLOG("%u connected\n", rux->rid());
+    }
+
+    void on_disconnected(xq::net::Rux* rux) {
+        DLOG("%u disconnected\n", rux->rid());
+    }
+};
+
+
 int 
 main(int argc, char** argv) {
     ASSERT(!rux_env_init());
-    xq::net::RuxServer server;
+    xq::net::RuxServer<EchoEvent> server;
     server.run("0.0.0.0", "6688");
     server.wait();
     ASSERT(!rux_env_release());

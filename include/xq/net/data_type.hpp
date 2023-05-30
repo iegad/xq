@@ -49,6 +49,12 @@ constexpr int           RUX_FAST_ACK            = 3;
 constexpr int           RUX_XMIT_MAX            = 20;
 constexpr int           RUX_SSTHRESH_INIT       = 8;
 
+/* error */
+constexpr int           RUX_ERR_RCV             = 1;
+constexpr int           RUX_ERR_RFRM            = 2;
+constexpr int           RUX_ERR_SND             = 3;
+constexpr int           RUX_ERR_SFRM            = 4;
+
 
 // IPv4 regex
 constexpr char REG_IPV4[] = "^((25[0-5]|(2[0-4]|1\\d|[1-9]|)\\d)\\.?\\b){4}$";

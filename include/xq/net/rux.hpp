@@ -277,7 +277,6 @@ public:
         }
 
         // Step 5: 设置对端地址
-        _set_remote_addr(&frm->name, frm->namelen);
         return 0;
     }
 
@@ -577,6 +576,17 @@ public:
     }
 
 
+    inline void set_remote_addr(const sockaddr_storage* addr, socklen_t addrlen) {
+        if (addrlen != addrlen_) {
+            addrlen_ = addrlen;
+        }
+
+        if (memcmp(addr, &addr_, addrlen)) {
+            memcpy(&addr_, addr, addrlen);
+        }
+    }
+
+
 private:
     inline PRUX_FRM _new_frm() {
         PRUX_FRM frm = new RUX_FRM;
@@ -586,17 +596,6 @@ private:
         ::memcpy(&frm->name, &addr_, addrlen_);
         frm->namelen = addrlen_;
         return frm;
-    }
-
-
-    inline void _set_remote_addr(const sockaddr_storage* addr, socklen_t addrlen) {
-        if (addrlen != addrlen_) {
-            addrlen_ = addrlen;
-        }
-
-        if (memcmp(addr, &addr_, addrlen)) {
-            memcpy(&addr_, addr, addrlen);
-        }
     }
 
 

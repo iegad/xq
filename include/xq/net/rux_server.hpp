@@ -16,6 +16,7 @@ namespace net {
 // ############################################################################################################
 // Rux 服务端
 // ############################################################################################################
+template<class TEvent>
 class RuxServer {
 public:
 
@@ -161,19 +162,14 @@ private:
             n = recvfrom(sockfd_, (char *)frm->raw, sizeof(frm->raw), 0, (sockaddr *)&frm->name, &frm->namelen);
             if (n < 0) {
                 // IO recv error
-                // TODO: err event
+                ev_.on_error(RUX_ERR_RCV, (void*)errcode);
                 continue;
             }
 
-            if (n > RUX_MTU || n < RUX_FRM_HDR_SIZE) {
-                // rux frame's length error
-                // TODO: err
-                continue;
-            }
-            
             frm->len = n;
-            if (frm->check()) {
-                // rux frame error
+            if (n > RUX_MTU || n < RUX_FRM_HDR_SIZE || frm->check()) {
+                // rux IO input error
+                ev_.on_error(RUX_ERR_RFRM, frm);
                 continue;
             }
 
@@ -188,6 +184,8 @@ private:
                 if (qid == frm_ques_.size()) {
                     qid = 0;
                 }
+                rux->set_remote_addr(&frm->name, frm->namelen);
+                ev_.on_connected(rux);
             }
 
             // move frm to frm queue
@@ -198,20 +196,20 @@ private:
         /* ---------------------------------- 停止服务 ---------------------------------- */
         delete frm;
 
-        // Step 2: join send thread
+        // Step 1: join send thread
         snd_thread_.join();
         
-        // Step 3: join rux update thread
+        // Step 2: join rux update thread
         upd_thread_.join();
 
-        // Step 4: join rux worker threads
+        // Step 3: join rux worker threads
         while (frm_ques_.size() > 0) {
             auto itr = rux_thread_pool_.begin();
             itr->join();
             rux_thread_pool_.erase(itr);
         }
 
-        // Step 5: delete all frames queues
+        // Step 4: delete all frames queues
         while (frm_ques_.size() > 0) {
             auto itr = frm_ques_.begin();
             delete itr->second;
@@ -235,7 +233,7 @@ private:
             for (i = 0; i < n; i++) {
                 frm = frms[i];
                 if (::sendto(sockfd_, (char*)frm->raw, frm->len, 0, (sockaddr*)&frm->name, frm->namelen) != frm->len) {
-                    // TODO: error
+                    ev_.on_error(RUX_ERR_SND, (void*)errcode);
                 }
                 delete frm;
             }
@@ -248,7 +246,11 @@ private:
             }
         } 
     }
+
+
 #else
+
+
     void _rcv_thread(const char *host, const char *svc) {
         constexpr int RCVMMSG_SIZE = 128;
         constexpr timeval TIMEOUT = { .tv_sec = 0, .tv_usec = 200 * 1000};
@@ -458,9 +460,7 @@ private:
                 rux = (Rux*)frm->rux;
                 if (!rux->input(frm)) {
                     while (nmsg = rux->recv(msg), nmsg > 0) {
-                        // TODO: event handle
-                        msg[nmsg] = 0;
-                        DLOG("%s\n", (char*)msg);
+                        ev_.on_message(rux, msg, nmsg);
                     }
                 }
 
@@ -486,6 +486,7 @@ private:
         uint64_t now_us;
         size_t n = 0;
         bool res = false;
+        Rux* rux;
 #ifndef WIN32
         timeval timeout = {0, 0};
 #endif
@@ -512,10 +513,12 @@ private:
                     }
 
                     rid = *itr;
-                    if (sessions_[rid - 1]->output(now_us) < 0) {
+                    rux = sessions_[rid - 1];
+                    if (rux->output(now_us) < 0) {
                         sess_lkr_.lock();
                         active_session_.erase(rid);
                         sess_lkr_.unlock();
+                        ev_.on_disconnected(rux);
                         continue;
                     }
                     ++itr;
@@ -545,6 +548,8 @@ private:
     SPIN_LOCK                                                               sess_lkr_;
     std::vector<Rux*>                                                       sessions_;
     std::unordered_set<uint32_t>                                            active_session_;
+
+    TEvent                                                                  ev_;
 
 
     RuxServer(const RuxServer&) = delete;

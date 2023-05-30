@@ -16,6 +16,7 @@ namespace net {
 // ############################################################################################################
 // Rux 客户端
 // ############################################################################################################
+template<class TEvent>
 class RuxClient {
 public:
 
@@ -121,7 +122,7 @@ private:
         // Step 3, start input thread
         upd_thread_ = std::thread(std::bind(&RuxClient::_update_thread, this));
 
-        // Step 4, start loop recfrom ...
+        // Step 4, start loop recfrom
         char endpoint[ENDPOINT_SIZE];
         uint8_t* msg = new uint8_t[RUX_MSG_MAX];
         PRUX_FRM frm = new RUX_FRM;
@@ -131,18 +132,13 @@ private:
         while (sockfd_ != INVALID_SOCKET) {
             n = recvfrom(sockfd_, (char*)frm->raw, sizeof(frm->raw), 0, (sockaddr*)&frm->name, &frm->namelen);
             if (n < 0) {
-                // TODO: error
-                continue;
-            }
-
-            if (n > RUX_MTU) {
-                // TODO: error
+                ev_.on_error(RUX_ERR_RCV, (void*)errcode);
                 continue;
             }
 
             frm->len = n;
-            if (frm->check()) {
-                // TODO: error
+            if (n > RUX_MTU || n < RUX_FRM_HDR_SIZE || frm->check()) {
+                ev_.on_error(RUX_ERR_RFRM, frm);
                 continue;
             }
 
@@ -160,7 +156,7 @@ private:
             }
 
             while (n = rux->recv(msg), n > 0) {
-                // TODO: event msg handle
+                ev_.on_message(rux, msg, n);
             }
         }
 
@@ -186,8 +182,7 @@ private:
             for (i = 0; i < n; i++) {
                 frm = frms[i];
                 if (::sendto(sockfd_, (char*)frm->raw, frm->len, 0, (sockaddr*)&frm->name, frm->namelen) < 0) {
-                    // TODO: ...
-                    DLOG("sendto failed: %d\n", errcode);
+                    ev_.on_error(RUX_ERR_SND, (void*)errcode);
                 }
                 delete frm;
             }
@@ -357,7 +352,7 @@ private:
             while (itr != node_map_.end()) {
                 rux = itr->second;
                 if (rux->output(now_us) < 0) {
-                    // TODO
+                    // TODO: error
                 }
             }
 #ifdef WIN32
@@ -379,6 +374,8 @@ private:
 
     std::unordered_map<std::string, Rux*>           node_map_;      // service node's map
     moodycamel::BlockingConcurrentQueue<PRUX_FRM>   output_que_;
+
+    TEvent                                          ev_;
 
 
     RuxClient(const RuxClient&) = delete;

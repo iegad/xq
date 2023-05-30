@@ -1,14 +1,36 @@
 #include "xq/net/rux_client.hpp"
 
 
-xq::net::RuxClient* client;
+class EchoEvent {
+public:
+    void on_error(int err_type, void* arg) {
+
+    }
+
+    void on_connected(xq::net::Rux* rux) {
+        
+    }
+
+    void on_disconnected(xq::net::Rux* rux) {
+
+    }
+
+    void on_message(xq::net::Rux* rux, const uint8_t* msg, int msglen) {
+
+    }
+};
+
+
+xq::net::RuxClient<EchoEvent>* client;
 
 #define SERVER_ENDPOINT ("127.0.0.1:6688")
 
 
+
+
+
 void
 snd_worker() {
-    int res;
     uint64_t now_us;
     char* buf = new char[xq::net::RUX_MSG_MAX]{};
 
@@ -28,7 +50,7 @@ snd_worker() {
 int 
 main(int argc, char** argv) {
     ASSERT(!rux_env_init());
-    client = new xq::net::RuxClient(1);
+    client = new xq::net::RuxClient<EchoEvent>(1);
     client->connect_node(SERVER_ENDPOINT, sys_clock());
     std::thread t(snd_worker);
     client->run();
