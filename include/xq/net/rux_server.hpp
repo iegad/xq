@@ -61,7 +61,8 @@ public:
     // ========================================================================================================
     inline void run(const char *host, const char *svc, bool async = true) {
         if (!async) {
-            return _rcv_thread(host, svc);
+            _rcv_thread(host, svc);
+            return;
         }
         
         rcv_thread_ = std::thread(std::bind(&RuxServer::_rcv_thread, this, host, svc));
@@ -162,14 +163,14 @@ private:
             n = recvfrom(sockfd_, (char *)frm->raw, sizeof(frm->raw), 0, (sockaddr *)&frm->name, &frm->namelen);
             if (n < 0) {
                 // IO recv error
-                ev_.on_error(RUX_ERR_RCV, (void*)errcode);
+                ev_.on_error(ErrType::IO_RCV, (void*)errcode);
                 continue;
             }
 
             frm->len = n;
             if (n > RUX_MTU || n < RUX_FRM_HDR_SIZE || frm->check()) {
                 // rux IO input error
-                ev_.on_error(RUX_ERR_RFRM, frm);
+                ev_.on_error(ErrType::IO_RCV_FRAME, frm);
                 continue;
             }
 
@@ -177,19 +178,22 @@ private:
             frm->rux = rux = sessions_[frm->rid - 1];
 
             if (rux->state()) {
-                sess_lkr_.lock();
-                active_session_.insert(rux->rid());
-                sess_lkr_.unlock();
-                rux->set_rux_que(frm_ques_[qid++]);
+                rux->set_qid(qid++);
                 if (qid == frm_ques_.size()) {
                     qid = 0;
                 }
-                rux->set_remote_addr(&frm->name, frm->namelen);
-                ev_.on_connected(rux);
+
+                if (ev_.on_connected(rux)) {
+                    continue;
+                }
+                sess_lkr_.lock();
+                active_session_.insert(rux->rid());
+                sess_lkr_.unlock();
             }
 
+            rux->set_remote_addr(&frm->name, frm->namelen);
             // move frm to frm queue
-            rux->rux_que()->enqueue(frm);
+            frm_ques_[rux->qid()]->enqueue(frm);
             frm = new RUX_FRM;
         }
 
@@ -218,7 +222,7 @@ private:
 
         active_session_.clear();
         for (auto& r : sessions_) {
-            r->set_rux_que(nullptr);
+            r->set_qid(-1);
             r->set_state(-1);
         }
     }
@@ -233,7 +237,7 @@ private:
             for (i = 0; i < n; i++) {
                 frm = frms[i];
                 if (::sendto(sockfd_, (char*)frm->raw, frm->len, 0, (sockaddr*)&frm->name, frm->namelen) != frm->len) {
-                    ev_.on_error(RUX_ERR_SND, (void*)errcode);
+                    ev_.on_error(ErrType::IO_SND, (void*)errcode);
                 }
                 delete frm;
             }
@@ -310,7 +314,7 @@ private:
             if (n < 0) {
                 err = errcode;
                 if (err != EAGAIN && err != EINTR) {
-                    // TODO: error
+                    ev_.on_error(ErrType::IO_RCV, (void*)errcode);
                     break;
                 }
                 continue;
@@ -322,15 +326,11 @@ private:
 
             now_us = sys_clock();
             for (i = 0; i < n; i++) {
-                if (msgs[i].msg_len > RUX_MTU) {
-                    // TODO: error
-                    continue;
-                }
-
                 frm = frms[i];
                 frm->len = msgs[i].msg_len;
-                if (frm->check()) {
-                    // TODO: error
+
+                if (frm->len > RUX_MTU || frm->len < RUX_FRM_HDR_SIZE || frm->check()) {
+                    ev_.on_error(ErrType::IO_RCV_FRAME, frm);
                     continue;
                 }
 
@@ -342,15 +342,22 @@ private:
                     if (qid == nprocess) {
                         qid = 0;
                     }
+
+                    if (ev_.on_connected(rux)) {
+                        continue;
+                    }
+
                     sess_lkr_.lock();
                     active_session_.insert(rux->rid());
                     sess_lkr_.unlock();
                 }
 
+                rux->set_remote_addr(&frm->name, frm->namelen);
                 rux_frms[rux->qid()][rux_frms_count[rux->qid()]++] = frm;
 
                 //
                 frm = frms[i] = new RUX_FRM;
+
                 hdr                 = &msgs[i].msg_hdr;
                 hdr->msg_name       = &frm->name;
                 hdr->msg_namelen    = frm->namelen;
@@ -413,6 +420,9 @@ private:
             if (n > 0) {
                 for (i = 0; i < n; i++) {
                     frm = frms[i];
+                    char buf[100] = {0};
+                    addr2str(&frm->name, buf, 100);
+                    DLOG("SNDMSG TO %s\n", buf);
 
                     hdr                 = &msgs[i].msg_hdr;
                     hdr->msg_name       = &frm->name;
@@ -429,7 +439,7 @@ private:
                 }
 
                 if (err < 0) {
-                    // TODO: error
+                    ev_.on_error(ErrType::IO_SND, (void*)errcode);
                 }
             }
         }
@@ -441,6 +451,8 @@ private:
             }
         }
     }
+
+
 #endif
 
 
@@ -458,10 +470,15 @@ private:
             for (i = 0; i < nfrms; i++) {
                 frm = frms[i];
                 rux = (Rux*)frm->rux;
-                if (!rux->input(frm)) {
-                    while (nmsg = rux->recv(msg), nmsg > 0) {
-                        ev_.on_message(rux, msg, nmsg);
-                    }
+                if (rux->input(frm)) {
+                    ev_.on_error(ErrType::RUX_INPUT, frm);
+                    delete frm;
+                    continue;
+                }
+
+                while (nmsg = rux->recv(msg), nmsg > 0) {
+                    rux->set_last_rcv_us(frm->time_us);
+                    ev_.on_message(rux, msg, nmsg);
                 }
 
                 delete frm;
@@ -502,7 +519,7 @@ private:
 
             while (n > 0) {
                 rux = sessions_[*itr - 1];
-                if (rux->output(now_us) < 0) {
+                if (rux->last_rcv_us() + RUX_TIMEOUT < now_us || rux->output(now_us) < 0) {
                     sess_lkr_.lock();
                     active_session_.erase(itr++);
                     sess_lkr_.unlock();

@@ -50,10 +50,13 @@ constexpr int           RUX_XMIT_MAX            = 20;
 constexpr int           RUX_SSTHRESH_INIT       = 8;
 
 /* error */
-constexpr int           RUX_ERR_RCV             = 1;
-constexpr int           RUX_ERR_RFRM            = 2;
-constexpr int           RUX_ERR_SND             = 3;
-constexpr int           RUX_ERR_SFRM            = 4;
+enum ErrType {
+    IO_RCV,
+    IO_RCV_FRAME,
+    IO_SND,
+    RUX_INPUT,
+    RUX_OUTPUT
+};
 
 
 // IPv4 regex

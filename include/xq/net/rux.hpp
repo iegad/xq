@@ -44,6 +44,7 @@ public:
 
         , probe_(0)
         , state_(-1)
+        , qid_(-1)
         , rto_(RUX_RTO_MIN)
         , srtt_(0)
         , rttval_(0)
@@ -57,7 +58,6 @@ public:
         , addr_({0,{0},0})
         , addrlen_(sizeof(addr_))
 
-        , rux_que_(nullptr)
         , output_que_(output_que) {
         ASSERT(rid > 0 && rid <= RUX_RID_MAX);
     }
@@ -86,14 +86,14 @@ public:
     }
 
 
-    inline moodycamel::BlockingConcurrentQueue<PRUX_FRM>* rux_que() const {
-        return rux_que_;
+    inline int qid() const {
+        return qid_;
     }
 
 
-    inline void set_rux_que(moodycamel::BlockingConcurrentQueue<PRUX_FRM>* rux_que) {
+    inline void set_qid(int qid) {
         state_ = 0;
-        rux_que_ = rux_que;
+        qid_ = qid;
     }
 
 
@@ -110,6 +110,16 @@ public:
     inline void set_state(int state) {
         ASSERT(state == 0 || state == -1);
         state_ = state;
+    }
+
+
+    inline uint64_t last_rcv_us() const {
+        return last_rcv_us_;
+    }
+
+
+    inline void set_last_rcv_us(uint64_t now_us) {
+        last_rcv_us_ = now_us;
     }
 
 
@@ -221,7 +231,7 @@ public:
                         seg->addrlen = frm->namelen;
                         rcv_buf_.insert(seg);
                         if (rcv_buf_.size() > RUX_SWND_MAX) {
-                            DLOG("###################################################################### %lu\n", rcv_buf_.size());
+                            DLOG("###################################################################### %u\n", rcv_buf_.size());
                         }
                     }
 
@@ -275,10 +285,6 @@ public:
             else if (cwnd_ < RUX_SWND_MAX) {
                 cwnd_++;
             }
-        }
-
-        if (last_rcv_us_ < now_us) {
-            last_rcv_us_ = now_us;
         }
 
         // Step 5: 设置对端地址
@@ -371,11 +377,6 @@ public:
         }
 
         now_us -= base_us_;
-
-        if (last_rcv_us_ > 0 && last_rcv_us_ + RUX_TIMEOUT < now_us) {
-            state_ = -1;
-            return -1;
-        }
 
         PRUX_FRM    frms[RUX_RWND_MAX * 2];
         int         nfrms   = 0, i;
@@ -591,8 +592,8 @@ public:
             addrlen_ = addrlen;
         }
 
-        if (memcmp(addr, &addr_, addrlen)) {
-            memcpy(&addr_, addr, addrlen);
+        if (::memcmp(&addr_, addr, addrlen)) {
+            ::memcpy(&addr_, addr, addrlen);
         }
     }
 
@@ -617,6 +618,7 @@ private:
 
     uint8_t                                         probe_;                     // 探针
     int                                             state_;
+    int                                             qid_;                       // rux_que index
     int                                             rto_;                       // RTO
     int                                             srtt_;                      // smooth RTT
     int                                             rttval_;                    
@@ -634,7 +636,6 @@ private:
     RUX_SBUF                                        snd_buf_;                   // 发送缓冲区
     RUX_RBUF                                        rcv_buf_;                   // 接收队列
 
-    moodycamel::BlockingConcurrentQueue<PRUX_FRM>*  rux_que_;
     moodycamel::BlockingConcurrentQueue<PRUX_FRM>   &output_que_;               // io output queue 引用
 }; // class Rux;
 

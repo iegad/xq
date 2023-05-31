@@ -7,7 +7,7 @@
 
 class EchoEvent {
 public:
-    void on_error(int err_type, void* arg) {
+    void on_error(xq::net::ErrType et, void* arg) {
 
     }
 
@@ -16,8 +16,9 @@ public:
         DLOG("%s\n", (char*)msg);
     }
 
-    void on_connected(xq::net::Rux* rux) {
+    int on_connected(xq::net::Rux* rux) {
         DLOG("%u connected\n", rux->rid());
+        return 0;
     }
 
     void on_disconnected(xq::net::Rux* rux) {

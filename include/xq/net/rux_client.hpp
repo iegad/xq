@@ -132,13 +132,13 @@ private:
         while (sockfd_ != INVALID_SOCKET) {
             n = recvfrom(sockfd_, (char*)frm->raw, sizeof(frm->raw), 0, (sockaddr*)&frm->name, &frm->namelen);
             if (n < 0) {
-                ev_.on_error(RUX_ERR_RCV, (void*)errcode);
+                ev_.on_error(ErrType::IO_RCV, (void*)errcode);
                 continue;
             }
 
             frm->len = n;
             if (n > RUX_MTU || n < RUX_FRM_HDR_SIZE || frm->check()) {
-                ev_.on_error(RUX_ERR_RFRM, frm);
+                ev_.on_error(ErrType::IO_RCV_FRAME, frm);
                 continue;
             }
 
@@ -182,7 +182,7 @@ private:
             for (i = 0; i < n; i++) {
                 frm = frms[i];
                 if (::sendto(sockfd_, (char*)frm->raw, frm->len, 0, (sockaddr*)&frm->name, frm->namelen) < 0) {
-                    ev_.on_error(RUX_ERR_SND, (void*)errcode);
+                    ev_.on_error(ErrType::IO_SND, (void*)errcode);
                 }
                 delete frm;
             }
@@ -237,7 +237,7 @@ private:
             if (n < 0) {
                 err = errcode;
                 if (err != EAGAIN && err != EINTR) {
-                    // TODO: error
+                    ev_.on_error(ErrType::IO_RCV, (void*)errcode);
                     break;
                 }
                 continue;
@@ -249,15 +249,11 @@ private:
 
             now_us = sys_clock();
             for (i = 0; i < n; i++) {
-                if (msgs[i].msg_len > RUX_MTU) {
-                    // TODO: error
-                    continue;
-                }
-
                 frm = frms[i];
                 frm->len = msgs[i].msg_len;
-                if (frm->check()) {
-                    // TODO: error
+
+                if (frm->len > RUX_MTU || frm->len < RUX_FRM_HDR_SIZE || frm->check()) {
+                    ev_.on_error(ErrType::IO_RCV_RUX, frm);
                     continue;
                 }
 
@@ -275,7 +271,7 @@ private:
                 }
 
                 while(n = rux->recv(msg), n > 0) {
-                    // TODO: event msg handle
+                    ev_.on_message(rux, msg, n);
                 }
             }
         } // while(sockfd_ != INVALID_SOCKET;
@@ -322,7 +318,7 @@ private:
                 }
 
                 if (res < 0) {
-                    // TODO: error
+                    ev_.on_error(ErrType::IO_SND, (void*)errcode);
                 }
             }
         }
@@ -352,7 +348,7 @@ private:
             while (itr != node_map_.end()) {
                 rux = itr->second;
                 if (rux->output(now_us) < 0) {
-                    // TODO: error
+                    ev_.on_error(ErrType::RUX_OUTPUT, rux);
                 }
             }
 #ifdef WIN32
