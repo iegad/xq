@@ -477,7 +477,6 @@ private:
                 }
 
                 while (nmsg = rux->recv(msg), nmsg > 0) {
-                    rux->set_last_rcv_us(frm->time_us);
                     ev_.on_message(rux, msg, nmsg);
                 }
 
@@ -519,7 +518,7 @@ private:
 
             while (n > 0) {
                 rux = sessions_[*itr - 1];
-                if (rux->last_rcv_us() + RUX_TIMEOUT < now_us || rux->output(now_us) < 0) {
+                if (rux->output(now_us) < 0) {
                     sess_lkr_.lock();
                     active_session_.erase(itr++);
                     sess_lkr_.unlock();

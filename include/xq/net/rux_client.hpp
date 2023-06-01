@@ -350,6 +350,7 @@ private:
                 if (rux->output(now_us) < 0) {
                     ev_.on_error(ErrType::RUX_OUTPUT, rux);
                 }
+                itr++;
             }
 #ifdef WIN32
             std::this_thread::sleep_for(std::chrono::microseconds(500));

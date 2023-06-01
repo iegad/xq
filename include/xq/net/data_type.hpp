@@ -230,7 +230,8 @@ typedef struct __segment_ {
     // 设置 data 数据
     //      最好使用该法来 copy 消息数据, 因为该方法会将 datalen 一并赋值.
     // ===========================================================================================
-    void set_data(const uint8_t* data, uint16_t datalen) {
+    void set_data(const uint8_t* data, int datalen) {
+        ASSERT(data && datalen <= RUX_MTU);
         ::memcpy(this->data, data, datalen);
         len = datalen;
     }
@@ -238,9 +239,13 @@ typedef struct __segment_ {
 
     // ===========================================================================================
     // segment 编码
-    //      成功返回 0, 否则返回 -1
+    //      成功返回 编码长度, 否则返回 -1
     // ===========================================================================================
-    int encode(uint8_t* buf, uint16_t buflen) {
+    int encode(uint8_t* buf, int buflen) {
+        if (buflen > RUX_MTU || buflen < RUX_SEG_HDR_SIZE) {
+            DLOG("------------------>> buflen = %d\n", buflen);
+            ::exit(1);
+        }
         ASSERT(buf && buflen >= RUX_SEG_HDR_SIZE && buflen <= RUX_MTU);
 
         uint8_t* p = buf;
@@ -491,14 +496,20 @@ typedef struct __snd_buf_ {
 
             seg = itr->second;
 
+
             if (seg->xmit == 0) {
                 segs->emplace_back(seg);
             }
-            else if (seg->resend_us <= now_us) {
-                segs->emplace_back(seg);
-            }
-            else if (seg->fastack >= RUX_FAST_ACK) {
-                segs->emplace_back(seg);
+            else {
+                if (seg->resend_us <= now_us) {
+                    segs->emplace_back(seg);
+                }
+                else if (seg->fastack >= RUX_FAST_ACK) {
+                    segs->emplace_back(seg);
+                }
+                else if (seg->sn == 0) {
+                    break;
+                }
             }
 
             itr++;
@@ -566,47 +577,104 @@ private:
 // 接收缓冲区
 // ###############################################################################################
 typedef struct __rcv_buf_ {
+    __rcv_buf_() : nsize_(0) {
+        ::memset(buf_, 0, MAX * sizeof(PRUX_SEG));
+    }
+
+
+    ~__rcv_buf_() {
+        clear();
+    }
+
+
     int size() {
-        return (int)buf_.size();
+        return nsize_;
     }
 
 
     void clear() {
-        auto itr = buf_.begin();
-        while(itr != buf_.end()) {
-            delete itr->second;
-            buf_.erase(itr++);
+        if (nsize_ > 0) {
+            nsize_ = 0;
+            for (int i = 0; i < MAX; i++) {
+                if (buf_[i]) {
+                    delete buf_[i];
+                    buf_[i] = nullptr;
+                }
+            }
         }
     }
 
 
-    std::map<uint64_t, PRUX_SEG>::iterator begin() {
-        return buf_.begin();
+    int get_msg(uint8_t *msg, uint64_t *rcv_nxt) {
+        int pos, n = 0, ok = 0;
+        uint64_t nxt = *rcv_nxt;
+        PRUX_SEG segs[RUX_FRM_MAX];
+        PRUX_SEG seg;
+        uint64_t save = *rcv_nxt;
+
+        for (uint64_t beg = save, end = save + nsize_; beg <= end; beg++) {
+            pos = (int)(beg % MAX);
+            seg = buf_[pos];
+            if (!seg) {
+                return 0;
+            }
+
+            nxt++;
+            segs[n++] = seg;
+            if (seg->frg == 0) {
+                ok = 1;
+                break;
+            }
+        }
+
+        if (ok) {
+            uint8_t* p = msg;
+            for (int i = 0; i < n; i++) {
+                seg = segs[i];
+                ::memcpy(p, seg->data, seg->len);
+                p += seg->len;
+            }
+
+            for (uint64_t beg = save; beg < nxt; beg++) {
+                pos = (int)(beg % MAX);
+                delete buf_[pos];
+                buf_[pos] = nullptr;
+            }
+
+            nsize_ -= n;
+            *rcv_nxt = nxt;
+            return p - msg;
+        }
+
+        return 0;
     }
 
 
-    std::map<uint64_t, PRUX_SEG>::iterator end() {
-        return buf_.end();
-    }
-
-
-    void erase(std::map<uint64_t, PRUX_SEG>::iterator beg, std::map<uint64_t, PRUX_SEG>::iterator end) {
-        buf_.erase(beg, end);
+    void erase(uint64_t beg, uint64_t end) {
+        int pos;
+        for (; beg <= end; beg++) {
+            pos = (int)(beg % MAX);
+            delete buf_[pos];
+            buf_[pos] = nullptr;
+        }
     }
 
 
     void insert(PRUX_SEG seg) {
-        buf_.insert(std::make_pair(seg->sn, seg));
+        buf_[seg->sn % MAX] = seg;
+        nsize_++;
     }
 
 
     int count(uint64_t sn) {
-        return (int)buf_.count(sn);
+        return buf_[sn % MAX] == nullptr ? 0 : 1;
     }
 
 
 private:
-    std::map<uint64_t, PRUX_SEG> buf_;
+    static constexpr int MAX = RUX_RWND_MAX * 1.2;
+    int nsize_;
+    PRUX_SEG buf_[MAX];
 } RUX_RBUF, *PRUX_RBUF;
 
 

@@ -113,16 +113,6 @@ public:
     }
 
 
-    inline uint64_t last_rcv_us() const {
-        return last_rcv_us_;
-    }
-
-
-    inline void set_last_rcv_us(uint64_t now_us) {
-        last_rcv_us_ = now_us;
-    }
-
-
     // ========================================================================================================
     // input 用于处理原始UDP数据
     // ========================================================================================================
@@ -135,10 +125,11 @@ public:
         PRUX_SEG    seg;
 
         snd_buf_.update_una(frm->una);
+        DLOG("[INPUT] frm UNA[%llu]\n", frm->una);
 
         while (datalen > 0) {
             seg = new RUX_SEG;
-
+            
             // -------------------- Step 1: 解析 Segment --------------------
             n = seg->decode(p, datalen);
             if (n < 0) {
@@ -169,6 +160,7 @@ public:
                 }
 
                 snd_buf_.update_ack(seg->sn);
+
                 /* ---------------------
                  * 这里可能会出现负值.
                  * 例如:
@@ -287,6 +279,8 @@ public:
             }
         }
 
+        last_rcv_us_ = frm->time_us;
+
         // Step 5: 设置对端地址
         return 0;
     }
@@ -297,44 +291,7 @@ public:
     // @return 读缓冲区中有数据返回 msg数据长度, 否则返回 0
     // ========================================================================================================
     int recv(uint8_t* msg) {
-        int i, ok = 0, n = 0;
-
-        uint64_t                                nxt = rcv_nxt_;
-        PRUX_SEG                                seg;
-        PRUX_SEG                                segs[RUX_FRM_MAX];
-        std::map<uint64_t, PRUX_SEG>::iterator  itr;
-
-        for (itr = rcv_buf_.begin(); itr != rcv_buf_.end(); ++itr) {
-            seg = itr->second;
-            if (seg->sn != nxt) {
-                return 0;
-            }
-
-            nxt++;
-            segs[n++] = seg;
-            if (!seg->frg) {
-                ok = 1;
-                itr++;
-                break;
-            }
-        }
-
-        if (ok) {
-            rcv_nxt_ = nxt;
-            rcv_buf_.erase(rcv_buf_.begin(), itr);
-
-            uint8_t* p = msg;
-            for (i = 0; i < n; i++) {
-                seg = segs[i];
-                ::memcpy(p, seg->data, seg->len);
-                p += seg->len;
-                delete seg;
-            }
-
-            return p - msg;
-        }
-
-        return 0;
+        return rcv_buf_.get_msg(msg, &rcv_nxt_);
     }
 
 
@@ -372,19 +329,22 @@ public:
     // output 将需要发送的协议数据投递到 output_que中
     // ========================================================================================================
     int output(uint64_t now_us) {
+        if (last_rcv_us_ + RUX_TIMEOUT < now_us) {
+            state_ = -1;
+        }
+
         if (state_ == -1) {
             return -1;
         }
 
         now_us -= base_us_;
 
-        PRUX_FRM    frms[RUX_RWND_MAX * 2];
-        int         nfrms   = 0, i;
+        int nfrms = 0, nleft = 0, i, n;
 
-        PRUX_FRM    frm     = nullptr;
-        uint8_t*    p       = nullptr;
-        uint16_t    nleft   = 0;
-        uint16_t    n;
+        PRUX_FRM frms[RUX_RWND_MAX * 2];
+        PRUX_FRM frm     = nullptr;
+        uint8_t* p       = nullptr;
+        
 
         // ACK
         if (ack_que_.size() > 0) {
@@ -436,10 +396,6 @@ public:
             snd_buf_.get_segs(&seg_list, snd_wnd, now_us);
             
             for (auto& item : seg_list) {
-                if (snd_wnd == 0) {
-                    break;
-                }
-
                 if (frm && nleft < RUX_SEG_HDR_EX_SIZE + item->len) {
                     frm->len = p - frm->raw;
                     ASSERT(!frm->setup());
@@ -456,7 +412,7 @@ public:
                 else if (item->xmit >= RUX_XMIT_MAX) {
                     // 当重传到上限时, 将该rux 视频无效
                     state_ = -1;
-
+                    DLOG(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> SN[%llu] resend LIMIT\n", item->sn);
                     for (i = 0; i < nfrms; i++) {
                         delete frms[i];
                     }
@@ -469,13 +425,15 @@ public:
                 }
                 else if (item->resend_us <= now_us) {
                     item->rto *= 1.3;
-                    // TODO 超时重传时, 重新计算 CWND
+                    ssthresh_ = cwnd_ / 2;
+                    cwnd_ = 1;
                 }
                 else if (item->fastack >= RUX_FAST_ACK) {
                     item->fastack = 0;
                     item->rto = rto_;
 
-                    // TODO 快速重传时, 重新计算CWND
+                    cwnd_ /= 2;
+                    ssthresh_ = cwnd_;
                 }
 
                 item->xmit++;
@@ -492,8 +450,6 @@ public:
                 n = item->encode(p, nleft);
                 p += n;
                 nleft -= n;
-
-                snd_wnd--;
             }
 
             if (probe_ && seg_list.size()) {
