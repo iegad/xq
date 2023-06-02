@@ -124,6 +124,7 @@ public:
         uint64_t    now_us      = frm->time_us - base_us_;      // 当前时间
         PRUX_SEG    seg;
 
+        DLOG("[INPUT] Frame una[%llu]\n", frm->una);
         snd_buf_.update_una(frm->una);
 
         while (datalen > 0) {
@@ -142,7 +143,7 @@ public:
             }
 
             // -------------------- Step 2: 消息分发 --------------------
-            //DLOG("[INPUT] seg SN[%llu] CMD[%d]\n", seg->sn, seg->cmd);
+            DLOG("[INPUT] seg SN[%llu] CMD[%d]\n", seg->sn, seg->cmd);
             switch (seg->cmd) {
 
             /* ------------- RUX_CMD_ACK -------------
@@ -373,12 +374,15 @@ public:
                 }
 
                 ack = *ack_itr;
-                seg.cmd = RUX_CMD_ACK;
-                seg.sn = ack->sn;
-                seg.us = ack->us;
-                n = seg.encode(p, nleft);
-                p += n;
-                nleft -= n;
+                if (ack->sn >= frm->una) {
+                    seg.cmd = RUX_CMD_ACK;
+                    seg.sn = ack->sn;
+                    seg.us = ack->us;
+                    n = seg.encode(p, nleft);
+                    p += n;
+                    nleft -= n;
+                }
+                
                 delete ack;
                 ack_list.erase(ack_itr++);
             }

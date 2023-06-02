@@ -219,15 +219,10 @@ typedef struct __segment_ {
         , addr(nullptr)
         , addrlen(sizeof(sockaddr_storage)) {
         ::memset(data, 0, RUX_MSS);
-
-        static std::atomic<int> ncount = 0;
-        DLOG(" >>>>>>>>>>>>>>>>>>>>>>>>>>>> new Segment [%d]\n", ++ncount);
     }
 
 
     ~__segment_() {
-        static std::atomic<int> ncount = 0;
-        DLOG(" --------------------------- delete Segment [%d]\n", ++ncount);
     }
 
 
@@ -457,13 +452,14 @@ typedef struct __snd_buf_ {
 
     void update_una(uint64_t una) {
         lkr_.lock();
-        auto end = buf_.find(una);
-        if (end != buf_.end()) {
-            auto itr = buf_.begin();
-            while (itr != end) {
-                delete itr->second;
-                buf_.erase(itr++);
+        auto itr = buf_.begin();
+        while (itr != buf_.end()) {
+            if (itr->second->sn >= una) {
+                break;
             }
+
+            delete itr->second;
+            buf_.erase(itr++);
         }
         lkr_.unlock();
     }
