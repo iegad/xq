@@ -125,7 +125,6 @@ public:
         PRUX_SEG    seg;
 
         snd_buf_.update_una(frm->una);
-        DLOG("[INPUT] frm UNA[%llu]\n", frm->una);
 
         while (datalen > 0) {
             seg = new RUX_SEG;
@@ -143,7 +142,7 @@ public:
             }
 
             // -------------------- Step 2: 消息分发 --------------------
-            DLOG("[INPUT] seg SN[%llu] CMD[%d]\n", seg->sn, seg->cmd);
+            //DLOG("[INPUT] seg SN[%llu] CMD[%d]\n", seg->sn, seg->cmd);
             switch (seg->cmd) {
 
             /* ------------- RUX_CMD_ACK -------------
@@ -539,7 +538,7 @@ public:
         rto_ = RUX_RTO_MIN;
 
         rcv_nxt_ = snd_nxt_ = last_us_ = 0;
-        base_us_ = now_us;
+        last_rcv_us_ = base_us_ = now_us;
     }
 
 
