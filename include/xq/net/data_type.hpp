@@ -42,7 +42,7 @@ constexpr uint64_t      RUX_SN_MAX              = 0x0000FFFFFFFFFFFF;           
 constexpr uint64_t      RUX_US_MAX              = 0x0000FFFFFFFFFFFF;                                           // Maximum timestamp(us)
 constexpr int           RUX_FRM_MAX             = 92;                                                           // Maximum fragment size
 constexpr int           RUX_MSG_MAX             = RUX_FRM_MAX * RUX_MSS;                                        // Maximum signle massage's length
-constexpr int           RUX_RTO_MIN             = 200 *1000;                                                    // RTO MIN 200ms
+constexpr int           RUX_RTO_MIN             = 200 * 1000;                                                    // RTO MIN 200ms
 constexpr int           RUX_RTO_MAX             = 1000 * 1000 * 30;                                             // RTO MAX 30s
 constexpr int           RUX_TIMEOUT             = RUX_RTO_MAX * 2 * 10;                                         // TIMEOUT: 10 min
 constexpr int           RUX_FAST_ACK            = 3;
@@ -416,18 +416,38 @@ private:
 // 发送缓冲区(Lockfree)
 // ###############################################################################################
 typedef struct __snd_buf_ {
+    __snd_buf_()
+        : nsize_(0)
+        , max_sn_(0)
+        , snd_una_(0) {
+        ::memset(buf_, 0, sizeof(PRUX_SEG) * MAX);
+    }
+
+
+    ~__snd_buf_() {
+        clear();
+    }
+
+
     int insert(const PRUX_SEG seg) {
-        constexpr int MAX_SIZE = RUX_SWND_MAX * 4;
+        int pos = seg->sn % MAX;
 
         lkr_.lock();
-        if (buf_.size() >= MAX_SIZE) {
+        if (nsize_ >= MAX || buf_[pos]) {
             lkr_.unlock();
             return -1;
         }
 
-        auto itr = buf_.insert(std::make_pair(seg->sn, seg));
+        if (nsize_ > 0 && max_sn_ + 1 != seg->sn) {
+            lkr_.unlock();
+            return -1;
+        }
+
+        max_sn_ = seg->sn;
+        buf_[pos] = seg;
+        nsize_++;
         lkr_.unlock();
-        return itr.second ? 0 : -1;
+        return 0;
     }
 
 
@@ -436,49 +456,91 @@ typedef struct __snd_buf_ {
     //      从 snd_buf_ 中删除对应的 Segment, 并将被跳过的 Segment 快重传标志递增 1.
     // ===========================================================================================
     void update_ack(uint64_t sn) {
+        int pos = sn % MAX;
         lkr_.lock();
-        auto end = buf_.find(sn);
-        if (end != buf_.end()) {
-            for (auto beg = buf_.begin(); beg != end; ++beg) {
-                beg->second->fastack++;
-            }
 
-            delete end->second;
-            buf_.erase(end);
+        if (sn >= snd_una_ && sn <= max_sn_ && buf_[pos]) {
+            delete buf_[pos];
+            buf_[pos] = nullptr;
+            nsize_--;
+
+            if (sn == snd_una_) {
+                if (nsize_ > 0) {
+                    for (uint64_t i = snd_una_, n = max_sn_; i <= n; i++) {
+                        pos = i % MAX;
+                        if (buf_[pos]) {
+                            snd_una_ = buf_[pos]->sn;
+                            break;
+                        }
+                    }
+                }
+                else {
+                    snd_una_++;
+                }
+            }
         }
+
         lkr_.unlock();
     }
 
 
     void update_una(uint64_t una) {
         lkr_.lock();
-        auto itr = buf_.begin();
-        while (itr != buf_.end()) {
-            if (itr->second->sn >= una) {
-                break;
+        if (nsize_ > 0 && una <= max_sn_ + 1 && una > snd_una_) {
+
+            int pos, n = 0;
+            uint64_t i;
+            
+            for (i = snd_una_; i < una; i++) {
+                pos = i % MAX;
+                if (buf_[pos]) {
+                    delete buf_[pos];
+                    buf_[pos] = nullptr;
+                    n++;
+                }
             }
 
-            delete itr->second;
-            buf_.erase(itr++);
+            nsize_ -= n;
+            snd_una_ += n;
+
+            if (nsize_ > 0) {
+                for (; i <= max_sn_; i++) {
+                    pos = i % MAX;
+                    if (buf_[pos]) {
+                        snd_una_ = buf_[pos]->sn;
+                        break;
+                    }
+                }
+            }
         }
         lkr_.unlock();
     }
 
 
     void clear() {
+        int pos;
         lkr_.lock();
-        auto itr = buf_.begin();
-        while (itr != buf_.end()) {
-            delete itr->second;
-            buf_.erase(itr++);
+
+        if (nsize_ > 0) {
+            for (uint64_t beg = snd_una_; beg <= max_sn_; beg++) {
+                pos = beg % MAX;
+                if (buf_[pos]) {
+                    delete buf_[pos];
+                    buf_[pos] = nullptr;
+                }
+            }
         }
+        else {
+            nsize_ = 0;
+        }
+
         lkr_.unlock();
     }
 
 
     size_t size() {
         lkr_.lock();
-        size_t n = buf_.size();
+        size_t n = nsize_;
         lkr_.unlock();
         return n;
     }
@@ -486,47 +548,44 @@ typedef struct __snd_buf_ {
 
     void get_segs(std::list<PRUX_SEG> *segs, size_t n, uint64_t now_us) {
         PRUX_SEG seg;
+        int pos;
         lkr_.lock();
-        if (buf_.size() == 0) {
-            lkr_.unlock();
-            return;
-        }
-
-        auto itr = buf_.begin();
-        
-        while (itr != buf_.end()) {
-            if (segs->size() == n) {
-                break;
-            }
-
-            seg = itr->second;
-
-
-            if (seg->xmit == 0) {
-                segs->emplace_back(seg);
-            }
-            else {
-                if (seg->resend_us <= now_us) {
-                    segs->emplace_back(seg);
-                }
-                else if (seg->fastack >= RUX_FAST_ACK) {
-                    segs->emplace_back(seg);
-                }
-                else if (seg->sn == 0) {
+        if (nsize_ > 0) {
+            for (uint64_t beg = snd_una_; beg <= max_sn_; beg++) {
+                if (segs->size() == n) {
                     break;
                 }
+
+                pos = beg % MAX;
+                seg = buf_[pos];
+                if (seg) {
+                    if (seg->xmit == 0) {
+                        segs->emplace_back(seg);
+                    }
+                    else {
+                        if (seg->resend_us <= now_us || seg->fastack >= RUX_FAST_ACK) {
+                            segs->emplace_back(seg);
+                        }
+                        else if (seg->sn == 0) {
+                            break;
+                        }
+                    }
+                }
             }
-
-            itr++;
         }
-
         lkr_.unlock();
     }
 
 
 private:
-    std::map<uint64_t, PRUX_SEG> buf_;
-    SPIN_LOCK lkr_;
+    static constexpr int MAX = RUX_SWND_MAX * 1.5;
+
+
+    int         nsize_;     // 发送缓冲区大小
+    uint64_t    max_sn_;    // 发送缓冲区最大SN
+    uint64_t    snd_una_;   // 发送窗口
+    SPIN_LOCK   lkr_;       
+    PRUX_SEG    buf_[MAX];  
 } RUX_SBUF, *PRUX_SBUF;
 
 
@@ -592,7 +651,7 @@ typedef struct __rcv_buf_ {
     }
 
 
-    int size() {
+    inline int size() const {
         return nsize_;
     }
 
@@ -611,11 +670,14 @@ typedef struct __rcv_buf_ {
 
 
     int get_msg(uint8_t *msg, uint64_t *rcv_nxt) {
+        if (nsize_ == 0) {
+            return 0;
+        }
+
         int pos, n = 0, ok = 0;
-        uint64_t nxt = *rcv_nxt;
+        uint64_t nxt = *rcv_nxt, save = nxt;
         PRUX_SEG segs[RUX_FRM_MAX];
         PRUX_SEG seg;
-        uint64_t save = *rcv_nxt;
 
         for (uint64_t beg = save, end = save + nsize_; beg <= end; beg++) {
             pos = (int)(beg % MAX);
@@ -655,31 +717,23 @@ typedef struct __rcv_buf_ {
     }
 
 
-    void erase(uint64_t beg, uint64_t end) {
-        int pos;
-        for (; beg <= end; beg++) {
-            pos = (int)(beg % MAX);
-            delete buf_[pos];
-            buf_[pos] = nullptr;
-        }
-    }
-
-
-    void insert(PRUX_SEG seg) {
+    inline void insert(PRUX_SEG seg) {
         buf_[seg->sn % MAX] = seg;
         nsize_++;
     }
 
 
-    int count(uint64_t sn) {
+    inline int count(uint64_t sn) {
         return buf_[sn % MAX] == nullptr ? 0 : 1;
     }
 
 
 private:
-    static constexpr int MAX = RUX_RWND_MAX * 1.2;
-    int nsize_;
-    PRUX_SEG buf_[MAX];
+    static constexpr int MAX = RUX_RWND_MAX * 1.1;
+
+
+    int         nsize_;     // 接收缓冲区大小
+    PRUX_SEG    buf_[MAX];  // 接收缓冲区
 } RUX_RBUF, *PRUX_RBUF;
 
 

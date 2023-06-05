@@ -175,9 +175,16 @@ make_nonblocking(SOCKET sockfd) {
 int64_t 
 sys_clock() {
 #ifdef WIN32
+    static int64_t FREQ = 0;
     LARGE_INTEGER l;
+    if (FREQ == 0) {
+        LARGE_INTEGER f;
+        ASSERT(QueryPerformanceFrequency(&f));
+        FREQ = f.QuadPart / 1000000;
+    }
+    
     ASSERT(QueryPerformanceCounter(&l));
-    return l.QuadPart;
+    return l.QuadPart / FREQ;
 #else
     struct timespec t;
     ASSERT(!clock_gettime(CLOCK_MONOTONIC, &t));

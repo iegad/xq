@@ -207,27 +207,25 @@ public:
              * 2, 检查该包是否处理过;
              */
             case RUX_CMD_PSH: {
-                if (seg->sn == 0 || seg->sn >= RUX_RWND_MAX + rcv_nxt_) {
+                if (seg->sn == 0) {
                     delete seg;
                     return -1;
                 }
 
-                if (seg->sn < rcv_nxt_) {
-                    delete seg;
+                ack_que_.insert(seg->sn, seg->us);
+
+                if (seg->sn >= rcv_nxt_ && rcv_buf_.count(seg->sn) == 0) {
+                    seg->rid = frm->rid;
+                    seg->time_us = frm->time_us;
+                    seg->addr = &frm->name;
+                    seg->addrlen = frm->namelen;
+                    rcv_buf_.insert(seg);
+                    if (rcv_buf_.size() > RUX_SWND_MAX) {
+                        DLOG("###################################################################### %u\n", rcv_buf_.size());
+                    }
                 }
                 else {
-                    if (rcv_buf_.count(seg->sn) == 0) {
-                        seg->rid = frm->rid;
-                        seg->time_us = frm->time_us;
-                        seg->addr = &frm->name;
-                        seg->addrlen = frm->namelen;
-                        rcv_buf_.insert(seg);
-                        if (rcv_buf_.size() > RUX_SWND_MAX) {
-                            DLOG("###################################################################### %u\n", rcv_buf_.size());
-                        }
-                    }
-
-                    ack_que_.insert(seg->sn, seg->us);
+                    delete seg;
                 }
             }break;
 
@@ -243,16 +241,19 @@ public:
                     delete seg;
                     return -1;
                 }
-                
-                if (rcv_buf_.count(seg->sn) == 0) {
-                    seg->rid = frm->rid;
-                    seg->time_us = frm->time_us;
-                    seg->addr = &frm->name;
-                    seg->addrlen = frm->namelen;
-                    reset(seg->time_us);
-                    rcv_buf_.insert(seg);
+
+                if (rcv_buf_.count(seg->sn) > 0) {
+                    ack_que_.insert(seg->sn, seg->us);
+                    delete seg;
+                    return 0;
                 }
 
+                seg->rid = frm->rid;
+                seg->time_us = frm->time_us;
+                seg->addr = &frm->name;
+                seg->addrlen = frm->namelen;
+                reset(seg->time_us);
+                rcv_buf_.insert(seg);
                 ack_que_.insert(seg->sn, seg->us);
             }break;
 
@@ -329,7 +330,7 @@ public:
     // output 将需要发送的协议数据投递到 output_que中
     // ========================================================================================================
     int output(uint64_t now_us) {
-        if (last_rcv_us_ + RUX_TIMEOUT < now_us) {
+        if (last_rcv_us_ > 0 && last_rcv_us_ + RUX_TIMEOUT < now_us) {
             state_ = -1;
         }
 
@@ -427,11 +428,13 @@ public:
                     return -1;
                 }
                 else if (item->resend_us <= now_us) {
+                    DLOG(" ---------------------------------------------------------- SN[%llu] timeout resend\n", item->sn);
                     item->rto *= 1.3;
                     ssthresh_ = cwnd_ / 2;
                     cwnd_ = 1;
                 }
                 else if (item->fastack >= RUX_FAST_ACK) {
+                    DLOG(" ========================================================== SN[%llu] fastack resend\n", item->sn);
                     item->fastack = 0;
                     item->rto = rto_;
 
