@@ -124,7 +124,7 @@ public:
         uint64_t    now_us      = frm->time_us - base_us_;      // 当前时间
         PRUX_SEG    seg;
 
-        DLOG("[INPUT] Frame una[%llu]\n", frm->una);
+        DLOG("[INPUT] Frame una[%lu]\n", frm->una);
         snd_buf_.update_una(frm->una);
 
         while (datalen > 0) {
@@ -143,7 +143,7 @@ public:
             }
 
             // -------------------- Step 2: 消息分发 --------------------
-            DLOG("[INPUT] seg SN[%llu] CMD[%d]\n", seg->sn, seg->cmd);
+            DLOG("[INPUT] seg SN[%lu] CMD[%d]\n", seg->sn, seg->cmd);
             switch (seg->cmd) {
 
             /* ------------- RUX_CMD_ACK -------------
@@ -416,7 +416,7 @@ public:
                 else if (item->xmit >= RUX_XMIT_MAX) {
                     // 当重传到上限时, 将该rux 视频无效
                     state_ = -1;
-                    DLOG(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> SN[%llu] resend LIMIT\n", item->sn);
+                    DLOG(">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>> SN[%lu] resend LIMIT\n", item->sn);
                     for (i = 0; i < nfrms; i++) {
                         delete frms[i];
                     }
@@ -428,13 +428,13 @@ public:
                     return -1;
                 }
                 else if (item->resend_us <= now_us) {
-                    DLOG(" ---------------------------------------------------------- SN[%llu] timeout resend\n", item->sn);
+                    DLOG(" ---------------------------------------------------------- SN[%lu] timeout resend\n", item->sn);
                     item->rto *= 1.3;
                     ssthresh_ = cwnd_ / 2;
                     cwnd_ = 1;
                 }
                 else if (item->fastack >= RUX_FAST_ACK) {
-                    DLOG(" ========================================================== SN[%llu] fastack resend\n", item->sn);
+                    DLOG(" ========================================================== SN[%lu] fastack resend\n", item->sn);
                     item->fastack = 0;
                     item->rto = rto_;
 
