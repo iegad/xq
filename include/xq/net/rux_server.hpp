@@ -163,7 +163,7 @@ private:
             n = recvfrom(sockfd_, (char *)frm->raw, sizeof(frm->raw), 0, (sockaddr *)&frm->name, &frm->namelen);
             if (n < 0) {
                 // IO recv error
-                ev_.on_error(ErrType::IO_RCV, (void*)errcode);
+                ev_.on_error(ErrType::IO_RCV, (void*)((int64_t)errcode));
                 continue;
             }
 
@@ -237,7 +237,7 @@ private:
             for (i = 0; i < n; i++) {
                 frm = frms[i];
                 if (::sendto(sockfd_, (char*)frm->raw, frm->len, 0, (sockaddr*)&frm->name, frm->namelen) != frm->len) {
-                    ev_.on_error(ErrType::IO_SND, (void*)errcode);
+                    ev_.on_error(ErrType::IO_SND, (void*)((int64_t)errcode));
                 }
                 delete frm;
             }
@@ -314,7 +314,7 @@ private:
             if (n < 0) {
                 err = errcode;
                 if (err != EAGAIN && err != EINTR) {
-                    ev_.on_error(ErrType::IO_RCV, (void*)errcode);
+                    ev_.on_error(ErrType::IO_RCV, (void*)((int64_t)err));
                     break;
                 }
                 continue;
@@ -439,7 +439,7 @@ private:
                 }
 
                 if (err < 0) {
-                    ev_.on_error(ErrType::IO_SND, (void*)errcode);
+                    ev_.on_error(ErrType::IO_SND, (void*)((int64_t)err));
                 }
             }
         }
