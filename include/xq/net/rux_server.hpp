@@ -7,7 +7,6 @@
 #include <thread>
 #include <unordered_set>
 #include "xq/net/rux.hpp"
-#include "xq/net/timer.hpp"
 
 
 namespace xq {
@@ -31,7 +30,7 @@ public:
 
         // new RUX_RID_MAX Rux Sessions
         for (int i = 1; i <= RUX_RID_MAX; i++) {
-            sessions_.emplace_back(new Rux(i, start_us_, output_que_, &update_que_, &ts_));
+            sessions_.emplace_back(new Rux(i, start_us_, output_que_));
         }
     }
 
@@ -78,8 +77,6 @@ public:
             close(sockfd_);
             sockfd_ = INVALID_SOCKET;
         }
-
-        ts_.stop();
     }
 
 
@@ -142,7 +139,6 @@ private:
         snd_thread_ = std::thread(std::bind(&RuxServer::_snd_thread, this));
 
         // Step 3: 启动 rux update 线程
-        ts_.run();
         upd_thread_ = std::thread(std::bind(&RuxServer::_update_thread, this));
 
         // Step 4: 启动 rux 协议 线程
@@ -190,6 +186,9 @@ private:
                 if (ev_.on_connected(rux)) {
                     continue;
                 }
+                sess_lkr_.lock();
+                active_session_.insert(rux->rid());
+                sess_lkr_.unlock();
             }
 
             rux->set_remote_addr(&frm->name, frm->namelen);
@@ -205,7 +204,6 @@ private:
         snd_thread_.join();
         
         // Step 2: join rux update thread
-        ts_.wait();
         upd_thread_.join();
 
         // Step 3: join rux worker threads
@@ -222,6 +220,7 @@ private:
             frm_ques_.erase(itr);
         }
 
+        active_session_.clear();
         for (auto& r : sessions_) {
             r->set_qid(-1);
             r->set_state(-1);
@@ -497,38 +496,47 @@ private:
 
 
     void _update_thread() {
-        constexpr int QUE_TIMEOUT = 200 * 1000;
-        constexpr int RUX_MAX = 128;
-        Rux::ptr ruxs[RUX_MAX];
-        int nruxs, i;
-        uint32_t rid;
+        constexpr int TIMOUT_US = 500;
+
         uint64_t now_us;
-        std::unordered_set<uint32_t> sessions;
+        size_t n;
+        Rux* rux;
+#ifndef WIN32
+        timeval timeout = {0, 0};
+#endif
+        std::unordered_set<uint32_t>::iterator itr;
 
         while (sockfd_ != INVALID_SOCKET) {
-            nruxs = update_que_.wait_dequeue_bulk_timed(ruxs, RUX_MAX, QUE_TIMEOUT);
-
-            if (nruxs == 0) {
-                continue;
-            }
-
             now_us = sys_clock();
+            sess_lkr_.lock();
+            n = active_session_.size();
+            sess_lkr_.unlock();
 
-            for (i = 0; i < nruxs; i++) {
-                rid = ruxs[i]->rid();
-                if (sessions.count(rid) == 0) {
-                    sessions.insert(rid);
+            sess_lkr_.lock();
+            itr = active_session_.begin();
+            sess_lkr_.unlock();
+
+            while (n > 0) {
+                rux = sessions_[*itr - 1];
+                if (rux->output(now_us) < 0) {
+                    sess_lkr_.lock();
+                    active_session_.erase(itr++);
+                    sess_lkr_.unlock();
+                    ev_.on_disconnected(rux);
                 }
-            }
-
-            for (uint32_t rid : sessions) {
-                if (sessions_[rid - 1]->output(now_us) < 0) {
-                    // TODO: error
+                else {
+                    itr++;
                 }
-            }
 
-            sessions.clear();
-        } // while (sockfd_ != INVALID_SOCKET);
+                n--;
+            }
+#ifdef WIN32
+            std::this_thread::sleep_for(std::chrono::microseconds(TIMOUT_US));
+#else
+            timeout.tv_usec = TIMOUT_US;
+            ::select(0, nullptr, nullptr, nullptr, &timeout);
+#endif
+        }
     }
 
 
@@ -540,12 +548,13 @@ private:
     std::thread                                                             upd_thread_;        // rux update 线程
     std::list<std::thread>                                                  rux_thread_pool_;   // rux 线程
 
-    moodycamel::BlockingConcurrentQueue<PRUX_FRM>                           output_que_;        // output 队列
-    moodycamel::BlockingConcurrentQueue<Rux::ptr>                           update_que_;
+    moodycamel::BlockingConcurrentQueue<PRUX_FRM>                           output_que_;        // output 队列;
     std::unordered_map<int, moodycamel::BlockingConcurrentQueue<PRUX_FRM>*> frm_ques_;          // 帧工作队列;  input 线程为生产者, rux 线程为消费者
     
+    SPIN_LOCK                                                               sess_lkr_;
     std::vector<Rux*>                                                       sessions_;
-    TimerScheduler<Rux>                                                     ts_;
+    std::unordered_set<uint32_t>                                            active_session_;
+
     TEvent                                                                  ev_;
 
 

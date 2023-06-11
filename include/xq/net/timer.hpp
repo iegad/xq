@@ -55,7 +55,7 @@ public:
 
 
     inline void create_timer_at(uint64_t expire_us, T* ev) {
-        if (expire_us <= sys_clock()) {
+        if (expire_us <= (uint64_t)sys_clock()) {
             ev->update();
             if (ev->destory()) {
                 delete ev;
