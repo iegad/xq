@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16)
 
-project(main)
-
+project(main VERSION 0.0.6)
+# Sladviski
 add_subdirectory(${PROJECT_SOURCE_DIR}/src)
-add_subdirectory(${PROJECT_SOURCE_DIR}/example/server)
-add_subdirectory(${PROJECT_SOURCE_DIR}/example/client)
+add_subdirectory(${PROJECT_SOURCE_DIR}/example/udx_server)
+add_subdirectory(${PROJECT_SOURCE_DIR}/example/udx_client)
