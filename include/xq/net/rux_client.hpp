@@ -253,15 +253,15 @@ private:
                 frm->len = msgs[i].msg_len;
 
                 if (frm->len > RUX_MTU || frm->len < RUX_FRM_HDR_SIZE || frm->check()) {
-                    ev_.on_error(ErrType::IO_RCV_RUX, frm);
+                    ev_.on_error(ErrType::IO_RCV_FRAME, frm);
                     continue;
                 }
 
                 frm->time_us = now_us;
                 ::memset(endpoint, 0, sizeof(endpoint));
                 ASSERT(!addr2str(&frm->name, endpoint, sizeof(endpoint)));
-                itr = rux_map_.find(endpoint);
-                if (itr == rux_map_.end()) {
+                itr = node_map_.find(endpoint);
+                if (itr == node_map_.end()) {
                     continue;
                 }
 

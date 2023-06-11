@@ -30,14 +30,10 @@ xq::net::RuxClient<EchoEvent>* client;
 
 void
 snd_worker() {
-    uint64_t now_us;
     char* buf = new char[xq::net::RUX_MSG_MAX]{};
 
     for (int i = 0; i < 1000000; i++) {
-        now_us = sys_clock();
-
         sprintf(buf, "Hello world: %d", i + 1);
-
         while (client->send(SERVER_ENDPOINT, (uint8_t*)buf, strlen(buf))) {
             _mm_pause();
         }

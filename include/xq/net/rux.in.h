@@ -30,6 +30,7 @@
 #include <unistd.h>
 #include <time.h>
 #include <memory.h>
+#include <emmintrin.h>
 #endif
 
 #include <stdint.h>
