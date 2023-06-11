@@ -499,9 +499,11 @@ private:
     void _update_thread() {
         constexpr int QUE_TIMEOUT = 200 * 1000;
         constexpr int RUX_MAX = 128;
-        Rux::ptr ruxs[RUX_MAX], rux;
+        Rux::ptr ruxs[RUX_MAX];
+        uint32_t rid;
         int nruxs, i;
         uint64_t now_us;
+        std::unordered_set<uint32_t> sessions;
 
         while (sockfd_ != INVALID_SOCKET) {
             nruxs = update_que_.wait_dequeue_bulk_timed(ruxs, RUX_MAX, QUE_TIMEOUT);
@@ -513,11 +515,19 @@ private:
             now_us = sys_clock();
 
             for (i = 0; i < nruxs; i++) {
-                rux = ruxs[i];
-                if (rux->output(now_us) < 0) {
+                rid = ruxs[i]->rid();
+                if (sessions.count(rid) == 0) {
+                    sessions.insert(rid);
+                }
+            }
+
+            for (uint32_t rid : sessions) {
+                if (sessions_[rid - 1]->output(now_us) < 0) {
                     // TODO: error
                 }
             }
+
+            sessions.clear();
         } // while (sockfd_ != INVALID_SOCKET);
     }
 

@@ -13,40 +13,12 @@ namespace net {
 
 
 template<class T>
-class Timer {
-public:
-    explicit Timer(uint64_t expire_us, T* handler) : expire_us_(expire_us), handler_(handler)
-    {}
-
-    inline operator uint64_t() {
-    return expire_us_;
-    }
-
-    inline uint64_t expire_us() const {
-    return expire_us_;
-    }
-
-    inline void set_expire_us(uint64_t v) {
-    expire_us_ = v;
-    }
-
-    inline T* handler() {
-    return handler_;
-    }
-
-private:
-    uint64_t    expire_us_;
-    T*          handler_;
-}; // class Timer;
-
-
-template<class T>
 struct __timer_cmp_ {
-    typedef Timer<T>* PTIMER;
+    typedef std::pair<uint64_t, T*> Timer;
 
 
-    bool operator() (const PTIMER& a, const PTIMER& b) {
-    return a->expire_us() > b->expire_us();
+    bool operator() (const Timer& a, const Timer& b) {
+    return a.first > b.first;
     }
 }; // struct __timer_cmp_;
 
@@ -54,9 +26,9 @@ struct __timer_cmp_ {
 template<class T>
 class TimerScheduler {
 public:
-    typedef Timer<T>* PTIMER;
+    typedef std::pair<uint64_t, T*> Timer;
 
-    typedef std::priority_queue<PTIMER, std::vector<PTIMER>, __timer_cmp_<T>> MinHeap;
+    typedef std::priority_queue<Timer, std::vector<Timer>, __timer_cmp_<T>> MinHeap;
 
 
     TimerScheduler() : running_(false) {}
@@ -84,27 +56,22 @@ public:
     }
 
 
-    inline void create_timer_at(PTIMER timer) {
-        uint64_t expire_us = timer->expire_us();
-
+    inline void create_timer_at(uint64_t expire_us, T* ev) {
         if (expire_us <= sys_clock()) {
-            T* handler = timer->handler();
-            handler->update();
-            if (handler->destory()) {
-                delete handler;
+            ev->update();
+            if (ev->destory()) {
+                delete ev;
             }
         }
 
-        timer->set_expire_us(expire_us + (INTERVAL - expire_us % INTERVAL));
         lkr_.lock();
-        que_.emplace(timer);
+        que_.emplace(std::make_pair(expire_us + (INTERVAL - expire_us % INTERVAL), ev));
         lkr_.unlock();
     }
 
 
-    inline void create_timer_after(int64_t delay_us, PTIMER timer) {
-        timer->set_expire_us(sys_clock() + delay_us);
-        create_timer_at(timer);
+    inline void create_timer_after(int64_t delay_us, T* ev) {
+        create_timer_at(sys_clock() + delay_us, ev);
     }
 
 
@@ -118,8 +85,8 @@ private:
     void _run() {
         running_ = true;
         uint64_t now_us;
-        PTIMER tmr;
         size_t n;
+        T* ev;
 
         while (running_) {
             _sleep();
@@ -135,22 +102,21 @@ private:
                 lkr_.unlock();
                 
                 lkr_.lock();
-                tmr = que_.top();
+                const Timer &tmr = que_.top();
                 lkr_.unlock();
-                if (*tmr > now_us) {
+                if (tmr.first > now_us) {
                     break;
                 }
 
-                T* handler = tmr->handler();
-                handler->update();
-                if (handler->destory()) {
-                    delete handler;
+                ev = tmr.second;
+                ev->update();
+                if (ev->destory()) {
+                    delete ev;
                 }
 
                 lkr_.lock();
                 que_.pop();
                 lkr_.unlock();
-                delete tmr;
             }
         }
     }
@@ -159,9 +125,9 @@ private:
     static constexpr int MAX = 1000;
     static constexpr int INTERVAL = 1000 * 10;
 
-    bool    running_;
-    MinHeap que_;
-    SPIN_LOCK lkr_;
+    bool        running_;
+    MinHeap     que_;
+    SPIN_LOCK   lkr_;
     std::thread thread_;
 }; // class TimerScheduler;
 

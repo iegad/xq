@@ -636,7 +636,7 @@ private:
 
     moodycamel::BlockingConcurrentQueue<PRUX_FRM>   &output_que_;               // io output queue 引用
     moodycamel::BlockingConcurrentQueue<Rux::ptr>   *update_que_;               // update 队列 引用
-    TimerScheduler<Rux>*                            ts_;
+    TimerScheduler<Rux>                             *ts_;
 }; // class Rux;
 
 
