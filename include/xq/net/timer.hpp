@@ -16,9 +16,8 @@ template<class T>
 struct __timer_cmp_ {
     typedef std::pair<uint64_t, T*> Timer;
 
-
-    bool operator() (const Timer& a, const Timer& b) {
-    return a.first > b.first;
+    inline bool operator() (const Timer& a, const Timer& b) {
+        return a.first > b.first;
     }
 }; // struct __timer_cmp_;
 
@@ -27,7 +26,6 @@ template<class T>
 class TimerScheduler {
 public:
     typedef std::pair<uint64_t, T*> Timer;
-
     typedef std::priority_queue<Timer, std::vector<Timer>, __timer_cmp_<T>> MinHeap;
 
 
