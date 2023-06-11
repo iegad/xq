@@ -26,11 +26,19 @@ public:
     // ========================================================================================================
     RuxServer() 
         : sockfd_(INVALID_SOCKET)
-        , start_us_(sys_clock()) {
-
+        , nprocessor_(sys_cpus() - 1) {
+        int i;
         // new RUX_RID_MAX Rux Sessions
-        for (int i = 1; i <= RUX_RID_MAX; i++) {
-            sessions_.emplace_back(new Rux(i, start_us_, output_que_));
+        for (i = 1; i <= RUX_RID_MAX; i++) {
+            sessions_.emplace_back(new Rux(i, 0, output_que_));
+        }
+
+        if (nprocessor_ == 0) {
+            nprocessor_ = 1;
+        }
+        
+        for (i = 0; i < nprocessor_; i++) {
+            frm_ques_.emplace_back(new moodycamel::BlockingConcurrentQueue<PRUX_FRM>);
         }
     }
 
@@ -46,6 +54,10 @@ public:
         // delete RUX_RID_MAX Rux Sessions
         for (auto s : sessions_) {
             delete s;
+        }
+
+        for (auto que : frm_ques_) {
+            delete que;
         }
     }
 
@@ -143,14 +155,8 @@ private:
 
         // Step 4: 启动 rux 协议 线程
         //      启动线程的同时, 为每个 rux 线程分配 帧工作队列
-        int nprocess = sys_cpus() - 1;
-        if (nprocess == 0) {
-            nprocess = 1;
-        }
-        for (int i = 0; i < nprocess; i++) {
-            auto q = new moodycamel::BlockingConcurrentQueue<PRUX_FRM>();
-            frm_ques_.insert(std::make_pair(i, q));
-            rux_thread_pool_.emplace_back(std::thread(std::bind(&RuxServer::_rux_thread, this, q)));
+        for (int i = 0; i < nprocessor_; i++) {
+            rux_thread_pool_.emplace_back(std::thread(std::bind(&RuxServer::_rux_thread, this, frm_ques_[i])));
         }
 
         // Step 5: loop recvfrom
@@ -213,13 +219,7 @@ private:
             rux_thread_pool_.erase(itr);
         }
 
-        // Step 4: delete all frames queues
-        while (frm_ques_.size() > 0) {
-            auto itr = frm_ques_.begin();
-            delete itr->second;
-            frm_ques_.erase(itr);
-        }
-
+        // Step 4: set all sessions'es states -1
         active_session_.clear();
         for (auto& r : sessions_) {
             r->set_qid(-1);
@@ -271,21 +271,14 @@ private:
         upd_thread_ = std::thread(std::bind(&RuxServer::_update_thread, this));
 
         // Step 4: init frame's queues and start rux protocol work threads.
-        int nprocess = sys_cpus() - 1;
-        if (nprocess == 0) {
-            nprocess = 1;
-        }
-
-        int i, n = RCVMMSG_SIZE, err, qid = 0;
+        int i, n = RCVMMSG_SIZE, err, qid = 0, nproc = nprocessor_;
         uint64_t now_us;
 
-        PRUX_FRM** rux_frms = new PRUX_FRM*[nprocess];  //
-        int* rux_frms_count = new int[nprocess]{};      //
+        PRUX_FRM** rux_frms = new PRUX_FRM*[nproc];  //
+        int* rux_frms_count = new int[nproc]{};      //
 
-        for (i = 0; i < nprocess; i++) {
-            auto q = new moodycamel::BlockingConcurrentQueue<PRUX_FRM>;
-            frm_ques_.insert(std::make_pair(i, q));
-            rux_thread_pool_.emplace_back(std::thread(std::bind(&RuxServer::_rux_thread, this, q)));
+        for (i = 0; i < nproc; i++) {
+            rux_thread_pool_.emplace_back(std::thread(std::bind(&RuxServer::_rux_thread, this, frm_ques_[i])));
             rux_frms[i] = new RUX_FRM*[RCVMMSG_SIZE];
         }
 
@@ -339,7 +332,7 @@ private:
 
                 if (rux->state()) {
                     rux->set_qid(qid++);
-                    if (qid == nprocess) {
+                    if (qid == nproc) {
                         qid = 0;
                     }
 
@@ -367,7 +360,7 @@ private:
                 iovecs[i].iov_len   = sizeof(frm->raw);
             }
 
-            for (i = 0; i < nprocess; i++) {
+            for (i = 0; i < nproc; i++) {
                 if (rux_frms_count[i] > 0) {
                     ASSERT(frm_ques_[i]->enqueue_bulk(rux_frms[i], rux_frms_count[i]));
                     rux_frms_count[i] = 0;
@@ -377,7 +370,7 @@ private:
 
         ASSERT(sockfd_ == INVALID_SOCKET);
 
-        for (i = 0; i < nprocess; i++) {
+        for (i = 0; i < nproc; i++) {
             delete[] rux_frms[i];
         }
         delete[] rux_frms;
@@ -396,10 +389,11 @@ private:
             rux_thread_pool_.erase(itr);
         }
 
-        while(frm_ques_.size() > 0) {
-            auto itr = frm_ques_.begin();
-            delete itr->second;
-            frm_ques_.erase(itr);
+        // Step 4: set all sessions'es states -1
+        active_session_.clear();
+        for (auto& r : sessions_) {
+            r->set_qid(-1);
+            r->set_state(-1);
         }
     }
 
@@ -540,22 +534,22 @@ private:
     }
 
 
-    SOCKET                                                                  sockfd_;            // 服务端 UDP 套接字
-    uint64_t                                                                start_us_;
+    SOCKET                                                      sockfd_;            // 服务端 UDP 套接字
 
-    std::thread                                                             rcv_thread_;        // input 线程
-    std::thread                                                             snd_thread_;        // output 线程
-    std::thread                                                             upd_thread_;        // rux update 线程
-    std::list<std::thread>                                                  rux_thread_pool_;   // rux 线程
+    int                                                         nprocessor_;
+    std::thread                                                 rcv_thread_;        // input 线程
+    std::thread                                                 snd_thread_;        // output 线程
+    std::thread                                                 upd_thread_;        // rux update 线程
+    std::list<std::thread>                                      rux_thread_pool_;   // rux 线程
 
-    moodycamel::BlockingConcurrentQueue<PRUX_FRM>                           output_que_;        // output 队列;
-    std::unordered_map<int, moodycamel::BlockingConcurrentQueue<PRUX_FRM>*> frm_ques_;          // 帧工作队列;  input 线程为生产者, rux 线程为消费者
+    moodycamel::BlockingConcurrentQueue<PRUX_FRM>               output_que_;        // output 队列;
+    std::vector<moodycamel::BlockingConcurrentQueue<PRUX_FRM>*> frm_ques_;          // 帧工作队列;  input 线程为生产者, rux 线程为消费者
     
-    SPIN_LOCK                                                               sess_lkr_;
-    std::vector<Rux*>                                                       sessions_;
-    std::unordered_set<uint32_t>                                            active_session_;
+    SPIN_LOCK                                                   sess_lkr_;
+    std::vector<Rux*>                                           sessions_;
+    std::unordered_set<uint32_t>                                active_session_;
 
-    TEvent                                                                  ev_;
+    TEvent                                                      ev_;
 
 
     RuxServer(const RuxServer&) = delete;
