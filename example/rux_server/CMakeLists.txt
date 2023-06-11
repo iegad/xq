@@ -1,6 +1,6 @@
-project(udx_server)
+project(rux_server)
 
-add_executable(${PROJECT_NAME} udx_server.cpp)
+add_executable(${PROJECT_NAME} rux_server.cpp)
 
 set(CMAKE_CXX_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
