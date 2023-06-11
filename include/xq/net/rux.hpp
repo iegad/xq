@@ -468,7 +468,7 @@ public:
                 item->us = now_us;
                 item->resend_us = item->rto + now_us;
                 if (ts_) {
-                    ts_->create_timer_at(new Timer<Rux>(item->resend_us, this));
+                    ts_->create_timer_at(item->resend_us, this);
                 }
 
                 if (!frm) {

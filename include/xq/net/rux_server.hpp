@@ -167,7 +167,7 @@ private:
             n = recvfrom(sockfd_, (char *)frm->raw, sizeof(frm->raw), 0, (sockaddr *)&frm->name, &frm->namelen);
             if (n < 0) {
                 // IO recv error
-                ev_.on_error(ErrType::IO_RCV, (void*)((int64_t)errcode));
+                ev_.on_error(ErrType::IO_RCV, (void*)errcode);
                 continue;
             }
 
@@ -238,7 +238,7 @@ private:
             for (i = 0; i < n; i++) {
                 frm = frms[i];
                 if (::sendto(sockfd_, (char*)frm->raw, frm->len, 0, (sockaddr*)&frm->name, frm->namelen) != frm->len) {
-                    ev_.on_error(ErrType::IO_SND, (void*)((int64_t)errcode));
+                    ev_.on_error(ErrType::IO_SND, (void*)errcode);
                 }
                 delete frm;
             }
@@ -315,7 +315,7 @@ private:
             if (n < 0) {
                 err = errcode;
                 if (err != EAGAIN && err != EINTR) {
-                    ev_.on_error(ErrType::IO_RCV, (void*)((int64_t)err));
+                    ev_.on_error(ErrType::IO_RCV, (void*)errcode);
                     break;
                 }
                 continue;
@@ -440,7 +440,7 @@ private:
                 }
 
                 if (err < 0) {
-                    ev_.on_error(ErrType::IO_SND, (void*)((int64_t)err));
+                    ev_.on_error(ErrType::IO_SND, (void*)errcode);
                 }
             }
         }
@@ -499,9 +499,11 @@ private:
     void _update_thread() {
         constexpr int QUE_TIMEOUT = 200 * 1000;
         constexpr int RUX_MAX = 128;
-        Rux::ptr ruxs[RUX_MAX], rux;
+        Rux::ptr ruxs[RUX_MAX];
         int nruxs, i;
+        uint32_t rid;
         uint64_t now_us;
+        std::unordered_set<uint32_t> sessions;
 
         while (sockfd_ != INVALID_SOCKET) {
             nruxs = update_que_.wait_dequeue_bulk_timed(ruxs, RUX_MAX, QUE_TIMEOUT);
@@ -513,11 +515,19 @@ private:
             now_us = sys_clock();
 
             for (i = 0; i < nruxs; i++) {
-                rux = ruxs[i];
-                if (rux->output(now_us) < 0) {
+                rid = ruxs[i]->rid();
+                if (sessions.count(rid) == 0) {
+                    sessions.insert(rid);
+                }
+            }
+
+            for (uint32_t rid : sessions) {
+                if (sessions_[rid - 1]->output(now_us) < 0) {
                     // TODO: error
                 }
             }
+
+            sessions.clear();
         } // while (sockfd_ != INVALID_SOCKET);
     }
 
