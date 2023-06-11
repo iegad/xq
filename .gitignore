@@ -13,3 +13,5 @@ Debug
 *.log
 Release
 lib
+*.tlog
+*.obj
