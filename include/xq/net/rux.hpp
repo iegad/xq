@@ -19,6 +19,7 @@
 
 #include "xq/net/data_type.hpp"
 #include "xq/third/blockingconcurrentqueue.h"
+#include "xq/net/timer.hpp"
 
 
 namespace xq {
@@ -30,13 +31,22 @@ namespace net {
 // ############################################################################################################
 class Rux {
 public:
+    typedef Rux* ptr;
+
+
     // ========================================================================================================
     // 构造函数
     // @rid:        rux id
     // @now_us:     系统时间(微秒)
     // @output_que: io output队列
+    // @update_que: update 队列
     // ========================================================================================================
-    explicit Rux(uint32_t rid, uint64_t now_us, moodycamel::BlockingConcurrentQueue<PRUX_FRM>& output_que)
+    explicit Rux(
+        uint32_t rid, 
+        uint64_t now_us, 
+        moodycamel::BlockingConcurrentQueue<PRUX_FRM>& output_que, 
+        moodycamel::BlockingConcurrentQueue<Rux::ptr>* update_que = nullptr, 
+        TimerScheduler<Rux>* ts = nullptr)
         : rid_(rid)
         , cwnd_(RUX_SWND_MIN)
         , ssthresh_(RUX_SSTHRESH_INIT)
@@ -58,7 +68,9 @@ public:
         , addr_({0,{0},0})
         , addrlen_(sizeof(addr_))
 
-        , output_que_(output_que) {
+        , ts_(ts)
+        , output_que_(output_que)
+        , update_que_(update_que) {
         ASSERT(rid > 0 && rid <= RUX_RID_MAX);
     }
 
@@ -227,6 +239,10 @@ public:
                 else {
                     delete seg;
                 }
+
+                if (update_que_) {
+                    update_que_->enqueue(this);
+                }
             }break;
 
             /* ------------- RUX_CMD_CON -------------
@@ -255,6 +271,9 @@ public:
                 reset(seg->time_us);
                 rcv_buf_.insert(seg);
                 ack_que_.insert(seg->sn, seg->us);
+                if (update_que_) {
+                    update_que_->enqueue(this);
+                }
             }break;
 
             default: delete seg; break;
@@ -322,6 +341,9 @@ public:
             msglen -= len;
         }
 
+        if (update_que_) {
+            update_que_->enqueue(this);
+        }
         return 0;
     }
 
@@ -445,6 +467,9 @@ public:
                 item->xmit++;
                 item->us = now_us;
                 item->resend_us = item->rto + now_us;
+                if (ts_) {
+                    ts_->create_timer_at(new Timer<Rux>(item->resend_us, this));
+                }
 
                 if (!frm) {
                     frm = _new_frm();
@@ -560,6 +585,17 @@ public:
     }
 
 
+    inline void update() {
+        if (update_que_) {
+            update_que_->enqueue(this);
+        }
+    }
+
+    inline bool destory() {
+        return false;
+    }
+
+
 private:
     inline PRUX_FRM _new_frm() {
         PRUX_FRM frm = new RUX_FRM;
@@ -599,6 +635,8 @@ private:
     RUX_RBUF                                        rcv_buf_;                   // 接收队列
 
     moodycamel::BlockingConcurrentQueue<PRUX_FRM>   &output_que_;               // io output queue 引用
+    moodycamel::BlockingConcurrentQueue<Rux::ptr>   *update_que_;               // update 队列 引用
+    TimerScheduler<Rux>*                            ts_;
 }; // class Rux;
 
 
