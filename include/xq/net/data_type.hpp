@@ -128,7 +128,7 @@ typedef struct __frame_ {
     //      成功返回 0, 否则返回 -1;
     //      检查帧时会自动为帧打上 rux id 和 对端 接收窗口大小
     // ===========================================================================================
-    int check() {
+    inline int check() {
         if (len == 0 || len < RUX_FRM_HDR_SIZE || len > RUX_MTU) {
             return -1;
         }
@@ -156,7 +156,7 @@ typedef struct __frame_ {
     // 装载帧, 将帧 META 属性中 rid 和 wnd 装载到 raw 原始码流中
     //      成功返回 0, 否则返回 -1;
     // ===========================================================================================
-    int setup() {
+    inline int setup() {
         if (rid == 0 || rid > RUX_RID_MAX || wnd > RUX_RWND_MAX) {
             return -1;
         }
@@ -230,7 +230,7 @@ typedef struct __segment_ {
     // 设置 data 数据
     //      最好使用该法来 copy 消息数据, 因为该方法会将 datalen 一并赋值.
     // ===========================================================================================
-    void set_data(const uint8_t* data, int datalen) {
+    inline void set_data(const uint8_t* data, int datalen) {
         ASSERT(data && datalen <= RUX_MTU);
         ::memcpy(this->data, data, datalen);
         len = datalen;
@@ -242,10 +242,6 @@ typedef struct __segment_ {
     //      成功返回 编码长度, 否则返回 -1
     // ===========================================================================================
     int encode(uint8_t* buf, int buflen) {
-        if (buflen > RUX_MTU || buflen < RUX_SEG_HDR_SIZE) {
-            DLOG("------------------>> buflen = %d\n", buflen);
-            ::exit(1);
-        }
         ASSERT(buf && buflen >= RUX_SEG_HDR_SIZE && buflen <= RUX_MTU);
 
         uint8_t* p = buf;
@@ -376,7 +372,7 @@ typedef struct __spin_lock_ {
         }
     }
 
-    void unlock() {
+    inline void unlock() {
         InterlockedExchange(&m_, 0);
     }
 
@@ -388,11 +384,11 @@ private:
 } SPIN_LOCK, * PSPIN_LOCK;
 #else
 typedef struct __spin_lock_ {
-    void lock() {
+    inline void lock() {
         ASSERT(!pthread_spin_lock(&m_));
     }
 
-    void unlock() {
+    inline void unlock() {
         ASSERT(!pthread_spin_unlock(&m_));
     }
 
@@ -429,7 +425,7 @@ typedef struct __snd_buf_ {
     }
 
 
-    int insert(const PRUX_SEG seg) {
+    inline int insert(const PRUX_SEG seg) {
         int pos = seg->sn % MAX;
 
         lkr_.lock();
@@ -530,15 +526,14 @@ typedef struct __snd_buf_ {
                 }
             }
         }
-        else {
-            nsize_ = 0;
-        }
+        
+        nsize_ = 0;
 
         lkr_.unlock();
     }
 
 
-    size_t size() {
+    inline size_t size() {
         lkr_.lock();
         size_t n = nsize_;
         lkr_.unlock();
@@ -605,7 +600,7 @@ typedef struct __ack_que_ {
     }
 
 
-    void insert(uint64_t sn, uint64_t us) {
+    inline void insert(uint64_t sn, uint64_t us) {
         PRUX_ACK ack = new RUX_ACK(sn, us);
         lkr_.lock();
         que_.emplace_back(ack);
@@ -613,7 +608,7 @@ typedef struct __ack_que_ {
     }
 
 
-    size_t size() {
+    inline size_t size() {
         lkr_.lock();
         size_t n = que_.size();
         lkr_.unlock();
