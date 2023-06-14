@@ -62,6 +62,11 @@ public:
     }
 
 
+    inline TEvent& event() {
+        return ev_;
+    }
+
+
     // ========================================================================================================
     // 启动服务
     //      该方法分为同步和异步启动.
@@ -78,6 +83,11 @@ public:
         }
         
         rcv_thread_ = std::thread(std::bind(&RuxServer::_rcv_thread, this, host, svc));
+    }
+
+
+    inline bool running() const {
+        return sockfd_ != INVALID_SOCKET;
     }
 
 
@@ -182,6 +192,7 @@ private:
 
             frm->time_us = sys_clock();
             frm->rux = rux = sessions_[frm->rid - 1];
+            ev_.on_rcv_frame(frm);
 
             if (rux->state()) {
                 rux->set_qid(qid++);
@@ -213,9 +224,11 @@ private:
         upd_thread_.join();
 
         // Step 3: join rux worker threads
-        while (frm_ques_.size() > 0) {
+        while (rux_thread_pool_.size() > 0) {
             auto itr = rux_thread_pool_.begin();
-            itr->join();
+            if (itr->joinable()) {
+                itr->join();
+            }
             rux_thread_pool_.erase(itr);
         }
 
@@ -230,7 +243,7 @@ private:
 
     void _snd_thread() {
         PRUX_FRM frms[128], frm;
-        int n, i;
+        size_t n, i;
 
         while (sockfd_ != INVALID_SOCKET) {
             n = output_que_.wait_dequeue_bulk_timed(frms, 128, 200 * 1000); // wait 200 milliseconds
@@ -385,7 +398,9 @@ private:
 
         while(rux_thread_pool_.size() > 0) {
             auto itr = rux_thread_pool_.begin();
-            itr->join();
+            if (itr->joinable()) {
+                itr->join();
+            }
             rux_thread_pool_.erase(itr);
         }
 
@@ -407,7 +422,8 @@ private:
         msghdr *hdr;
         PRUX_FRM frm, frms[SNDMMSG_SIZE];
 
-        int err, i, n;
+        int err;
+        size_t i, n;
 
         while(sockfd_ != INVALID_SOCKET) {
             n = output_que_.wait_dequeue_bulk_timed(frms, SNDMMSG_SIZE, 200 * 1000); // wait 200 milliseconds
@@ -455,7 +471,7 @@ private:
         constexpr int QUE_TIMEOUT = 200 * 1000; // 200 milliseconds
 
         PRUX_FRM frms[FRMS_MAX], frm;
-        int nfrms, i, nmsg;
+        size_t nfrms, i, nmsg;
         uint8_t* msg = new uint8_t[RUX_MSG_MAX];
         Rux* rux;
 
@@ -471,7 +487,7 @@ private:
                 }
 
                 while (nmsg = rux->recv(msg), nmsg > 0) {
-                    ev_.on_message(rux, msg, nmsg);
+                    ev_.on_message(rux, msg, (int)nmsg);
                 }
 
                 delete frm;

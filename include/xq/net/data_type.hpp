@@ -50,7 +50,7 @@ constexpr int           RUX_XMIT_MAX            = 20;
 constexpr int           RUX_SSTHRESH_INIT       = 8;
 
 /* error */
-enum ErrType {
+enum class ErrType {
     IO_RCV,
     IO_RCV_FRAME,
     IO_SND,
@@ -276,7 +276,7 @@ typedef struct __segment_ {
             p += len;
         }
 
-        return p - buf;
+        return (int)(p - buf);
     }
 
 
@@ -326,7 +326,7 @@ typedef struct __segment_ {
             p += len;
         }
 
-        return p - buf;
+        return (int)(p - buf);
     }
 
 
@@ -573,7 +573,7 @@ typedef struct __snd_buf_ {
 
 
 private:
-    static constexpr int MAX = RUX_SWND_MAX * 1.5;
+    static constexpr int MAX = (int)(RUX_SWND_MAX * 1.1);
 
 
     int         nsize_;     // 发送缓冲区大小
@@ -705,7 +705,7 @@ typedef struct __rcv_buf_ {
 
             nsize_ -= n;
             *rcv_nxt = nxt;
-            return p - msg;
+            return (int)(p - msg);
         }
 
         return 0;
@@ -724,7 +724,7 @@ typedef struct __rcv_buf_ {
 
 
 private:
-    static constexpr int MAX = RUX_RWND_MAX * 1.1;
+    static constexpr int MAX = (int)(RUX_RWND_MAX * 1.1);
 
 
     int         nsize_;     // 接收缓冲区大小

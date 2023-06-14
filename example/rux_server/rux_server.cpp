@@ -7,22 +7,26 @@
 
 class EchoEvent {
 public:
-    void on_error(xq::net::ErrType et, void* arg) {
+    inline void on_error(xq::net::ErrType et, void* arg) {
 
     }
 
-    void on_message(xq::net::Rux* rux, const uint8_t *msg, int msglen) {
+    inline void on_message(xq::net::Rux* rux, const uint8_t *msg, int msglen) {
         (*(uint8_t**)&msg)[msglen] = 0;
         DLOG("%s\n", (char*)msg);
     }
 
-    int on_connected(xq::net::Rux* rux) {
+    inline int on_connected(xq::net::Rux* rux) {
         DLOG("%u connected\n", rux->rid());
         return 0;
     }
 
-    void on_disconnected(xq::net::Rux* rux) {
+    inline void on_disconnected(xq::net::Rux* rux) {
         DLOG("%u disconnected\n", rux->rid());
+    }
+
+    inline void on_rcv_frame(const xq::net::PRUX_FRM frm) {
+
     }
 };
 

@@ -3,7 +3,7 @@
 
 class EchoEvent {
 public:
-    void on_error(int err_type, void* arg) {
+    void on_error(xq::net::ErrType err_type, void* arg) {
 
     }
 
@@ -24,8 +24,8 @@ public:
 xq::net::RuxClient<EchoEvent>* client;
 
  //#define SERVER_ENDPOINT ("192.168.0.104:6688")
-//#define SERVER_ENDPOINT ("127.0.0.1:6688")
-#define SERVER_ENDPOINT ("1.15.81.179:6688")
+#define SERVER_ENDPOINT ("127.0.0.1:6688")
+//#define SERVER_ENDPOINT ("1.15.81.179:6688")
 
 
 void

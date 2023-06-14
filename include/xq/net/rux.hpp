@@ -309,7 +309,7 @@ public:
         PRUX_SEG seg;
 
         for (int i = 1, n = msglen > RUX_MSS ? (msglen + RUX_MSS - 1) / RUX_MSS : 1; i <= n; i++) {
-            uint64_t len = i == n ? msglen : RUX_MSS;
+            int len = i == n ? msglen : RUX_MSS;
             seg = new RUX_SEG;
             seg->cmd = snd_nxt_ == 0 && rcv_nxt_ == 0 && snd_buf_.size() == 0 ? RUX_CMD_CON : RUX_CMD_PSH;
             seg->sn = snd_nxt_++;
@@ -358,7 +358,7 @@ public:
             while (ack_list.size() > 0) {
                 auto ack_itr = ack_list.begin();
                 if (frm && nleft < RUX_SEG_HDR_SIZE) {
-                    frm->len = p - frm->raw;
+                    frm->len = (uint16_t)(p - frm->raw);
                     ASSERT(!frm->setup());
                     frms[nfrms++] = frm;
                     frm = _new_frm();
@@ -401,7 +401,7 @@ public:
             
             for (auto& item : seg_list) {
                 if (frm && nleft < RUX_SEG_HDR_EX_SIZE + item->len) {
-                    frm->len = p - frm->raw;
+                    frm->len = (uint16_t)(p - frm->raw);
                     ASSERT(!frm->setup());
                     frms[nfrms++] = frm;
                     frm = _new_frm();
@@ -429,7 +429,7 @@ public:
                 }
                 else if (item->resend_us <= now_us) {
                     DLOG(" ---------------------------------------------------------- SN[%lu] timeout resend\n", item->sn);
-                    item->rto *= 1.3;
+                    item->rto += item->rto / 3;
                     ssthresh_ = cwnd_ / 2;
                     cwnd_ = 1;
                 }
@@ -468,7 +468,7 @@ public:
             RUX_SEG seg;
 
             if (frm && nleft < RUX_SEG_HDR_SIZE) {
-                frm->len = p - frm->raw;
+                frm->len = (uint16_t)(p - frm->raw);
                 ASSERT(!frm->setup());
                 frms[nfrms++] = frm;
                 frm = _new_frm();
@@ -500,7 +500,7 @@ public:
         // pong
         if (probe_) {
             if (frm && nleft < RUX_SEG_HDR_SIZE) {
-                frm->len = p - frm->raw;
+                frm->len = (uint16_t)(p - frm->raw);
                 ASSERT(!frm->setup());
                 frms[nfrms++] = frm;
                 frm = _new_frm();
@@ -520,7 +520,7 @@ public:
             return (int)snd_buf_.size();
         }
         
-        frm->len = p - frm->raw;
+        frm->len = (uint16_t)(p - frm->raw);
         ASSERT(!frm->setup());
         frms[nfrms++] = frm;
 
