@@ -92,7 +92,6 @@ public:
 
 
     inline void set_qid(int qid) {
-        state_ = 0;
         qid_ = qid;
     }
 

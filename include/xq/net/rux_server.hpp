@@ -47,9 +47,8 @@ public:
     // 析构函数
     // ========================================================================================================
     ~RuxServer() {
-        if (sockfd_ != INVALID_SOCKET) {
-            this->stop();
-        }
+        this->stop();
+        this->wait();
 
         // delete RUX_RID_MAX Rux Sessions
         for (auto s : sessions_) {
