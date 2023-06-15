@@ -118,9 +118,24 @@ typedef struct __frame_ {
         ::memset(raw, 0, RUX_MTU + 1);
     }
 
-    
-    ~__frame_() {
+
+    __frame_* clone() {
+        __frame_* c = new __frame_;
+
+        c->len      = this->len;
+        c->namelen  = this->namelen;
+        c->rid      = this->rid;
+        c->wnd      = this->wnd;
+        c->una      = this->una;
+        c->time_us  = this->time_us;
+        c->rux      = this->rux;
+
+        ::memcpy(c->raw, this->raw, c->len);
+        ::memcpy(&c->name, &this->name, c->namelen);
+
+        return c;
     }
+
 
 
     // ===========================================================================================

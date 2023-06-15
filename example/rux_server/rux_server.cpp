@@ -13,7 +13,7 @@ public:
 
     inline void on_message(xq::net::Rux* rux, const uint8_t *msg, int msglen) {
         (*(uint8_t**)&msg)[msglen] = 0;
-        DLOG("%s\n", (char*)msg);
+        // DLOG("%s\n", (char*)msg);
     }
 
     inline int on_connected(xq::net::Rux* rux) {
@@ -26,7 +26,7 @@ public:
     }
 
     inline void on_rcv_frame(const xq::net::PRUX_FRM frm) {
-
+        DLOG(" --------------- RID[%llu], WND[%d], UNA[%llu]\n", frm->rid, frm->wnd, frm->una);
     }
 };
 

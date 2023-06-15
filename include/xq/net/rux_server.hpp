@@ -75,7 +75,7 @@ public:
     // @svc:    port/service
     // @async:  是否异步启动
     // ========================================================================================================
-    inline void run(const char *host, const char *svc, bool async = true) {
+    inline void run(const std::string &host, const std::string &svc, bool async = true) {
         if (!async) {
             _rcv_thread(host, svc);
             return;
@@ -147,13 +147,12 @@ private:
     // ========================================================================================================
     // input 线程
     // ========================================================================================================
-    void _rcv_thread(const char* host, const char* svc) {
-        ASSERT(host && svc);
+    void _rcv_thread(const std::string& host, const std::string& svc) {
+        ASSERT(host.size() > 0 && svc.size() > 0);
 
         /* ---------------------------------- 开启服务 ---------------------------------- */
-
         // Step 1: make udp socket
-        sockfd_ = udp_bind(host, svc);
+        sockfd_ = udp_bind(host.c_str(), svc.c_str());
         ASSERT(sockfd_ != INVALID_SOCKET);
 
         // Step 2: 启动 output线程
@@ -195,6 +194,7 @@ private:
 
             if (rux->state()) {
                 rux->set_qid(qid++);
+                rux->set_state(0);
                 if (qid == frm_ques_.size()) {
                     qid = 0;
                 }

@@ -32,7 +32,7 @@ void
 snd_worker() {
     char* buf = new char[xq::net::RUX_MSG_MAX]{};
 
-    for (int i = 0; i < 1000000; i++) {
+    for (int i = 0; i < 10000; i++) {
         sprintf(buf, "Hello world: %d", i + 1);
         while (client->send(SERVER_ENDPOINT, (uint8_t*)buf, strlen(buf))) {
             _mm_pause();
