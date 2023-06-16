@@ -1,5 +1,6 @@
 #include "xq/net/rux.in.h"
 #include <string.h>
+#include "..\..\..\include\xq\net\rux.in.h"
 
 int 
 rux_env_init() {
@@ -225,4 +226,34 @@ bin2hex(const uint8_t* data, size_t datalen, char* buf, size_t buflen) {
         }
     }
     return datalen << 1;
+}
+
+
+int 
+hex2bin(const char* data, size_t datalen, uint8_t* buf, size_t buflen) {
+    ASSERT(data, && buf && datalen > 0 && datalen % 2 == 0 && buflen >= buflen >> 1);
+
+    buflen = datalen >> 1;
+    for (int i = 0; i < buflen; i++) {
+        uint8_t tmp = 0;
+
+        for (size_t j = 0; j < 2; j++) {
+            char c = data[2 * i + j];
+            if (c >= '0' && c <= '9') {
+                tmp = (tmp << 4) + (c - '0');
+            }
+            else if (c >= 'a' && c <= 'f') {
+                tmp = (tmp << 4) + (c - 'a' + 10);
+            }
+            else if (c >= 'A' && c <= 'F') {
+                tmp = (tmp << 4) + (c - 'A' + 10);
+            }
+            else {
+                return -1;
+            }
+        }
+        buf[i] = tmp;
+    }
+
+    return buflen;
 }

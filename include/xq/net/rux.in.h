@@ -151,6 +151,7 @@ int64_t sys_clock();
 int sys_cpus();
 
 int bin2hex(const uint8_t* data, size_t datalen, char* buf, size_t buflen);
+int hex2bin(const char* data, size_t datalen, uint8_t* buf, size_t buflen);
 
 inline int u64_decode(const uint8_t * p, uint64_t * v) {
 #if X_BIG_ENDIAN || X_MUST_ALIGN
