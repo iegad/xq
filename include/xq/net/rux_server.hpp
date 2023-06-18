@@ -33,12 +33,12 @@ public:
             sessions_.emplace_back(new Rux(i, 0, output_que_));
         }
 
-        if (nprocessor_ == 0) {
+        //if (nprocessor_ == 0) {
             nprocessor_ = 1;
-        }
+        //}
         
         for (i = 0; i < nprocessor_; i++) {
-            frm_ques_.emplace_back(new moodycamel::BlockingConcurrentQueue<PRUX_FRM>);
+            frm_ques_.emplace_back(new moodycamel::BlockingConcurrentQueue<PRUX_FRM>(4096));
         }
     }
 
@@ -164,7 +164,7 @@ private:
         // Step 4: 启动 rux 协议 线程
         //      启动线程的同时, 为每个 rux 线程分配 帧工作队列
         for (int i = 0; i < nprocessor_; i++) {
-            rux_thread_pool_.emplace_back(std::thread(std::bind(&RuxServer::_rux_thread, this, frm_ques_[i])));
+            rux_thread_pool_.emplace_back(std::thread(std::bind(&RuxServer::_rux_thread, this, i)));
         }
 
         // Step 5: loop recvfrom
@@ -192,9 +192,9 @@ private:
             frm->rux = rux = sessions_[frm->rid - 1];
             ev_.on_rcv_frame(frm);
 
-            if (rux->state()) {
+            if (rux->state() < 0) {
                 rux->set_qid(qid++);
-                rux->set_state(0);
+                rux->set_state(1);
                 if (qid == frm_ques_.size()) {
                     qid = 0;
                 }
@@ -208,8 +208,7 @@ private:
             }
 
             rux->set_remote_addr(&frm->name, frm->namelen);
-            // move frm to frm queue
-            frm_ques_[rux->qid()]->enqueue(frm);
+            ASSERT(frm_ques_[rux->qid()]->try_enqueue(frm));
             frm = new RUX_FRM;
         }
 
@@ -253,6 +252,7 @@ private:
                 }
                 delete frm;
             }
+            _mm_pause();
         }
 
         // 清理数据
@@ -342,8 +342,9 @@ private:
                 frm->time_us = now_us;
                 frm->rux = rux = sessions_[frm->rid - 1];
 
-                if (rux->state()) {
+                if (rux->state() < 0) {
                     rux->set_qid(qid++);
+                    rux->set_state(1);
                     if (qid == nproc) {
                         qid = 0;
                     }
@@ -465,10 +466,11 @@ private:
 #endif
 
 
-    void _rux_thread(moodycamel::BlockingConcurrentQueue<PRUX_FRM> *que) {
+    void _rux_thread(int idx) {
         constexpr int FRMS_MAX = 128;
         constexpr int QUE_TIMEOUT = 200 * 1000; // 200 milliseconds
 
+        auto* que = frm_ques_[idx];
         PRUX_FRM frms[FRMS_MAX], frm;
         size_t nfrms, i, nmsg;
         uint8_t* msg = new uint8_t[RUX_MSG_MAX];
@@ -491,6 +493,7 @@ private:
 
                 delete frm;
             }
+            _mm_pause();
         } // while(sockfd_ != INVALID_SOCKET);
 
         // 清理数据

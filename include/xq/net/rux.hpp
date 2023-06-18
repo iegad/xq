@@ -107,7 +107,7 @@ public:
 
 
     inline void set_state(int state) {
-        ASSERT(state == 0 || state == -1);
+        ASSERT(state == 0 || state == -1 || state == 1);
         state_ = state;
     }
 
@@ -123,7 +123,6 @@ public:
         uint64_t    now_us      = frm->time_us - base_us_;      // 当前时间
         PRUX_SEG    seg;
 
-        DLOG("[INPUT] Frame una[%lu]\n", frm->una);
         snd_buf_.update_una(frm->una);
 
         while (datalen > 0) {
@@ -142,7 +141,6 @@ public:
             }
 
             // -------------------- Step 2: 消息分发 --------------------
-            DLOG("[INPUT] seg SN[%lu] CMD[%d]\n", seg->sn, seg->cmd);
             switch (seg->cmd) {
 
             /* ------------- RUX_CMD_ACK -------------
@@ -206,7 +204,7 @@ public:
              * 2, 检查该包是否处理过;
              */
             case RUX_CMD_PSH: {
-                if (seg->sn == 0) {
+                if (seg->sn == 0 && snd_nxt_ == 0) {
                     delete seg;
                     return -1;
                 }
@@ -300,8 +298,9 @@ public:
     // ========================================================================================================
     int send(const uint8_t* msg, int msglen) {
         ASSERT(msg && msglen <= RUX_MSG_MAX);
+        constexpr int MAX_SIZE = RUX_RWND_MAX << 1;
 
-        if (snd_buf_.size() >= RUX_SWND_MAX) {
+        if (state_ == -1 || snd_buf_.size() >= MAX_SIZE) {
             return -1;
         }
 
@@ -310,7 +309,14 @@ public:
         for (int i = 1, n = msglen > RUX_MSS ? (msglen + RUX_MSS - 1) / RUX_MSS : 1; i <= n; i++) {
             int len = i == n ? msglen : RUX_MSS;
             seg = new RUX_SEG;
-            seg->cmd = snd_nxt_ == 0 && rcv_nxt_ == 0 && snd_buf_.size() == 0 ? RUX_CMD_CON : RUX_CMD_PSH;
+            if (state_ == 0) {
+                seg->cmd = RUX_CMD_CON;
+                state_ = 1;
+            }
+            else {
+                seg->cmd = RUX_CMD_PSH;
+            }
+            
             seg->sn = snd_nxt_++;
             seg->frg = n - i;
             seg->set_data(msg, len);
@@ -393,12 +399,17 @@ public:
         }
 
         // snd_buffer
-        int snd_wnd = MIN3(rmt_wnd_, cwnd_, (int)snd_buf_.size());
+        int snd_wnd = MIN3(rmt_wnd_, cwnd_, (int)snd_buf_.size()), already_snd = 0;
+
         if (snd_wnd > 0) {
             std::list<PRUX_SEG> seg_list;
             snd_buf_.get_segs(&seg_list, snd_wnd, now_us);
             
             for (auto& item : seg_list) {
+                if (already_snd >= snd_wnd) {
+                    break;
+                }
+
                 if (frm && nleft < RUX_SEG_HDR_EX_SIZE + item->len) {
                     frm->len = (uint16_t)(p - frm->raw);
                     ASSERT(!frm->setup());
@@ -431,6 +442,7 @@ public:
                     item->rto += item->rto / 3;
                     ssthresh_ = cwnd_ / 2;
                     cwnd_ = 1;
+                    snd_wnd = 1;
                 }
                 else if (item->fastack >= RUX_FAST_ACK) {
                     DLOG(" ========================================================== SN[%lu] fastack resend\n", item->sn);
@@ -455,7 +467,8 @@ public:
                 n = item->encode(p, nleft);
                 p += n;
                 nleft -= n;
-            }
+                already_snd++;
+            } // for
 
             if (probe_ && seg_list.size()) {
                 probe_ = 0;

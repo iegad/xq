@@ -542,8 +542,7 @@ typedef struct __snd_buf_ {
             }
         }
         
-        nsize_ = 0;
-
+        snd_una_ = max_sn_ = nsize_ = 0;
         lkr_.unlock();
     }
 
@@ -588,7 +587,7 @@ typedef struct __snd_buf_ {
 
 
 private:
-    static constexpr int MAX = (int)(RUX_SWND_MAX * 1.1);
+    static constexpr int MAX = (int)(RUX_RWND_MAX << 1);
 
 
     int         nsize_;     // 发送缓冲区大小
@@ -739,7 +738,7 @@ typedef struct __rcv_buf_ {
 
 
 private:
-    static constexpr int MAX = (int)(RUX_RWND_MAX * 1.1);
+    static constexpr int MAX = RUX_RWND_MAX << 2;
 
 
     int         nsize_;     // 接收缓冲区大小
