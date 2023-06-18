@@ -29,9 +29,9 @@ constexpr int           RUX_MSS                 = (RUX_MTU - RUX_SEG_HDR_EX_SIZE
 
 /* rux command */
 constexpr int           RUX_CMD_ACK             = 0x01;                                                         // ACK
-constexpr int           RUX_CMD_PIN             = 0x03;                                                         // Heart's beat: Ping
-constexpr int           RUX_CMD_CON             = 0x04;                                                         // Connection
-constexpr int           RUX_CMD_PSH             = 0x05;                                                         // Push
+constexpr int           RUX_CMD_PIN             = 0x02;                                                         // Heart's beat: Ping
+constexpr int           RUX_CMD_CON             = 0x03;                                                         // Connection
+constexpr int           RUX_CMD_PSH             = 0x04;                                                         // Push
 
 /* rux limits */
 constexpr int           RUX_RID_MAX             = 100000;                                                       // Maximum rux id
@@ -46,7 +46,7 @@ constexpr int           RUX_RTO_MIN             = 200 * 1000;                   
 constexpr int           RUX_RTO_MAX             = 1000 * 1000 * 30;                                             // RTO MAX 30s
 constexpr int           RUX_TIMEOUT             = RUX_RTO_MAX * 2 * 10;                                         // TIMEOUT: 10 min
 constexpr int           RUX_FAST_ACK            = 3;
-constexpr int           RUX_XMIT_MAX            = 20;
+constexpr int           RUX_XMIT_MAX            = 10;
 constexpr int           RUX_SSTHRESH_INIT       = 8;
 
 /* error */
@@ -302,6 +302,7 @@ typedef struct __segment_ {
     int decode(const uint8_t* buf, uint16_t buflen) {
         ASSERT(buf);
         if (buflen < RUX_SEG_HDR_SIZE) {
+            std::exit(1);
             return -1;
         }
 
@@ -421,229 +422,6 @@ private:
     pthread_spinlock_t m_;
 } SPIN_LOCK, * PSPIN_LOCK;
 #endif // WIN32
-
-
-// ###############################################################################################
-// 发送缓冲区(Lockfree)
-// ###############################################################################################
-typedef struct __snd_buf_ {
-    __snd_buf_()
-        : nsize_(0)
-        , max_sn_(0)
-        , snd_una_(0) {
-        ::memset(buf_, 0, sizeof(PRUX_SEG) * MAX);
-    }
-
-
-    ~__snd_buf_() {
-        clear();
-    }
-
-
-    inline int insert(const PRUX_SEG seg) {
-        int pos = seg->sn % MAX;
-
-        lkr_.lock();
-        if (nsize_ >= MAX || buf_[pos]) {
-            lkr_.unlock();
-            return -1;
-        }
-
-        if (nsize_ > 0 && max_sn_ + 1 != seg->sn) {
-            lkr_.unlock();
-            return -1;
-        }
-
-        max_sn_ = seg->sn;
-        buf_[pos] = seg;
-        nsize_++;
-        lkr_.unlock();
-        return 0;
-    }
-
-
-    // ===========================================================================================
-    // 更新 ack
-    //      从 snd_buf_ 中删除对应的 Segment, 并将被跳过的 Segment 快重传标志递增 1.
-    // ===========================================================================================
-    void update_ack(uint64_t sn) {
-        int pos = sn % MAX;
-        lkr_.lock();
-
-        if (sn >= snd_una_ && sn <= max_sn_ && buf_[pos]) {
-            delete buf_[pos];
-            buf_[pos] = nullptr;
-            nsize_--;
-
-            if (sn == snd_una_) {
-                if (nsize_ > 0) {
-                    for (uint64_t i = snd_una_, n = max_sn_; i <= n; i++) {
-                        pos = i % MAX;
-                        if (buf_[pos]) {
-                            snd_una_ = buf_[pos]->sn;
-                            break;
-                        }
-                    }
-                }
-                else {
-                    snd_una_++;
-                }
-            }
-        }
-
-        lkr_.unlock();
-    }
-
-
-    void update_una(uint64_t una) {
-        lkr_.lock();
-        if (nsize_ > 0 && una <= max_sn_ + 1 && una > snd_una_) {
-
-            int pos, n = 0;
-            uint64_t i;
-            
-            for (i = snd_una_; i < una; i++) {
-                pos = i % MAX;
-                if (buf_[pos]) {
-                    delete buf_[pos];
-                    buf_[pos] = nullptr;
-                    n++;
-                }
-            }
-
-            nsize_ -= n;
-            snd_una_ += n;
-
-            if (nsize_ > 0) {
-                for (; i <= max_sn_; i++) {
-                    pos = i % MAX;
-                    if (buf_[pos]) {
-                        snd_una_ = buf_[pos]->sn;
-                        break;
-                    }
-                }
-            }
-        }
-        lkr_.unlock();
-    }
-
-
-    void clear() {
-        int pos;
-        lkr_.lock();
-
-        if (nsize_ > 0) {
-            for (uint64_t beg = snd_una_; beg <= max_sn_; beg++) {
-                pos = beg % MAX;
-                if (buf_[pos]) {
-                    delete buf_[pos];
-                    buf_[pos] = nullptr;
-                }
-            }
-        }
-        
-        snd_una_ = max_sn_ = nsize_ = 0;
-        lkr_.unlock();
-    }
-
-
-    inline size_t size() {
-        lkr_.lock();
-        size_t n = nsize_;
-        lkr_.unlock();
-        return n;
-    }
-
-
-    void get_segs(std::list<PRUX_SEG> *segs, size_t n, uint64_t now_us) {
-        PRUX_SEG seg;
-        int pos;
-        lkr_.lock();
-        if (nsize_ > 0) {
-            for (uint64_t beg = snd_una_; beg <= max_sn_; beg++) {
-                if (segs->size() == n) {
-                    break;
-                }
-
-                pos = beg % MAX;
-                seg = buf_[pos];
-                if (seg) {
-                    if (seg->xmit == 0) {
-                        segs->emplace_back(seg);
-                    }
-                    else {
-                        if (seg->resend_us <= now_us || seg->fastack >= RUX_FAST_ACK) {
-                            segs->emplace_back(seg);
-                        }
-                        else if (seg->sn == 0) {
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-        lkr_.unlock();
-    }
-
-
-private:
-    static constexpr int MAX = (int)(RUX_RWND_MAX << 1);
-
-
-    int         nsize_;     // 发送缓冲区大小
-    uint64_t    max_sn_;    // 发送缓冲区最大SN
-    uint64_t    snd_una_;   // 发送窗口
-    SPIN_LOCK   lkr_;       
-    PRUX_SEG    buf_[MAX];  
-} RUX_SBUF, *PRUX_SBUF;
-
-
-// ###############################################################################################
-// Ack 队列(Lockfree)
-// ###############################################################################################
-typedef struct __ack_que_ {
-    void clear() {
-        std::list<PRUX_ACK>::iterator itr;
-        lkr_.lock();
-        while (que_.size() > 0) {
-            itr = que_.begin();
-            delete* itr;
-            que_.erase(itr);
-        }
-        lkr_.unlock();
-    }
-
-
-    inline void insert(uint64_t sn, uint64_t us) {
-        PRUX_ACK ack = new RUX_ACK(sn, us);
-        lkr_.lock();
-        que_.emplace_back(ack);
-        lkr_.unlock();
-    }
-
-
-    inline size_t size() {
-        lkr_.lock();
-        size_t n = que_.size();
-        lkr_.unlock();
-        return n;
-    }
-
-
-    void move_in(std::list<PRUX_ACK>* ack_list) {
-        std::list<PRUX_ACK>::iterator itr;
-        lkr_.lock();
-        if (que_.size() > 0) {
-            *ack_list = std::move(que_);
-        }
-        lkr_.unlock();
-    }
-
-
-private:
-    std::list<PRUX_ACK> que_;
-    SPIN_LOCK lkr_;
-} RUX_ACKQ, *PRUX_ACKQ;
 
 
 // ###############################################################################################

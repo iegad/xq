@@ -89,7 +89,7 @@ public:
         Rux* rux = new Rux(rid_, now_us, output_que_);
         rux->addr()->ss_family = AF_INET;
         ASSERT(!str2addr(endpoint, rux->addr(), rux->addrlen()));
-        rux->reset(now_us);
+        // rux->reset(now_us);
         rux->set_state(0);
         node_map_.insert(std::make_pair(endpoint, rux));
     }

@@ -40,9 +40,7 @@ snd_worker() {
 
     for (int i = 0; i < LIMIT; i++) {
         sprintf(buf, "Hello world: %d", i + 1);
-        while (client->send(SERVER_ENDPOINT, (uint8_t*)buf, strlen(buf))) {
-            _mm_pause();
-        }
+        client->send(SERVER_ENDPOINT, (uint8_t*)buf, strlen(buf));
     }
 
     delete[] buf;

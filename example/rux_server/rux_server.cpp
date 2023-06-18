@@ -8,22 +8,22 @@
 class EchoEvent {
 public:
     inline void on_error(xq::net::ErrType et, void* arg) {
-        DLOG("error: %d\n", (int)et);
-        //switch (et) {
-        //case xq::net::ErrType::IO_RCV:
-        //    break;
-        //case xq::net::ErrType::IO_RCV_FRAME:
-        //    break;
-        //case xq::net::ErrType::IO_SND:
-        //    DLOG("IO_SND: %lld\n", (int64_t)arg);
-        //    break;
-        //case xq::net::ErrType::RUX_INPUT:
-        //    break;
-        //case xq::net::ErrType::RUX_OUTPUT:
-        //    break;
-        //default:
-        //    break;
-        //}
+        switch (et) {
+        case xq::net::ErrType::IO_RCV:
+            DLOG("IO+RCV: %d\n", (int)((int64_t)arg));
+            break;
+        case xq::net::ErrType::IO_RCV_FRAME:
+            break;
+        case xq::net::ErrType::IO_SND:
+            DLOG("IO_SND: %lld\n", (int64_t)arg);
+            break;
+        case xq::net::ErrType::RUX_INPUT:
+            break;
+        case xq::net::ErrType::RUX_OUTPUT:
+            break;
+        default:
+            break;
+        }
     }
 
     inline void on_message(xq::net::Rux* rux, const uint8_t *msg, int msglen) {
