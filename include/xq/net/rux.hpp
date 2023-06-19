@@ -42,7 +42,6 @@ public:
         , ssthresh_(RUX_SSTHRESH_INIT)
         , rmt_wnd_(RUX_SWND_MIN)
 
-        , probe_(0)
         , state_(-1)
         , qid_(-1)
         , rto_(RUX_RTO_MIN)
@@ -65,9 +64,23 @@ public:
 
 
     ~Rux() {
-        snd_buf_.clear();
-        rcv_buf_.clear();
-        ack_que_.clear();
+        while (snd_buf_.size()) {
+            auto itr = snd_buf_.begin();
+            delete itr->second;
+            snd_buf_.erase(itr);
+        }
+
+        while (rcv_buf_.size()) {
+            auto itr = rcv_buf_.begin();
+            delete itr->second;
+            rcv_buf_.erase(itr);
+        }
+        
+        while (ack_que_.size()) {
+            auto itr = ack_que_.begin();
+            delete *itr;
+            ack_que_.erase(itr);
+        }
     }
 
 
@@ -194,7 +207,6 @@ public:
                 }break;
 
                 case RUX_CMD_PIN: {
-                    probe_ = 1;
                     delete seg;
                 }break;
 
@@ -212,9 +224,9 @@ public:
                         seg->time_us = frm->time_us;
                         seg->addr = &frm->name;
                         seg->addrlen = frm->namelen;
-                        rcv_buf_.insert(seg);
+                        rcv_buf_.insert(std::make_pair(seg->sn, seg));
                         if (rcv_buf_.size() > RUX_SWND_MAX) {
-                            DLOG("###################################################################### %u\n", rcv_buf_.size());
+                            DLOG("###################################################################### %lu\n", rcv_buf_.size());
                         }
                     }
                     else {
@@ -237,7 +249,7 @@ public:
                         seg->addr = &frm->name;
                         seg->addrlen = frm->namelen;
                         _reset(seg->time_us);
-                        rcv_buf_.insert(seg);
+                        rcv_buf_.insert(std::make_pair(seg->sn, seg));
                     }
                     else {
                         delete seg;
@@ -277,6 +289,10 @@ public:
                     cwnd_++;
                 }
             }
+            else if (rmt_wnd_ == 0) {
+                ssthresh_ = cwnd_ / 2;
+                rmt_wnd_ = cwnd_ = 1;
+            }
 
             last_rcv_us_ = frm->time_us;
             _set_remote_addr(&frm->name, frm->namelen);
@@ -292,11 +308,50 @@ public:
     // recv 从读缓冲区获取rux message
     // @return 读缓冲区中有数据返回 msg数据长度, 否则返回 0
     // ========================================================================================================
-    inline int recv(uint8_t* msg) {
+    int recv(uint8_t* msg) {
+        int n = 0, ok = 0, i;
+        uint16_t len;
+        PRUX_SEG segs[RUX_FRM_MAX];
+        PRUX_SEG seg;
+        std::map<uint64_t, PRUX_SEG>::iterator itr;
+        uint8_t* p = msg;
+
         lkr_.lock();
-        int ret = rcv_buf_.get_msg(msg, &rcv_nxt_);
+        uint64_t nxt = rcv_nxt_;
+        itr = rcv_buf_.begin();
+
+        while (itr != rcv_buf_.end()) {
+            seg = itr->second;
+
+            if (seg->sn != nxt) {
+                break;
+            }
+
+            nxt++;
+            segs[n++] = seg;
+            if (!seg->frg) {
+                ok = 1;
+                break;
+            }
+        }
+
+        if (ok) {
+            for (i = 0; i < n; i++) {
+                seg = segs[i];
+                len = seg->len;
+                if (len) {
+                    ::memcpy(p, seg->data, len);
+                    p += len;
+                }
+                delete seg;
+            }
+
+            rcv_buf_.erase(rcv_buf_.begin(), ++itr);
+            rcv_nxt_ = nxt;
+        }
+
         lkr_.unlock();
-        return ret;
+        return (int)(p - msg);
     }
 
 
@@ -373,17 +428,20 @@ public:
 
         lkr_.lock();
         do {
-            uint64_t diff_us = now_us - last_rcv_us_;
-            if (last_rcv_us_ > 0) {
-                if (diff_us > RUX_TIMEOUT) {
-                    state_ = -1;
-                }
-                else if (diff_us >= LOST_INTERVAL) {
-                    if (nlost_ > LOST_LIMIT) {
+            if (now_us > last_rcv_us_) {
+                uint64_t diff_us = now_us - last_rcv_us_;
+                if (last_rcv_us_ > 0) {
+                    if (diff_us > RUX_TIMEOUT) {
                         state_ = -1;
                     }
-                    else {
-                        nlost_ = 0;
+                    else if (diff_us >= LOST_INTERVAL) {
+                        if (nlost_ > LOST_LIMIT) {
+                            DLOG(" state changed, rux closed\n");
+                            state_ = -1;
+                        }
+                        else {
+                            nlost_ = 0;
+                        }
                     }
                 }
             }
@@ -395,10 +453,6 @@ public:
             now_us -= base_us_;
 
             // ACK
-            if (probe_ && ack_que_.size() > 0) {
-                probe_ = 0;
-            }
-
             while (ack_que_.size() > 0) {
                 ack_itr = ack_que_.begin();
                 if (frm && nleft < RUX_SEG_HDR_SIZE) {
@@ -454,6 +508,7 @@ public:
                     needsnd = 1;
                 }
                 else if (pseg->xmit >= RUX_XMIT_MAX) {
+                    DLOG(" state changed, rux xmit limit\n");
                     state_ = -1;
                     for (i = 0; i < nfrms; i++) {
                         delete frms[i];
@@ -519,63 +574,6 @@ public:
                 break;
             }
 
-            if (probe_ && already_snd) {
-                probe_ = 0;
-            }
-
-            // check ping
-            if (rmt_wnd_ == 0) {
-                RUX_SEG seg;
-
-                if (frm && nleft < RUX_SEG_HDR_SIZE) {
-                    frm->len = (uint16_t)(p - frm->raw);
-                    ASSERT(!frm->setup());
-                    frms[nfrms++] = frm;
-                    frm = _new_frm();
-                    ASSERT(frm);
-                    p = frm->raw + RUX_FRM_HDR_SIZE;
-                    nleft = RUX_MTU - RUX_FRM_HDR_SIZE;
-                }
-
-                if (!frm) {
-                    frm = _new_frm();
-                    ASSERT(frm);
-                    p = frm->raw + RUX_FRM_HDR_SIZE;
-                    nleft = RUX_MTU - RUX_FRM_HDR_SIZE;
-                }
-
-                seg.sn = snd_nxt_;
-                seg.us = now_us;
-                seg.cmd = RUX_CMD_PIN;
-
-                n = seg.encode(p, nleft);
-                ASSERT(n > 0);
-                p += n;
-                nleft -= n;
-
-                if (probe_) {
-                    probe_ = 0;
-                }
-            }
-
-            // pong
-            if (probe_) {
-                if (frm && nleft < RUX_SEG_HDR_SIZE) {
-                    frm->len = (uint16_t)(p - frm->raw);
-                    ASSERT(!frm->setup());
-                    frms[nfrms++] = frm;
-                    frm = _new_frm();
-                    p = frm->raw + RUX_FRM_HDR_SIZE;
-                    nleft = RUX_MTU - RUX_FRM_HDR_SIZE;
-                }
-
-                if (!frm) {
-                    frm = _new_frm();
-                    p = frm->raw + RUX_FRM_HDR_SIZE;
-                    nleft = RUX_MTU - RUX_FRM_HDR_SIZE;
-                }
-            }
-
             ret = 0;
         } while (0);
 
@@ -611,12 +609,12 @@ private:
             snd_buf_.erase(itr);
         }
 
-        rttval_ = srtt_ = probe_ = 0;
+        nlost_ = rttval_ = srtt_ = 0;
         rmt_wnd_ = cwnd_ = RUX_SWND_MIN;
         rto_ = RUX_RTO_MIN;
 
-        nlost_ = rcv_nxt_ = snd_nxt_ = last_us_ = 0;
-        last_rcv_us_ = base_us_ = now_us;
+        last_rcv_us_ = rcv_nxt_ = snd_nxt_ = last_us_ = 0;
+        base_us_ = now_us;
     }
 
     inline void _set_remote_addr(const sockaddr_storage* addr, socklen_t addrlen) {
@@ -647,7 +645,6 @@ private:
     uint8_t                                         ssthresh_;
     uint8_t                                         rmt_wnd_;                   // 对端窗口
 
-    uint8_t                                         probe_;                     // 探针
     std::atomic<int>                                state_;
     std::atomic<int>                                qid_;                       // rux_que index
     int                                             rto_;                       // RTO
@@ -666,7 +663,7 @@ private:
 
     std::list<PRUX_ACK>                             ack_que_;                   // ACK队列
     std::map<uint64_t, PRUX_SEG>                    snd_buf_;                   // 发送缓冲区
-    RUX_RBUF                                        rcv_buf_;                   // 接收队列
+    std::map<uint64_t, PRUX_SEG>                    rcv_buf_;                   // 接收缓冲区
 
     SPIN_LOCK                                       lkr_;
     moodycamel::BlockingConcurrentQueue<PRUX_FRM>   &output_que_;               // io output queue 引用

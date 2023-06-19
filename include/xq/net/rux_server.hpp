@@ -428,7 +428,6 @@ private:
                     frm = frms[i];
                     char buf[100] = {0};
                     addr2str(&frm->name, buf, 100);
-                    DLOG("SNDMSG TO %s\n", buf);
 
                     hdr                 = &msgs[i].msg_hdr;
                     hdr->msg_name       = &frm->name;

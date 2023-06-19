@@ -1,13 +1,15 @@
 #include "xq/net/rux_client.hpp"
 
-#define SERVER_ENDPOINT ("192.168.0.104:6688")
+//#define SERVER_ENDPOINT ("192.168.0.104:6688")
 //#define SERVER_ENDPOINT ("127.0.0.1:6688")
-//#define SERVER_ENDPOINT ("1.15.81.179:6688")
+#define SERVER_ENDPOINT ("1.15.81.179:6688")
 #define LIMIT (100000)
 
 
 class EchoEvent;
 xq::net::RuxClient<EchoEvent>* client;
+
+static int64_t beg = 0;
 
 class EchoEvent {
 public:
@@ -25,9 +27,16 @@ public:
 
     void on_message(xq::net::Rux* rux, const uint8_t* msg, int msglen) {
         static int count = 0;
-        (*(uint8_t**)&msg)[msglen] = 0;
-        DLOG("%s\n", (char*)msg);
-        if (++count == LIMIT) {
+        std::string m((const char*)msg, msglen);
+        
+        char buf[100] = { 0 };
+        snprintf(buf, 100, "Hello world: %d", ++count);
+        if (m != buf) {
+            DLOG("%s <> %s", m.c_str(), buf);
+            ASSERT(0);
+        }
+
+        if (count == LIMIT) {
             client->stop();
         }
     }
@@ -47,17 +56,17 @@ snd_worker() {
 }
 
 
-
 int 
 main(int argc, char** argv) {
     ASSERT(!rux_env_init());
     client = new xq::net::RuxClient<EchoEvent>(1);
     client->connect_node(SERVER_ENDPOINT, sys_clock());
-    std::thread t(snd_worker);
     client->run();
+    beg = sys_clock();
+    std::thread t(snd_worker);
     t.join();
     client->wait();
-    DLOG("exit !!!\n");
+    DLOG("exit: %llu !!!\n", sys_clock() - beg);
     /*int n;
 
     SOCKET sockfd = udp_bind("0.0.0.0", "0");

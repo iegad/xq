@@ -366,6 +366,7 @@ private:
                 rux = itr->second;
                 if (rux->output(now_us) < 0) {
                     ev_.on_error(ErrType::RUX_OUTPUT, rux);
+                    rux->set_state(1);
                 }
                 itr++;
             }
