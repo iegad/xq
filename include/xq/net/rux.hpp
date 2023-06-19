@@ -71,34 +71,20 @@ public:
     }
 
 
-    // ========================================================================================================
-    // rux remote 地址
-    // ========================================================================================================
-    inline sockaddr_storage* addr() {
-        return &addr_;
-    }
-
-
-    // ========================================================================================================
-    // rux remote 地址长度
-    // ========================================================================================================
-    inline socklen_t* addrlen() {
-        return &addrlen_;
-    }
-
-
-    inline int qid() {
+    inline void set_rmt_addr(const sockaddr_storage* addr, socklen_t addrlen) {
         lkr_.lock();
-        int qid = qid_;
+        _set_remote_addr(addr, addrlen);
         lkr_.unlock();
-        return qid;
+    }
+
+
+    inline int qid() const {
+        return qid_;
     }
 
 
     inline void set_qid(int qid) {
-        lkr_.lock();
         qid_ = qid;
-        lkr_.unlock();
     }
 
 
@@ -107,19 +93,14 @@ public:
     }
 
 
-    inline int state() {
-        lkr_.lock();
-        int s = state_;
-        lkr_.unlock();
-        return s;
+    inline int state() const {
+        return state_;
     }
 
 
     inline void set_state(int state) {
         ASSERT(state == 0 || state == -1 || state == 1);
-        lkr_.lock();
         state_ = state;
-        lkr_.unlock();
     }
 
 
@@ -127,17 +108,19 @@ public:
     // input 用于处理原始UDP数据
     // ========================================================================================================
     int input(PRUX_FRM frm) {
-        int         datalen     = frm->len - RUX_FRM_HDR_SIZE;  // Frame Payload 长度
-        int         ret         = -1;
-        int         n;
-        uint8_t*    p           = frm->raw + RUX_FRM_HDR_SIZE;  // Frame Payload 数据
-        uint64_t    last_us     = 0;                            // 当前 Frame 中最大的时间(微秒)
-        uint64_t    now_us      = frm->time_us - base_us_;      // 当前时间
-        PRUX_SEG    seg;
+        int ret     = -1;
+        int err     = 0;
+        int datalen = frm->len - RUX_FRM_HDR_SIZE;  // Frame Payload 长度
+        int n, rtt, delta;
 
-        std::map<uint64_t, PRUX_SEG>::iterator itr;
+        uint8_t* p       = frm->raw + RUX_FRM_HDR_SIZE;  // Frame Payload 数据
+        uint64_t now_us  = frm->time_us - base_us_;      // 当前时间
+        uint64_t last_us = 0;                            // 当前 Frame 中最大的时间(微秒)
+        PRUX_SEG seg;
+
+        std::map<uint64_t, PRUX_SEG>::iterator  itr;
+
         lkr_.lock();
-
         do {
             // update una
             while (snd_buf_.size() > 0) {
@@ -156,6 +139,7 @@ public:
                 n = seg->decode(p, datalen);
                 if (n < 0) {
                     delete seg;
+                    err = 1;
                     break;
                 }
 
@@ -166,16 +150,10 @@ public:
                 // -------------------- Step 2: 消息分发 --------------------
                 switch (seg->cmd) {
 
-                    /* ------------- RUX_CMD_ACK -------------
-                     * 1, 确认seg->sn的范围;
-                     * 2, 从snd_buf中移除相应的seg;
-                     * 3, 计算rtt, srtt, rto;
-                     *
-                     * RTO的计算采用 RFC-2988 的计算方式;
-                     */
                 case RUX_CMD_ACK: {
                     if (seg->sn >= snd_nxt_) {
                         delete seg;
+                        err = 1;
                         break;
                     }
 
@@ -193,7 +171,7 @@ public:
                      *    3, 发送端触发重传(可能是超时重传, 也可能是快速重传) re psh[sn:1, ts:2].
                      *    4, 发送端此时收到滞留的 ack[sn:1, ts: 1], 这时就会出现RTT时间负数的情况.
                      */
-                    int rtt = (int)(now_us - seg->us + 1);
+                    rtt = (int)(now_us - seg->us + 1);
                     delete seg;
 
                     if (rtt > 0) {
@@ -202,40 +180,28 @@ public:
                             rttval_ = rtt / 2;
                         }
                         else {
-                            int d = rtt - srtt_;
-                            if (d < 0) {
-                                d = -d;
+                            delta = rtt - srtt_;
+                            if (delta < 0) {
+                                delta = -delta;
                             }
 
-                            rttval_ = (3 * rttval_ + d) / 4;
-                            srtt_ = (7 * srtt_ + rtt) / 8;
+                            rttval_ = (3 * rttval_ + delta) >> 2;
+                            srtt_ = (7 * srtt_ + rtt) >> 4;
                         }
 
-                        rto_ = MID(RUX_RTO_MIN, srtt_ + 4 * rttval_, RUX_RTO_MAX);
+                        rto_ = MID(RUX_RTO_MIN, srtt_ + (rttval_ << 2), RUX_RTO_MAX);
                     }
-
-                    ret = 0;
                 }break;
 
-                    /* ------------- RUX_CMD_PIN -------------
-                     * 1, 将探针标志置为 1;
-                     * 2, 将snd_us_ 置0;
-                     *
-                     * 下一次 update 时发送 RUX_CMD_PON segment
-                     */
                 case RUX_CMD_PIN: {
                     probe_ = 1;
                     delete seg;
-                    ret = 0;
                 }break;
 
-                    /* ------------- RUX_CMD_PSH -------------
-                     * 1, 检查seg->sn范围;
-                     * 2, 检查该包是否处理过;
-                     */
                 case RUX_CMD_PSH: {
                     if (seg->sn == 0 && snd_nxt_ == 0) {
                         delete seg;
+                        err = 1;
                         break;
                     }
 
@@ -254,47 +220,45 @@ public:
                     else {
                         delete seg;
                     }
-
-                    ret = 0;
                 }break;
 
-                    /* ------------- RUX_CMD_CON -------------
-                     * 1, 检查seg->sn 是否为第一个包(seg->sn == 0);
-                     * 2, 设置seg的META属性;
-                     * 3, 激活当前rux;
-                     * 4, 生成ACK并加入ack_que_中;
-                     * 5, 将psh segment加入rcv_buf_中;
-                     */
                 case RUX_CMD_CON: {
                     if (seg->sn != 0) {
                         delete seg;
+                        err = 1;
                         break;
                     }
 
-                    if (rcv_buf_.count(seg->sn) > 0) {
-                        ack_que_.emplace_back(new RUX_ACK(seg->sn, seg->us));
-                        delete seg;
-                        break;
-                    }
-
-                    seg->rid = frm->rid;
-                    seg->time_us = frm->time_us;
-                    seg->addr = &frm->name;
-                    seg->addrlen = frm->namelen;
-                    _reset(seg->time_us);
-                    rcv_buf_.insert(seg);
                     ack_que_.emplace_back(new RUX_ACK(seg->sn, seg->us));
-                    ret = 0;
+
+                    if (rcv_buf_.count(seg->sn) == 0) {
+                        seg->rid = frm->rid;
+                        seg->time_us = frm->time_us;
+                        seg->addr = &frm->name;
+                        seg->addrlen = frm->namelen;
+                        _reset(seg->time_us);
+                        rcv_buf_.insert(seg);
+                    }
+                    else {
+                        delete seg;
+                    }
                 }break;
 
-                default: delete seg; break;
+                default: {
+                    delete seg;
+                    err = 1;
+                }break;
                 } // switch
+
+                if (err) {
+                    break;
+                }
 
                 p += n;
                 datalen -= n;
-            }
+            } // while (datalen > 0);
 
-            if (ret == -1) {
+            if (err) {
                 break;
             }
 
@@ -315,11 +279,11 @@ public:
             }
 
             last_rcv_us_ = frm->time_us;
+            _set_remote_addr(&frm->name, frm->namelen);
+            ret = 0;
         } while (0);
-
         lkr_.unlock();
 
-        // Step 5: 设置对端地址
         return ret;
     }
 
@@ -341,9 +305,9 @@ public:
     // ========================================================================================================
     int send(const uint8_t* msg, int msglen) {
         ASSERT(msg && msglen <= RUX_MSG_MAX);
-        constexpr int MAX_SIZE = RUX_RWND_MAX << 1;
 
         int ret = -1;
+
         lkr_.lock();
         do {
             if (state_ == -1) {
@@ -376,6 +340,7 @@ public:
             ret = 0;
         } while (0);
         lkr_.unlock();
+
         return ret;
     }
 
@@ -384,21 +349,27 @@ public:
     // output 将需要发送的协议数据投递到 output_que中
     // ========================================================================================================
     int output(uint64_t now_us) {
+        constexpr int LOST_LIMIT = 50;
         constexpr uint64_t LOST_INTERVAL = 1000 * 1000 * 10;
-        constexpr uint64_t LOST_LIMIT = 50;
 
-        int ret = -1;
+        int already_snd = 0;
+        int err         = 0;
+        int needsnd     = 0;
+        int nfrms       = 0;
+        int nleft       = 0;
+        int ret         = -1;
+        int i, n;
 
-        int nfrms = 0, nleft = 0, i, n;
-
-        PRUX_FRM frms[RUX_RWND_MAX * 2];
-        PRUX_FRM frm = nullptr;
-        uint8_t* p = nullptr;
+        uint8_t* p      = nullptr;
+        PRUX_FRM frm    = nullptr;
         PRUX_ACK ack;
-        RUX_SEG  seg;
         PRUX_SEG pseg;
-        int already_snd = 0, err = 0, needsnd = 0;
-        std::map<uint64_t, PRUX_SEG>::iterator itr;
+        
+        RUX_SEG  seg;
+        PRUX_FRM frms[RUX_RWND_MAX * 2];
+
+        std::list<PRUX_ACK>::iterator          ack_itr;
+        std::map<uint64_t, PRUX_SEG>::iterator psh_itr;
 
         lkr_.lock();
         do {
@@ -429,7 +400,7 @@ public:
             }
 
             while (ack_que_.size() > 0) {
-                auto ack_itr = ack_que_.begin();
+                ack_itr = ack_que_.begin();
                 if (frm && nleft < RUX_SEG_HDR_SIZE) {
                     frm->len = (uint16_t)(p - frm->raw);
                     ASSERT(!frm->setup());
@@ -464,9 +435,9 @@ public:
 
             // PSH
             int snd_wnd = MIN3(rmt_wnd_, cwnd_, (int)snd_buf_.size());
-            itr = snd_buf_.begin();
-            while (already_snd < snd_wnd && itr != snd_buf_.end()) {
-                pseg = itr->second;
+            psh_itr = snd_buf_.begin();
+            while (already_snd < snd_wnd && psh_itr != snd_buf_.end()) {
+                pseg = psh_itr->second;
 
                 if (frm && nleft < RUX_SEG_HDR_EX_SIZE + pseg->len) {
                     frm->len = (uint16_t)(p - frm->raw);
@@ -541,8 +512,8 @@ public:
                     needsnd = 0;
                 }
 
-                itr++;
-            } // while;
+                psh_itr++;
+            } // while (already_snd < snd_wnd && psh_itr != snd_buf_.end());
 
             if (err) {
                 break;
@@ -624,24 +595,21 @@ public:
     }
 
 
-    inline void set_remote_addr(const sockaddr_storage* addr, socklen_t addrlen) {
-        lkr_.lock();
-        if (addrlen != addrlen_) {
-            addrlen_ = addrlen;
-        }
-
-        if (::memcmp(&addr_, addr, addrlen)) {
-            ::memcpy(&addr_, addr, addrlen);
-        }
-        lkr_.unlock();
-    }
-
-
 private:
-    inline void _reset(uint64_t now_us) {
-        ack_que_.clear();
+    void _reset(uint64_t now_us) {
+        while (ack_que_.size() > 0) {
+            auto itr = ack_que_.begin();
+            delete *itr;
+            ack_que_.erase(itr);
+        }
+
         rcv_buf_.clear();
-        snd_buf_.clear();
+
+        while (snd_buf_.size() > 0) {
+            auto itr = snd_buf_.begin();
+            delete itr->second;
+            snd_buf_.erase(itr);
+        }
 
         rttval_ = srtt_ = probe_ = 0;
         rmt_wnd_ = cwnd_ = RUX_SWND_MIN;
@@ -649,6 +617,16 @@ private:
 
         nlost_ = rcv_nxt_ = snd_nxt_ = last_us_ = 0;
         last_rcv_us_ = base_us_ = now_us;
+    }
+
+    inline void _set_remote_addr(const sockaddr_storage* addr, socklen_t addrlen) {
+        if (addrlen != addrlen_) {
+            addrlen_ = addrlen;
+        }
+
+        if (::memcmp(&addr_, addr, addrlen)) {
+            ::memcpy(&addr_, addr, addrlen);
+        }
     }
 
 
@@ -670,8 +648,8 @@ private:
     uint8_t                                         rmt_wnd_;                   // 对端窗口
 
     uint8_t                                         probe_;                     // 探针
-    int                                             state_;
-    int                                             qid_;                       // rux_que index
+    std::atomic<int>                                state_;
+    std::atomic<int>                                qid_;                       // rux_que index
     int                                             rto_;                       // RTO
     int                                             srtt_;                      // smooth RTT
     int                                             rttval_;                    

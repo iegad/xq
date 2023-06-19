@@ -27,18 +27,19 @@ public:
     RuxServer() 
         : sockfd_(INVALID_SOCKET)
         , nprocessor_(sys_cpus() - 1) {
+        constexpr int QUE_SIZE = 1024 * 4;
         int i;
-        // new RUX_RID_MAX Rux Sessions
+
         for (i = 1; i <= RUX_RID_MAX; i++) {
             sessions_.emplace_back(new Rux(i, 0, output_que_));
         }
 
-        //if (nprocessor_ == 0) {
+        if (nprocessor_ == 0) {
             nprocessor_ = 1;
-        //}
+        }
         
         for (i = 0; i < nprocessor_; i++) {
-            frm_ques_.emplace_back(new moodycamel::BlockingConcurrentQueue<PRUX_FRM>(4096));
+            frm_ques_.emplace_back(new moodycamel::BlockingConcurrentQueue<PRUX_FRM>(QUE_SIZE));
         }
     }
 
@@ -50,7 +51,6 @@ public:
         this->stop();
         this->wait();
 
-        // delete RUX_RID_MAX Rux Sessions
         for (auto s : sessions_) {
             delete s;
         }
@@ -207,7 +207,6 @@ private:
                 sess_lkr_.unlock();
             }
 
-            rux->set_remote_addr(&frm->name, frm->namelen);
             ASSERT(frm_ques_[rux->qid()]->try_enqueue(frm));
             frm = new RUX_FRM;
         }
@@ -267,12 +266,12 @@ private:
 #else
 
 
-    void _rcv_thread(const char *host, const char *svc) {
+    void _rcv_thread(const std::string &host, const std::string &svc) {
         constexpr int RCVMMSG_SIZE = 128;
         constexpr timeval TIMEOUT = { .tv_sec = 0, .tv_usec = 200 * 1000};
 
         // Step 1: init socket
-        sockfd_ = udp_bind(host, svc);
+        sockfd_ = udp_bind(host.c_str(), svc.c_str());
         ASSERT(sockfd_ != INVALID_SOCKET);
         ASSERT(!::setsockopt(sockfd_, SOL_SOCKET, SO_RCVTIMEO, &TIMEOUT, sizeof(TIMEOUT)));
 
@@ -290,7 +289,7 @@ private:
         int* rux_frms_count = new int[nproc]{};      //
 
         for (i = 0; i < nproc; i++) {
-            rux_thread_pool_.emplace_back(std::thread(std::bind(&RuxServer::_rux_thread, this, frm_ques_[i])));
+            rux_thread_pool_.emplace_back(std::thread(std::bind(&RuxServer::_rux_thread, this, i)));
             rux_frms[i] = new RUX_FRM*[RCVMMSG_SIZE];
         }
 
@@ -358,12 +357,9 @@ private:
                     sess_lkr_.unlock();
                 }
 
-                rux->set_remote_addr(&frm->name, frm->namelen);
                 rux_frms[rux->qid()][rux_frms_count[rux->qid()]++] = frm;
 
-                //
                 frm = frms[i] = new RUX_FRM;
-
                 hdr                 = &msgs[i].msg_hdr;
                 hdr->msg_name       = &frm->name;
                 hdr->msg_namelen    = frm->namelen;

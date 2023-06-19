@@ -85,11 +85,18 @@ public:
     // -------------------------------
     // @endpoint: 服务节点
     // ========================================================================================================
-    void connect_node(const char* endpoint, uint64_t now_us) {
+    void connect_node(const std::string &endpoint, uint64_t now_us) {
         Rux* rux = new Rux(rid_, now_us, output_que_);
-        rux->addr()->ss_family = AF_INET;
-        ASSERT(!str2addr(endpoint, rux->addr(), rux->addrlen()));
-        // rux->reset(now_us);
+        sockaddr_storage addr;
+        socklen_t addrlen = sizeof(addr);
+        ::memset(&addr, 0, addrlen);
+        std::string ip = endpoint.substr(0, endpoint.rfind(':'));
+        if (ip.empty()) {
+            ip = "0.0.0.0";
+        }
+        addr.ss_family = get_ip_type(ip);
+        ASSERT(!str2addr(endpoint.c_str(), &addr, &addrlen));
+        rux->set_rmt_addr(&addr, addrlen);
         rux->set_state(0);
         node_map_.insert(std::make_pair(endpoint, rux));
     }

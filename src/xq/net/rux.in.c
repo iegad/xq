@@ -1,6 +1,6 @@
 #include "xq/net/rux.in.h"
 #include <string.h>
-#include "..\..\..\include\xq\net\rux.in.h"
+#include "xq/net/rux.in.h"
 
 int 
 rux_env_init() {
@@ -26,8 +26,6 @@ rux_env_release() {
 
 SOCKET
 udp_bind(const char* host, const char* svc) {
-    static const int ON = 1;
-
     if (!host || !svc) {
         return INVALID_SOCKET;
     }
@@ -50,18 +48,6 @@ udp_bind(const char* host, const char* svc) {
         if (fd == INVALID_SOCKET) {
             continue;
         }
-
-        if (setsockopt(fd, SOL_SOCKET, SO_REUSEADDR, (const char*)&ON, sizeof(int))) {
-            close(fd);
-            return INVALID_SOCKET;
-        }
-
-#ifndef WIN32
-        if (setsockopt(fd, SOL_SOCKET, SO_REUSEPORT, &ON, sizeof(int))) {
-            close(fd);
-            return INVALID_SOCKET;
-        }
-#endif // !WIN32
 
         if (!bind(fd, rp->ai_addr, (int)rp->ai_addrlen)) {
             break;
@@ -231,10 +217,10 @@ bin2hex(const uint8_t* data, size_t datalen, char* buf, size_t buflen) {
 
 int 
 hex2bin(const char* data, size_t datalen, uint8_t* buf, size_t buflen) {
-    ASSERT(data, && buf && datalen > 0 && datalen % 2 == 0 && buflen >= buflen >> 1);
+    ASSERT(data && buf && datalen > 0 && datalen % 2 == 0 && buflen >= buflen >> 1);
 
     buflen = datalen >> 1;
-    for (int i = 0; i < buflen; i++) {
+    for (size_t i = 0; i < buflen; i++) {
         uint8_t tmp = 0;
 
         for (size_t j = 0; j < 2; j++) {

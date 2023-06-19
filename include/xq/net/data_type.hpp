@@ -446,6 +446,7 @@ typedef struct __rcv_buf_ {
     void clear() {
         if (nsize_ > 0) {
             nsize_ = 0;
+
             for (int i = 0; i < MAX; i++) {
                 if (buf_[i]) {
                     delete buf_[i];
