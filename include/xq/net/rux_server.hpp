@@ -111,39 +111,8 @@ public:
     }
 
 
-    // ========================================================================================================
-    // 加入组播, 预留功能. 
-    //      目前可支持IPV4组播
-    // -------------------------------
-    // @multi_local_ip: 组播地址
-    // @multi_route_ip: 本机路由地址
-    // ========================================================================================================
-    int join_multicast(const std::string& multi_local_ip, const std::string& multi_route_ip) {
-        ASSERT(multi_local_ip.size() > 0 && multi_route_ip.size() > 0);
-
-        int af = xq::net::get_ip_type(multi_route_ip);
-        ASSERT(af == AF_INET/* || af == AF_INET6*/);
-
-        ip_mreq mreq;
-        ::memset(&mreq, 0, sizeof(mreq));
-        if (::inet_pton(af, multi_route_ip.c_str(), &mreq.imr_multiaddr) != 1) {
-            return -1;
-        }
-
-        if (::inet_pton(af, multi_local_ip.c_str(), &mreq.imr_interface) != 1) {
-            return -1;
-        }
-
-        if (::setsockopt(sockfd_, IPPROTO_IP, IP_ADD_MEMBERSHIP, (char*)&mreq, sizeof(mreq))) {
-            return -1;
-        }
-
-        return 0;
-    }
-
-
 private:
-#ifdef WIN32
+#ifdef _WIN32
     // ========================================================================================================
     // input 线程
     // ========================================================================================================
@@ -508,7 +477,7 @@ private:
         uint64_t now_us;
         size_t n;
         Rux* rux;
-#ifndef WIN32
+#ifndef _WIN32
         timeval timeout = {0, 0};
 #endif
         std::unordered_set<uint32_t>::iterator itr;
@@ -537,7 +506,7 @@ private:
 
                 n--;
             }
-#ifdef WIN32
+#ifdef _WIN32
             std::this_thread::sleep_for(std::chrono::microseconds(TIMOUT_US));
 #else
             timeout.tv_usec = TIMOUT_US;

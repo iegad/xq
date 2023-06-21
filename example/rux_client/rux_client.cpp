@@ -1,8 +1,8 @@
 #include "xq/net/rux_client.hpp"
 
-//#define SERVER_ENDPOINT ("192.168.0.104:6688")
+#define SERVER_ENDPOINT ("192.168.0.104:6688")
 //#define SERVER_ENDPOINT ("127.0.0.1:6688")
-#define SERVER_ENDPOINT ("1.15.81.179:6688")
+//#define SERVER_ENDPOINT ("1.15.81.179:6688")
 #define LIMIT (100000)
 
 
@@ -56,17 +56,43 @@ snd_worker() {
 }
 
 
+#include "xq/net/udx.hpp"
+
+
 int 
 main(int argc, char** argv) {
     ASSERT(!rux_env_init());
-    client = new xq::net::RuxClient<EchoEvent>(1);
-    client->connect_node(SERVER_ENDPOINT, sys_clock());
-    client->run();
-    beg = sys_clock();
-    std::thread t(snd_worker);
-    t.join();
-    client->wait();
-    DLOG("exit: %llu !!!\n", sys_clock() - beg);
+
+    xq::net::UdxOption opt;
+    opt.endpoint = "192.168.0.201:0";
+    xq::net::Udx udx(&opt);
+    udx.run();
+
+    for (int i = 0; i < 100; i++) {
+        xq::net::Frame::ptr pfm = xq::net::Frame::get();
+        pfm->name.ss_family = AF_INET;
+        //ASSERT(!str2addr("192.168.0.104:6688", &pfm->name, &pfm->namelen));
+        ASSERT(!str2addr("224.0.0.88:6688", &pfm->name, &pfm->namelen));
+
+        int n = sprintf((char*)pfm->raw, "Hello world: %d", i);
+        pfm->len = n;
+        if (udx.send(pfm)) {
+            DLOG("send failed\n");
+        }
+    }
+
+    udx.wait();
+
+    //client = new xq::net::RuxClient<EchoEvent>(1);
+    //client->connect_node(SERVER_ENDPOINT, sys_clock());
+    //client->run();
+    //beg = sys_clock();
+    //std::thread t(snd_worker);
+    //t.join();
+    //client->wait();
+    //DLOG("exit: %llu !!!\n", sys_clock() - beg);
+
+
     /*int n;
 
     SOCKET sockfd = udp_bind("0.0.0.0", "0");

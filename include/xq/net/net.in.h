@@ -1,25 +1,13 @@
-/* ********************************************************************************************************************************************
- * RUX: Reliable / Realtime user datagram protocol extension.
- * 
- * -----------------------------------------------------------------------------------------------------------------------------
- * @auth: iegad
- * @time: 2023-05-09
- * 
- * @update history
- * -----------------------------------------------------------------------------------------------------------------------------
- * @time                   | @note                                                                  |@coder
- * 
- * ******************************************************************************************************************************************* */
-
-
-#ifndef __XQ_NET_RUX_IN__
-#define __XQ_NET_RUX_IN__
+#ifndef __XQ_NET_IN__
+#define __XQ_NET_IN__
 
 
 #ifdef _WIN32
 #pragma comment(lib, "ws2_32.lib")
+#pragma comment(lib, "iphlpapi.lib")
 #include <WinSock2.h>
 #include <WS2tcpip.h>
+#include <Iphlpapi.h>
 #else
 #include <arpa/inet.h>
 #include <fcntl.h>
@@ -42,17 +30,10 @@ extern "C" {
 #endif // __cplusplus
 
 
-/* ********************************************************************************************************************************************
- * 判定平台是否为大端序平台
- *
- * --------------------------
- * @auth: iegad
- * @time: 2023-05-10
- * ********************************************************************************************************************************************/
 #ifndef X_BIG_ENDIAN
     #ifdef _BIG_ENDIAN_
         #if _BIG_ENDIAN_
-            #define X_BIG_ENDIAN 1
+            #define X_BIG_ENDIAN (1)
         #endif
     #endif
     #ifndef X_BIG_ENDIAN
@@ -67,91 +48,151 @@ extern "C" {
     #endif
 
     #ifndef X_BIG_ENDIAN
-        #define X_BIG_ENDIAN 0
+        #define X_BIG_ENDIAN (0)
     #endif
 #endif
 
 
-/* ********************************************************************************************************************************************
- * 判定平台是否为强制对齐平台
- * 
- * --------------------------
- * @auth: iegad
- * @time: 2023-05-10
- * ********************************************************************************************************************************************/
 #ifndef X_MUST_ALIGN
     #if defined(__i386__) || defined(__i386) || defined(_i386_)
-        #define X_MUST_ALIGN 0
+        #define X_MUST_ALIGN (0)
     #elif defined(_M_IX86) || defined(_X86_) || defined(__x86_64__)
-        #define X_MUST_ALIGN 0
+        #define X_MUST_ALIGN (0)
     #elif defined(__amd64) || defined(__amd64__) || defined(_AMD64_)
-        #define X_MUST_ALIGN 0
+        #define X_MUST_ALIGN (0)
     #else
-        #define X_MUST_ALIGN 1
+        #define X_MUST_ALIGN (1)
     #endif
 #endif
 
 
-#define ASSERT(expr) if (!(expr)){ fprintf(stderr, "%s:%d %s", __FILE__, __LINE__, #expr); abort(); }
-#define MAX(a, b) ((a) > (b) ? (a) : (b))
-#define MIN(a, b) ((a) > (b) ? (b) : (a))
-#define MIN3(a, b, c) (MIN(MIN(a, b), (c)))
-#define MID(a, b, c) (MIN(MAX(a, b), c))
+#define ASSERT(expr)    if (!(expr)){ fprintf(stderr, "%s:%d %s", __FILE__, __LINE__, #expr); abort(); }
+#define MAX(a, b)       ((a) > (b) ? (a) : (b))
+#define MIN(a, b)       ((a) > (b) ? (b) : (a))
+#define MIN3(a, b, c)   (MIN(MIN(a, b), (c)))
+#define MAX3(a, b, c)   (MAX(MAX(a, b), (c)))
+#define MID(a, b, c)    (MIN(MAX(a, b), c))
 
 
-#if (_DEBUG == 1 || NDEBUG == 1)
+#if (_DEBUG || NDEBUG)
 #define DLOG(...) (printf(__VA_ARGS__))
 #else
 #define DLOG(...) (printf(__VA_ARGS__))
-#endif // DEBUG
+#endif
 
 
-
-/* ********************************************************************************************************************************************
- * 平台统一接口
- *
- * --------------------------
- * @auth: iegad
- * @time: 2023-05-10
- * ********************************************************************************************************************************************/
-
-/* system common macro */
-#ifndef WIN32
+#ifdef _WIN32
+    #define close(fd) closesocket(fd)           // close socket
+    #define errcode WSAGetLastError()           // get last io's error code for win
+#else
     typedef int SOCKET;                         // socket type
     #define INVALID_SOCKET ((SOCKET)(~0))       // invalid socket
     #define errcode errno                       // get last io's error code for !win
-#else
-    #define close(fd) closesocket(fd)           // close socket
-    #define errcode WSAGetLastError()           // get last io's error code for win
-#endif // !WIN32
+#endif // !_WIN32
 
 
-/* init netword environment, nothing todo on !win */
+#define IPV4_HDR_SIZE       (20)                                            // IPv4 Header size
+#define IPV6_HDR_SIZE       (40)                                            // IPv6 Header size
+#define UDP_HDR_SIZE        (8)                                             // UDP Header size
+#define ETH_FRM_SIZE        (1500)                                          // Ethernet payload size
+#define UDP_MTU             (ETH_FRM_SIZE - UDP_HDR_SIZE - IPV6_HDR_SIZE)   // RUX Maximum Transmission Unit: 1452
+#define ENDPOINT_STR_LEN    (INET6_ADDRSTRLEN + 7)                          // Endpoint' string max size
+
+
+/// @brief Init network environment, nothing todo on !win
+/// @return 0 on success or -1 on failure.
 int rux_env_init();
 
-/* release netword environment, nothing todo on !win */
+
+/// @brief Release network environment, nothing todo on !win
+/// @return 0 on success or -1 on failure.
 int rux_env_release();
 
-/* build a udp socket and bind with host/IP and svc/port */
+
+/// @brief Make udp socket then bind <host:svc>
+/// @param host host/ip
+/// @param svc  svc/port
+/// @return sockfd on success or INVALID_SOCKET on failure.
 SOCKET udp_bind(const char* host, const char* svc);
 
-/* convert sockaddr to string */
+
+/// @brief Convert sockaddr to string
+/// @param addr     the sockaddr to be converted
+/// @param buf      [out] string buf
+/// @param buflen   [out] string buf's length
+/// @return 0 on success or -1 on failure.
 int addr2str(const struct sockaddr_storage* addr, char* buf, size_t buflen);
 
-/* convert string to sockaddr, addr->sa_family must be set: AF_INET or AF_INET6 */
+
+/// @brief Convert string to sockaddr
+/// @param endpoint the endpoint's string to be converted
+/// @param addr     [out] sockaddr's pointer
+/// @param addrlen  [out] sockaddrlen's pointer
+/// @return 0 on success or -1 on failure.
+/// @note 'addr.ss_family' must be set AF_INET / AF_INET6
 int str2addr(const char *endpoint, struct sockaddr_storage *addr, socklen_t* addrlen);
 
-/* make socket nonblocking */
+
+/// @brief Set sockfd nonblocking
+/// @param sockfd the sockfd to be set nonblocking
+/// @return 0 on success or -1 on failure.
 int make_nonblocking(SOCKET sockfd);
 
-/* get system clock */
+
+/// @brief Get clock(us) of since the system started.
+/// @note  It's not unix timetamp.
 int64_t sys_clock();
 
-/* get count of cpu cores */
+
+/// @brief Get number of cpu's cores.
+/// @return number of cpu's cores.
 int sys_cpus();
 
+
+/// @brief Get local ip address
+/// @param addrs    [out] sockaddr_storage array
+/// @param n        number of sockaddr_storage array
+/// @return         number of local ip address on success or -1 on failure.
+int sys_ips(struct sockaddr_storage *addrs, size_t n);
+
+
+/// @brief system network interface
+struct SysInterface {
+    uint32_t    if_flag;        // win: Type, !win: flag
+    char        if_ip[16];      
+    char        if_mask[16];
+    char        if_gw[16];
+    char        if_desc[132];   // 网卡描述
+    char        if_name[260];   // 网卡名称
+};
+
+/// @brief [Alpha] get system network interfaces
+/// @param ifs [out] SysInterface's pointer
+/// @param n   ifs'es length
+/// @return number of system network interface on success or -1 on failure.
+/// @note   还未解决问题: 1, linux平台 gw, mask, ip都是sockaddr 而windows是字符串
+///                      2, windows无法获取ipv6
+///                      3, linux平台无法通过一个接口获取mac地址
+int sys_ifs(struct SysInterface* ifs, size_t n);
+
+
+/// @brief Convert binary data to hex string.
+/// @param data     the binary data to be converted
+/// @param datalen  binary data's length
+/// @param buf      [out] string buffer
+/// @param buflen   string buffer's length
+/// @return The length after converting to a hexadecimal string or -1 on failure.
 int bin2hex(const uint8_t* data, size_t datalen, char* buf, size_t buflen);
+
+
+/// @brief Convert hex string to binary data.
+/// @param data     the hex string to be converted
+/// @param datalen  hex string's length
+/// @param buf      [out] binary buffer
+/// @param buflen   binary buffer's length
+/// @return The length after conversion to binary data or -1 on failure.
 int hex2bin(const char* data, size_t datalen, uint8_t* buf, size_t buflen);
+
 
 inline int u64_decode(const uint8_t * p, uint64_t * v) {
 #if X_BIG_ENDIAN || X_MUST_ALIGN
@@ -317,4 +358,4 @@ inline int u8_encode(uint8_t v, uint8_t * p) {
 #endif // __cplusplus
 
 
-#endif // !__XQ_NET_RUX_IN__
+#endif // !__XQ_NET_IN__

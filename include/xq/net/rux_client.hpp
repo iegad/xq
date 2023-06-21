@@ -120,7 +120,7 @@ public:
 
 
 private:
-#ifdef WIN32
+#ifdef _WIN32
 
 
     // ========================================================================================================
@@ -354,7 +354,7 @@ private:
         std::unordered_map<std::string, Rux*>::iterator itr;
         Rux* rux;
         uint64_t now_us;
-#ifndef WIN32
+#ifndef _WIN32
         timeval timeout = {0, 0};
 #endif
 
@@ -370,7 +370,7 @@ private:
                 }
                 itr++;
             }
-#ifdef WIN32
+#ifdef _WIN32
             std::this_thread::sleep_for(std::chrono::microseconds(500));
 #else
             timeout.tv_usec = 500;

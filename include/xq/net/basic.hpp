@@ -1,5 +1,5 @@
-#ifndef __XQ_NET_COMMON__
-#define __XQ_NET_COMMON__
+#ifndef __XQ_NET_BASIC__
+#define __XQ_NET_BASIC__
 
 
 #include <atomic>
@@ -7,7 +7,7 @@
 #include <thread>
 #include <list>
 #include <map>
-#include "xq/net/rux.in.h"
+#include "xq/net/net.in.h"
 
 
 namespace xq {
@@ -15,11 +15,9 @@ namespace net {
 
 
 /* common */
-constexpr int           IPV4_HDR_SIZE           = 20;                                                           // IPv4 Header size
-constexpr int           IPV6_HDR_SIZE           = 40;                                                           // IPv6 Header size
-constexpr int           UDP_HDR_SIZE            = 8;                                                            // UDP Header size
-constexpr int           ETH_FRM_SIZE            = 1500;                                                         // Ethernet payload size
-constexpr int           RUX_MTU                 = ETH_FRM_SIZE - UDP_HDR_SIZE - IPV6_HDR_SIZE;                  // RUX Maximum Transmission Unit: 1452
+
+constexpr int           RUX_MTU                 = UDP_MTU;
+
 
 /* rux property */
 constexpr int           RUX_FRM_HDR_SIZE        = 10;                                                           // RUX Frame Header size: rid[3] + wnd[1]
@@ -68,7 +66,7 @@ constexpr char REG_IPV6[] = "^\\[(([0-9a-fA-F]{1,4}:){7,7}[0-9a-fA-F]{1,4}|([0-9
 // ===============================================================================================
 // 判断 ip 类型
 // ===============================================================================================
-inline int get_ip_type(const std::string& ip) {
+inline int check_ip_type(const std::string& ip) {
     static const std::regex REG_V6(REG_IPV6);
     static const std::regex REG_V4(REG_IPV4);
 
@@ -380,7 +378,7 @@ private:
 //      windows 下 使用 windows自带原子操作函数
 //      linux   下 则使用 posix 自旋锁
 // ###############################################################################################
-#ifdef WIN32
+#ifdef _WIN32
 typedef struct __spin_lock_ {
     void lock() {
         while (InterlockedCompareExchange(&m_, 1, 0) != 0) {
@@ -421,11 +419,11 @@ typedef struct __spin_lock_ {
 private:
     pthread_spinlock_t m_;
 } SPIN_LOCK, * PSPIN_LOCK;
-#endif // WIN32
+#endif // _WIN32
 
 
 } // namespace net
 } // namespace xq
 
 
-#endif // __XQ_NET_COMMON__
+#endif // __XQ_NET_BASIC__

@@ -1,26 +1,26 @@
-#include "xq/net/rux.in.h"
+#include "xq/net/net.in.h"
 #include <string.h>
-#include "xq/net/rux.in.h"
+#include "xq/net/net.in.h"
+
 
 int 
 rux_env_init() {
-#ifdef WIN32
+#ifdef _WIN32
     WSADATA wdata;
     return WSAStartup(0x0202, &wdata) < 0 || wdata.wVersion != 0x0202 ? -1 : 0;
 #else
     return 0;
-#endif // WIN32
-
+#endif // _WIN32
 }
 
 
 int 
 rux_env_release() {
-#ifdef WIN32
+#ifdef _WIN32
     return WSACleanup();
 #else
     return 0;
-#endif // WIN32
+#endif // _WIN32
 }
 
 
@@ -104,7 +104,7 @@ int
 str2addr(const char* endpoint, struct sockaddr_storage* addr, socklen_t* addrlen) {
     ASSERT(endpoint && addr && addrlen && (addr->ss_family == AF_INET || addr->ss_family == AF_INET6));
 
-    char ip[INET6_ADDRSTRLEN] = {0};
+    char ip[INET6_ADDRSTRLEN + 6] = {0};
     char *svc = strrchr(endpoint, ':');
     int pos = svc++ - endpoint;
 
@@ -149,19 +149,19 @@ str2addr(const char* endpoint, struct sockaddr_storage* addr, socklen_t* addrlen
 
 int 
 make_nonblocking(SOCKET sockfd) {
-#ifndef WIN32
+#ifndef _WIN32
     int opts = fcntl(sockfd, F_GETFL);
     return opts < 0 ? -1 : fcntl(sockfd, F_SETFL, opts | O_NONBLOCK);
 #else
     static u_long ON = 1;
     return ioctlsocket(sockfd, FIONBIO, &ON);
-#endif // !WIN32
+#endif // !_WIN32
 }
 
 
 int64_t 
 sys_clock() {
-#ifdef WIN32
+#ifdef _WIN32
     static int64_t FREQ = 0;
     LARGE_INTEGER l;
     if (FREQ == 0) {
@@ -176,24 +176,93 @@ sys_clock() {
     struct timespec t;
     ASSERT(!clock_gettime(CLOCK_MONOTONIC, &t));
     return t.tv_sec * 1000000 + t.tv_nsec / 1000;
-#endif // !WIN32
+#endif // !_WIN32
 }
 
 
 int
 sys_cpus() {
-#ifdef WIN32
+#ifdef _WIN32
     SYSTEM_INFO si;
     GetSystemInfo(&si);
     return si.dwNumberOfProcessors;
 #else
     return (int)sysconf(_SC_NPROCESSORS_ONLN);
-#endif // !WIN32
+#endif // _WIN32
 }
 
 
 int 
-bin2hex(const uint8_t* data, size_t datalen, char* buf, size_t buflen) {
+sys_ips(struct sockaddr_storage *addrs, size_t n) {
+    ASSERT(addrs && n > 0);
+    char hname[255] = {0};
+    int ret = -1, i = 0;
+
+    do {
+        if (gethostname(hname, sizeof(hname)) < 0) {
+            break;
+        }
+
+        struct addrinfo hints;
+        struct addrinfo *result = NULL, *rp = NULL;
+
+        memset(&hints, 0, sizeof(hints));
+
+        hints.ai_family     = AF_UNSPEC;
+        hints.ai_socktype   = SOCK_STREAM;
+        hints.ai_flags      = AI_PASSIVE;
+
+        if (getaddrinfo(hname, NULL, &hints, &result)) {
+            break;
+        }
+
+        for (rp = result; rp != NULL; rp = rp->ai_next, i++) {
+            addrs[i].ss_family = rp->ai_family;
+            memcpy(&addrs[i], rp->ai_addr, rp->ai_addrlen);
+        }
+
+        ret = i;
+    } while (0);
+
+    return ret;
+}
+
+
+int 
+sys_ifs(struct SysInterface *ifs, size_t n) {
+    struct SysInterface *inf;
+
+    ASSERT(ifs && n > 0);
+#ifdef _WIN32
+    PIP_ADAPTER_INFO p;
+    u_long nsize = 0, err;
+
+    GetAdaptersInfo(NULL, &nsize);
+    p = (PIP_ADAPTER_INFO)malloc(nsize);
+    if (GetAdaptersInfo(p, &nsize)) {
+        return -1;
+    }
+
+    n = nsize / sizeof(IP_ADAPTER_INFO);
+    for (size_t i = 0; i < n && p; i++, p = p->Next) {
+        inf = &ifs[i];
+        memcpy(inf->if_name, p->AdapterName, sizeof(p->AdapterName));
+        memcpy(inf->if_desc, p->Description, sizeof(p->Description));
+        inf->if_flag = p->Type;
+        memcpy(inf->if_ip, p->IpAddressList.IpAddress.String, sizeof(p->IpAddressList.IpAddress.String));
+        memcpy(inf->if_mask, p->IpAddressList.IpAddress.String, sizeof(p->IpAddressList.IpMask.String));
+        memcpy(inf->if_gw, p->IpAddressList.IpAddress.String, sizeof(p->GatewayList.IpAddress.String));
+    }
+
+    free(p);
+    return n;
+#else
+#endif
+}
+
+
+int bin2hex(const uint8_t *data, size_t datalen, char *buf, size_t buflen)
+{
     ASSERT(data && buf && datalen > 0 && buflen >= datalen << 1);
 
     uint8_t tmp;
@@ -213,7 +282,6 @@ bin2hex(const uint8_t* data, size_t datalen, char* buf, size_t buflen) {
     }
     return datalen << 1;
 }
-
 
 int 
 hex2bin(const char* data, size_t datalen, uint8_t* buf, size_t buflen) {

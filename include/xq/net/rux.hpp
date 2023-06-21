@@ -17,7 +17,7 @@
 #define __XQ_NET_RUX__
 
 
-#include "xq/net/data_type.hpp"
+#include "xq/net/basic.hpp"
 #include "xq/third/blockingconcurrentqueue.h"
 
 
