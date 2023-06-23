@@ -19,7 +19,6 @@ public:
 
     explicit RuxServer(TService* service)
         : nprocessor_(sys_cpus() - 1) 
-        , running_(false)
         , service_(service)
     {}
 
@@ -214,7 +213,7 @@ private:
 
                 delete pfm;
             }
-            _mm_pause();
+            std::this_thread::yield();
         }
 
         delete[] msg;
@@ -257,8 +256,8 @@ private:
     }
 
 
-    int nprocessor_;
-    bool running_;
+    bool      running_ = false;
+    int       nprocessor_;
     TService* service_;
 
     std::thread                  upd_thread_;        // rux update 线程

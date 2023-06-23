@@ -44,44 +44,33 @@ public:
     struct Segment {
         typedef Segment* ptr;
 
-        uint8_t    cmd;            // command
-        uint64_t   sn;             // sequence number
-        uint64_t   us;             // timestamp(us)
+        uint8_t  cmd = 0;             // command
+        uint64_t sn  = 0;             // sequence number
+        uint64_t us  = 0;             // timestamp(us)
 
-        uint16_t   len;            // segment's length
-        uint8_t    frg;            // fragment
-        uint8_t    data[RUX_MSS];  // data: 1424
+        uint16_t len = 0;             // segment's length
+        uint8_t  frg = 0;             // fragment
+        uint8_t  data[RUX_MSS] = {};  // data: 1424
 
         /* META */
-        uint8_t    fastack;        //
-        uint16_t   xmit;           //
-        uint32_t   rto;            //
-        uint64_t   resend_us;
+        uint8_t  fastack   = 0;       //
+        uint16_t xmit      = 0;       //
+        uint32_t rto       = 0;       //
+        uint64_t resend_us = 0;       //
 
 
-        explicit Segment(
-            uint8_t cmd = 0, 
-            uint64_t sn = 0, 
-            uint64_t us = 0, 
-            uint16_t len = 0, 
-            uint8_t frg = 0, 
-            const uint8_t *data = nullptr
-        ) : cmd(cmd)
+        Segment()
+        {}
+
+
+        Segment(uint8_t cmd, uint64_t sn, uint16_t len, uint8_t frg, const uint8_t *data)
+          : cmd(cmd)
           , sn(sn)
-          , us(us)
           , len(len)
-          , frg(frg)
-          , fastack(0)
-          , xmit(0)
-          , rto(0)
-          , resend_us(0) {
+          , frg(frg) {
             ASSERT(len <= RUX_MSS);
-            if (data && len > 0) {
-                ::memcpy(this->data, data, len);
-            }
-            else {
-                ::memset(this->data, 0, sizeof(this->data));
-            }
+            ASSERT(data && len > 0 && len <= RUX_MSS);
+            ::memcpy(this->data, data, len);
         }
 
 
@@ -538,7 +527,7 @@ public:
                     cmd = RUX_CMD_PSH;
                 }
 
-                seg = new Segment(cmd, snd_nxt_++, 0, len, n - i, msg);
+                seg = new Segment(cmd, snd_nxt_++, len, n - i, msg);
                 snd_buf_.insert(std::make_pair(seg->sn, seg));
                 msg += len;
                 msglen -= len;

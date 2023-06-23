@@ -48,11 +48,8 @@ struct SpinLock {
         InterlockedExchange(&m_, 0);
     }
 
-
-    SpinLock() : m_(0) {}
-
 private:
-    long m_;
+    long m_ = 0;
 };
 
 #define LOCK  lkr_.lock();DLOG("%s LOCKED\n", __func__);

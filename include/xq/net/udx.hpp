@@ -15,29 +15,24 @@ namespace net {
 struct Frame {
     typedef Frame* ptr;
 
-    uint16_t         len;                // raw data's length
-    socklen_t        namelen;            // remote sockaddr's length
-    sockaddr_storage name;               // remote sockaddr
-    uint8_t          raw[UDP_MTU + 1];   // raw data
+    uint16_t         len              = 0;                          // raw data's length
+    socklen_t        namelen          = sizeof(sockaddr_storage);   // remote sockaddr's length
+    sockaddr_storage name             = {};                         // remote sockaddr
+    uint8_t          raw[UDP_MTU + 1] = {};                         // raw data
 
     /* META */
-    int64_t          time_us;            // receive timestamp(us)
-    void*            ex;
+    int64_t          time_us = 0;       // receive timestamp(us)
+    void*            ex      = nullptr; // extension
 
 
-    explicit Frame(const sockaddr_storage* addr = nullptr, socklen_t addrlen = sizeof(sockaddr_storage))
-        : len(0)
-        , namelen(addrlen)
-        , time_us(0)
-        , ex(nullptr) {
-        if (addr) {
-            ::memcpy(&name, addr, addrlen);
-        }
-        else {
-            ::memset(&name, 0, sizeof(name));
-        }
+    explicit Frame() 
+    {}
 
-        ::memset(raw, 0, sizeof(raw));
+
+    explicit Frame(const sockaddr_storage* addr, socklen_t addrlen)
+        : namelen(addrlen) {
+        ASSERT(addr && addrlen >= sizeof(sockaddr))
+        ::memcpy(&name, addr, addrlen);
     }
 
 
@@ -63,7 +58,8 @@ class Udx {
 public:
     typedef Udx<TEvent>* ptr;
     typedef moodycamel::BlockingConcurrentQueue<Frame::ptr> FrameQueue;
-    static constexpr int SND_QUE_SIZE = 100 * 1024;
+
+    static constexpr int SND_QUE_SIZE = 128 * 1024;
 
 
     explicit Udx(const std::string& endpoint, TEvent* ev)
