@@ -26,7 +26,7 @@ constexpr int      RUX_CMD_PSH       = 0x14;                            // Push
 /* rux limits */
 constexpr int      RUX_RID_MAX       = 100000;                          // Maximum rux id
 constexpr int      RUX_RWND_MAX      = 128;                             // Maximum receive window size
-constexpr int      RUX_SWND_MAX      = RUX_RWND_MAX / 2;                // Maximum send window size
+constexpr int      RUX_SWND_MAX      = RUX_RWND_MAX / 8;                // Maximum send window size
 constexpr int      RUX_SWND_MIN      = 1;
 constexpr uint64_t RUX_SN_MAX        = 0x0000FFFFFFFFFFFF;              // Maximum sequnce number
 constexpr uint64_t RUX_US_MAX        = 0x0000FFFFFFFFFFFF;              // Maximum timestamp(us)
@@ -37,7 +37,7 @@ constexpr int      RUX_RTO_MAX       = 1000 * 1000 * 30;                // RTO M
 constexpr int      RUX_TIMEOUT       = RUX_RTO_MAX * 2 * 10;            // TIMEOUT: 10 min
 constexpr int      RUX_FAST_ACK      = 3;
 constexpr int      RUX_XMIT_MAX      = 10;
-constexpr int      RUX_SSTHRESH_INIT = 8;
+constexpr int      RUX_SSTHRESH_INIT = 2;
 
 
 class Rux {
@@ -157,7 +157,7 @@ public:
                     sn > RUX_SN_MAX ||
                     us > RUX_US_MAX ||
                     len > RUX_MSS ||
-                    (len > 0 && buflen < RUX_SEG_HDR_EX_SIZE + len) ||
+                    (len > 0 && buflen < RUX_SEG_HDR_MAX + len) ||
                     frg > RUX_FRM_MAX) {
                     break;
                 }
@@ -497,6 +497,7 @@ public:
                 ok = 1;
                 break;
             }
+            ++itr;
         }
 
         if (ok) {
@@ -560,6 +561,7 @@ public:
 
     int output(uint64_t now_us) {
         constexpr int LOST_LIMIT = 50;
+        constexpr int FRAME_MAX = RUX_RWND_MAX << 1;
         constexpr uint64_t LOST_INTERVAL = 1000 * 1000 * 10;
 
         int already_snd = 0;
@@ -577,7 +579,7 @@ public:
         Segment::ptr pseg;
         
         Segment seg;
-        Frame::ptr pfms[RUX_SWND_MAX << 1];
+        Frame::ptr pfms[FRAME_MAX + 1];
 
         AckQue::iterator ack_itr;
         SndBuf::iterator psh_itr;
@@ -612,7 +614,7 @@ public:
             now_us -= base_us_;
 
             // ACK
-            while (ack_que_.size() > 0) {
+            while (ack_que_.size() > 0 && npfms < FRAME_MAX) {
                 ack_itr = ack_que_.begin();
                 if (pfm && nleft < RUX_SEG_HDR_SIZE) {
                     pfm->len = uint16_t(p - pfm->raw);
@@ -681,7 +683,7 @@ public:
             // PSH
             int snd_wnd = MIN3(rmt_wnd_, cwnd_, (int)snd_buf_.size());
             psh_itr = snd_buf_.begin();
-            while (already_snd < snd_wnd && psh_itr != snd_buf_.end()) {
+            while (already_snd < snd_wnd && psh_itr != snd_buf_.end() && npfms < FRAME_MAX) {
                 pseg = psh_itr->second;
 
                 if (pfm && nleft < RUX_SEG_HDR_EX_SIZE + pseg->len) {
@@ -809,7 +811,9 @@ public:
             pfms[npfms++] = pfm;
 
             if (npfms > 0) {
-                ASSERT(snd_que_.enqueue_bulk(pfms, npfms));
+                if(!snd_que_.enqueue_bulk(pfms, npfms)) {
+                    DLOG("EN_QUE FAILED: ..................\n");
+                }
             }
         }
 

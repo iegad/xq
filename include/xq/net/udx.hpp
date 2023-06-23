@@ -63,12 +63,13 @@ class Udx {
 public:
     typedef Udx<TEvent>* ptr;
     typedef moodycamel::BlockingConcurrentQueue<Frame::ptr> FrameQueue;
-    static constexpr int SND_QUE_SIZE = 4 * 1024;
+    static constexpr int SND_QUE_SIZE = 100 * 1024;
 
 
     explicit Udx(const std::string& endpoint, TEvent* ev)
         : sockfd_(INVALID_SOCKET)
-        , ev_(ev) {
+        , ev_(ev)
+        , snd_que_(SND_QUE_SIZE) {
         ASSERT(endpoint.size() && ev);
 
         size_t pos = endpoint.rfind(':');

@@ -13,7 +13,7 @@ template <class TService>
 class RuxClient {
 public:
     typedef RuxClient* ptr;
-    typedef Udx<RuxClient> Udx;
+    typedef Udx<RuxClient<TService>> UDX;
 
 
     explicit RuxClient(uint32_t rid, TService *service)
@@ -31,12 +31,12 @@ public:
     }
 
 
-    void on_send(Udx* udx, int err, Frame::ptr pfm) {
+    void on_send(UDX*, int, Frame::ptr) {
 
     }
 
-
-    void on_recv(Udx* udx, int err, Frame::ptr pfm) {
+#ifdef _WIN32
+    void on_recv(UDX* udx, int err, Frame::ptr pfm) {
         static char endpoint[ENDPOINT_STR_LEN] = {0};
         static uint8_t* msg = new uint8_t[RUX_MSG_MAX];
 
@@ -68,16 +68,61 @@ public:
                 }
             } while (msglen > 0);
         } while (0);
+
+        delete pfm;
+    }
+#else
+
+
+    void on_recv(UDX*, Frame::ptr* pfms, int n) {
+        static char endpoint[ENDPOINT_STR_LEN] = {0};
+        static uint8_t* msg = new uint8_t[RUX_MSG_MAX];
+
+        Frame::ptr pfm;
+
+        for (int i = 0; i < n; i++) {
+            pfm = pfms[i];
+            if (pfm->len <= UDP_MTU) {
+                do {
+                    if (addr2str(&pfm->name, endpoint, ENDPOINT_STR_LEN)) {
+                        break;
+                    }
+
+                    auto itr = node_map_.find(endpoint);
+                    if (itr == node_map_.end()) {
+                        break;
+                    }
+
+                    Rux::ptr rux = itr->second;
+                    if (rux->input(pfm)) {
+                        break;
+                    }
+
+                    int msglen;
+                    do {
+                        msglen = rux->recv(msg);
+                        if (msglen > 0) {
+                            service_->on_message(rux, msg, msglen);
+                        }
+                    } while (msglen > 0);
+                } while (0);
+            }
+
+            delete pfm;
+        }
     }
 
 
-    void on_run(Udx* udx) {
+#endif
+
+
+    void on_run(UDX* udx) {
         running_ = true;
         update_thread_ = std::thread(std::bind(&RuxClient::_update_thread, this));
     }
 
 
-    void on_stop(Udx* udx) {
+    void on_stop(UDX* udx) {
         running_ = false;
         if (update_thread_.joinable()) {
             update_thread_.join();

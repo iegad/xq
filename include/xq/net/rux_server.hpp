@@ -3,9 +3,7 @@
 
 
 #include <unordered_set>
-
 #include "xq/net/rux.hpp"
-#include "xq/net/udx.hpp"
 
 
 namespace xq {
@@ -39,7 +37,7 @@ public:
 
         update_thread_ = std::thread(std::bind(&RuxServer::_update_thread, this));
         for (int i = 0; i < nprocessor_; i++) {
-            pfm_ques_.emplace_back(new Rux::FrameQueue(4096));
+            pfm_ques_.emplace_back(new Rux::FrameQueue(1024 * 100));
             rux_thread_pool_.emplace_back(std::thread(std::bind(&RuxServer::_rux_thread, this, pfm_ques_[i])));
         }
     }
@@ -121,7 +119,16 @@ public:
 
 
     void on_recv(UDX*, Frame::ptr *pfms, int n) {
+        typedef std::vector<Frame::ptr> QueItem;
+        typedef std::vector<QueItem> Ques;
+
         static int round_id = 0;
+        static Ques q_pfms;
+
+        if (!q_pfms.size()) {
+            q_pfms.resize(nprocessor_);
+        }
+
         uint32_t rid = 0;
         Frame::ptr pfm;
 
@@ -135,6 +142,7 @@ public:
             if (rid == 0 || rid > RUX_RID_MAX) {
                 return;
             }
+
             Rux::ptr rux = sessions_[rid - 1];
             if (rux->state() < 0) {
                 rux->set_state(1);
@@ -149,7 +157,15 @@ public:
             }
 
             pfm->ex = rux;
-            pfm_ques_[rux->qid()]->try_enqueue(pfm);
+            q_pfms[rux->qid()].emplace_back(pfm);
+        }
+
+        for (size_t qid = 0; qid < q_pfms.size(); qid++) {
+            QueItem &qi = q_pfms[qid];
+            if (!pfm_ques_[qid]->enqueue_bulk(&qi[0], qi.size())) {
+                DLOG("enter que failed\n");
+            }
+            qi.clear();
         }
     }
 
@@ -167,7 +183,7 @@ public:
 private:
     void _rux_thread(Rux::FrameQueue* que) {
         constexpr int FRAME_SIZE = 128;
-        constexpr int TIMEOUT = 200 * 1000;
+        constexpr int TIMEOUT    = 200 * 1000;
 
         Frame::ptr pfms[FRAME_SIZE];
         Frame::ptr pfm;
@@ -200,14 +216,14 @@ private:
 
 
     void _update_thread() {
-        constexpr int TIMOUT_US = 500;
+//        constexpr int TIMOUT_US = 500;
 
         uint64_t now_us;
         size_t n;
         Rux* rux;
-#ifndef _WIN32
-        timeval timeout = {0, 0};
-#endif
+//#ifndef _WIN32
+//        timeval timeout = {0, 0};
+//#endif
         std::unordered_set<uint32_t>::iterator itr;
 
         while (running_) {
@@ -234,12 +250,13 @@ private:
 
                 n--;
             }
-#ifdef _WIN32
-            std::this_thread::sleep_for(std::chrono::microseconds(TIMOUT_US));
-#else
-            timeout.tv_usec = TIMOUT_US;
-            ::select(0, nullptr, nullptr, nullptr, &timeout);
-#endif
+// #ifdef _WIN32
+//             std::this_thread::sleep_for(std::chrono::microseconds(TIMOUT_US));
+// #else
+//             timeout.tv_usec = TIMOUT_US;
+//             ::select(0, nullptr, nullptr, nullptr, &timeout);
+// #endif
+            std::this_thread::yield();
         }
     }
 
