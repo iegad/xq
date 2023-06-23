@@ -2,27 +2,6 @@
 #include <string.h>
 
 
-int 
-rux_env_init() {
-#ifdef _WIN32
-    WSADATA wdata;
-    return WSAStartup(0x0202, &wdata) < 0 || wdata.wVersion != 0x0202 ? -1 : 0;
-#else
-    return 0;
-#endif // _WIN32
-}
-
-
-int 
-rux_env_release() {
-#ifdef _WIN32
-    return WSACleanup();
-#else
-    return 0;
-#endif // _WIN32
-}
-
-
 SOCKET
 udp_bind(const char* host, const char* svc) {
     if (!host || !svc) {
@@ -147,51 +126,6 @@ str2addr(const char* endpoint, struct sockaddr_storage* addr, socklen_t* addrlen
 
 
 int 
-make_nonblocking(SOCKET sockfd) {
-#ifndef _WIN32
-    int opts = fcntl(sockfd, F_GETFL);
-    return opts < 0 ? -1 : fcntl(sockfd, F_SETFL, opts | O_NONBLOCK);
-#else
-    static u_long ON = 1;
-    return ioctlsocket(sockfd, FIONBIO, &ON);
-#endif // !_WIN32
-}
-
-
-int64_t 
-sys_clock() {
-#ifdef _WIN32
-    static int64_t FREQ = 0;
-    LARGE_INTEGER l;
-    if (FREQ == 0) {
-        LARGE_INTEGER f;
-        ASSERT(QueryPerformanceFrequency(&f));
-        FREQ = f.QuadPart / 1000000;
-    }
-    
-    ASSERT(QueryPerformanceCounter(&l));
-    return l.QuadPart / FREQ;
-#else
-    struct timespec t;
-    ASSERT(!clock_gettime(CLOCK_MONOTONIC, &t));
-    return t.tv_sec * 1000000 + t.tv_nsec / 1000;
-#endif // !_WIN32
-}
-
-
-int
-sys_cpus() {
-#ifdef _WIN32
-    SYSTEM_INFO si;
-    GetSystemInfo(&si);
-    return si.dwNumberOfProcessors;
-#else
-    return (int)sysconf(_SC_NPROCESSORS_ONLN);
-#endif // _WIN32
-}
-
-
-int 
 sys_ips(struct sockaddr_storage *addrs, size_t n) {
     ASSERT(addrs && n > 0);
     char hname[255] = {0};
@@ -260,8 +194,8 @@ sys_ifs(struct SysInterface *ifs, size_t n) {
 }
 
 
-int bin2hex(const uint8_t *data, size_t datalen, char *buf, size_t buflen)
-{
+int
+bin2hex(const uint8_t *data, size_t datalen, char *buf, size_t buflen) {
     ASSERT(data && buf && datalen > 0 && buflen >= datalen << 1);
 
     uint8_t tmp;

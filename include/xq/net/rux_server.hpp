@@ -211,7 +211,7 @@ private:
         std::unordered_set<uint32_t>::iterator itr;
 
         while (running_) {
-            now_us = sys_clock();
+            now_us = sys_time();
             sess_lkr_.lock();
             n = active_session_.size();
             sess_lkr_.unlock();

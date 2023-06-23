@@ -124,7 +124,7 @@ private:
 #endif
 
         while (running_) {
-            now_us = sys_clock();
+            now_us = sys_time();
 
             itr = node_map_.begin();
             while (itr != node_map_.end()) {

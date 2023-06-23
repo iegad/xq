@@ -19,6 +19,7 @@
 #include <time.h>
 #include <memory.h>
 #include <emmintrin.h>
+#include <sys/time.h>
 #endif
 
 #include <stdint.h>
@@ -101,12 +102,26 @@ extern "C" {
 
 /// @brief Init network environment, nothing todo on !win
 /// @return 0 on success or -1 on failure.
-int rux_env_init();
+inline int rux_env_init() {
+#ifdef _WIN32
+    WSADATA wdata;
+    return WSAStartup(0x0202, &wdata) < 0 || wdata.wVersion != 0x0202 ? -1 : 0;
+#else
+    return 0;
+#endif // _WIN32
+}
 
 
 /// @brief Release network environment, nothing todo on !win
 /// @return 0 on success or -1 on failure.
-int rux_env_release();
+inline int rux_env_release() {
+#ifdef _WIN32
+    return WSACleanup();
+#else
+    return 0;
+#endif // _WIN32
+}
+
 
 
 /// @brief Make udp socket then bind <host:svc>
@@ -136,17 +151,69 @@ int str2addr(const char *endpoint, struct sockaddr_storage *addr, socklen_t* add
 /// @brief Set sockfd nonblocking
 /// @param sockfd the sockfd to be set nonblocking
 /// @return 0 on success or -1 on failure.
-int make_nonblocking(SOCKET sockfd);
+inline int make_nonblocking(SOCKET sockfd) {
+#ifndef _WIN32
+    int opts = fcntl(sockfd, F_GETFL);
+    return opts < 0 ? -1 : fcntl(sockfd, F_SETFL, opts | O_NONBLOCK);
+#else
+    static u_long ON = 1;
+    return ioctlsocket(sockfd, FIONBIO, &ON);
+#endif // !_WIN32
+}
 
 
 /// @brief Get clock(us) of since the system started.
 /// @note  It's not unix timetamp.
-int64_t sys_clock();
+inline int64_t sys_clock() {
+#ifdef _WIN32
+    static int64_t FREQ = 0;
+    LARGE_INTEGER l;
+    if (FREQ == 0) {
+        LARGE_INTEGER f;
+        ASSERT(QueryPerformanceFrequency(&f));
+        FREQ = f.QuadPart / 1000000;
+    }
+
+    ASSERT(QueryPerformanceCounter(&l));
+    return l.QuadPart / FREQ;
+#else
+    struct timespec t;
+    ASSERT(!clock_gettime(CLOCK_MONOTONIC, &t));
+    return t.tv_sec * 1000000 + t.tv_nsec / 1000;
+#endif // !_WIN32
+}
+
+
+/// @brief  Get timestamp(us)
+/// @return Current unix timestamp
+inline int64_t sys_time() {
+#ifdef _WIN32
+#define EPOCHFILETIME (116444736000000000)
+    FILETIME ft;
+    LARGE_INTEGER li;
+    GetSystemTimeAsFileTime(&ft);
+    li.LowPart = ft.dwLowDateTime;
+    li.HighPart = ft.dwHighDateTime;
+    return (li.QuadPart - EPOCHFILETIME) / 10;
+#else
+    struct timeval tv;
+    gettimeofday(&tv, NULL);
+    return (int64_t)tv.tv_sec * 1000000 + (int64_t)tv.tv_usec;
+#endif // _WIN32
+}
 
 
 /// @brief Get number of cpu's cores.
 /// @return number of cpu's cores.
-int sys_cpus();
+inline int sys_cpus() {
+#ifdef _WIN32
+    SYSTEM_INFO si;
+    GetSystemInfo(&si);
+    return si.dwNumberOfProcessors;
+#else
+    return (int)sysconf(_SC_NPROCESSORS_ONLN);
+#endif // _WIN32
+}
 
 
 /// @brief Get local ip address

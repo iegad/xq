@@ -5,7 +5,7 @@
 #include <queue>
 #include <thread>
 #include <functional>
-#include <xq/net/rux.in.h>
+#include "xq/net/net.in.h"
 
 
 namespace xq {
@@ -55,7 +55,7 @@ public:
 
 
     inline void create_timer_at(uint64_t expire_us, T* ev) {
-        if (expire_us <= (uint64_t)sys_clock()) {
+        if (expire_us <= (uint64_t)sys_time()) {
             ev->update();
             if (ev->destory()) {
                 delete ev;
@@ -69,7 +69,7 @@ public:
 
 
     inline void create_timer_after(int64_t delay_us, T* ev) {
-        create_timer_at(sys_clock() + delay_us, ev);
+        create_timer_at(sys_time() + delay_us, ev);
     }
 
 
@@ -88,7 +88,7 @@ private:
 
         while (running_) {
             _sleep();
-            now_us = sys_clock();
+            now_us = sys_time();
             now_us = now_us - now_us % INTERVAL;
 
             while (1) {

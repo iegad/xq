@@ -17,7 +17,7 @@ public:
         msg[msglen] = 0;
         DLOG("recv: %s\n", (char*)msg);
         if (++count == LIMIT) {
-//            pUdx->stop();
+            pUdx->stop();
         }
     }
 };
@@ -33,17 +33,17 @@ main(int argc, char** argv) {
     xq::net::Udx udx(":0", &client);
     pUdx = &udx;
 
-    client.connect_node(SERVER_ENDPOINT, sys_clock(), udx.snd_que());
+    client.connect_node(SERVER_ENDPOINT, sys_time(), udx.snd_que());
     udx.run();
 
-    int64_t beg = sys_clock();
+    int64_t beg = sys_time();
     for (int i = 0; i < LIMIT; i++) {
         sprintf(buf, "Hello world: %d", i + 1);;
         client.send(SERVER_ENDPOINT, (uint8_t*)buf, strlen(buf));
     }
 
     udx.wait();
-    DLOG("exit: %lld s !!!", (sys_clock() - beg) / 1000000);
+    DLOG("exit: %lld s !!!", (sys_time() - beg) / 1000000);
     ASSERT(!rux_env_release());
 
     delete[] buf;

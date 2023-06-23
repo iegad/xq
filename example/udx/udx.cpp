@@ -34,7 +34,7 @@ public:
         }
 
         pfm->raw[pfm->len] = 0;
-        DLOG("recv: %s\n", (char*)pfm->raw);
+        DLOG("recv[%lld]: %s\n", pfm->time_us, (char*)pfm->raw);
 
         if (is_server) {
             ASSERT(!udx->send(pfm));

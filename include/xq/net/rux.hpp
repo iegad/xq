@@ -1,24 +1,8 @@
-// =============================================================================================================================
-// RUX: Reliable / Realtime user datagram protocol extension.
-// 
-// -----------------------------------------------------------------------------------------------------------------------------
-// @auth: iegad
-// @time: 2023-05-18
-// 
-// @update history
-// -----------------------------------------------------------------------------------------------------------------------------
-// @time                   | @note                                                                  |@coder
-// 
-// =============================================================================================================================
-
-
-
 #ifndef __XQ_NET_RUX__
 #define __XQ_NET_RUX__
 
 
 #include "xq/net/udx.hpp"
-#include "xq/third/blockingconcurrentqueue.h"
 
 
 namespace xq {
@@ -60,6 +44,7 @@ class Rux {
 public:
     typedef Rux* ptr;
     typedef moodycamel::BlockingConcurrentQueue<Frame::ptr> FrameQueue;
+    typedef std::mutex LockType;
 
 
     struct Segment {
@@ -856,7 +841,8 @@ private:
         base_us_ = now_us;
     }
 
-    inline void _set_remote_addr(const sockaddr_storage* addr, socklen_t addrlen) {
+    
+    void _set_remote_addr(const sockaddr_storage* addr, socklen_t addrlen) {
         if (addrlen != addrlen_) {
             addrlen_ = addrlen;
         }
@@ -873,7 +859,7 @@ private:
     uint8_t          ssthresh_;
     uint8_t          rmt_wnd_;         // 对端窗口
 
-    SpinLock         lkr_;
+    LockType         lkr_;
     std::atomic<int> state_;
     std::atomic<int> qid_;             // rux_que index
     int              rto_;             // RTO

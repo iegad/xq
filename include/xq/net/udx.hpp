@@ -258,7 +258,7 @@ private:
             else {
                 err = 0;
                 pfm->len = n;
-                pfm->time_us = sys_clock();
+                pfm->time_us = sys_time();
             }
 
             ev_->on_recv(this, err, pfm);
@@ -345,7 +345,7 @@ private:
                 err = 0;
             }
 
-            now_us = sys_clock();
+            now_us = sys_time();
 
             for (i = 0; i < n; i++) {
                 pfm = pfms[i];
