@@ -2,9 +2,9 @@
 #define __XQ_NET_UDX__
 
 
-#include "xq/net/basic.hpp"
 #include <functional>
 #include <xq/third/blockingconcurrentqueue.h>
+#include "xq/net/basic.hpp"
 
 
 namespace xq {
@@ -15,120 +15,67 @@ namespace net {
 struct Frame {
     typedef Frame* ptr;
 
-    uint16_t             len;                // raw data's length
-    socklen_t            namelen;            // remote sockaddr's length
-    sockaddr_storage     name;               // remote sockaddr
-    uint8_t              raw[UDP_MTU + 1];   // raw data
+    uint16_t         len;                // raw data's length
+    socklen_t        namelen;            // remote sockaddr's length
+    sockaddr_storage name;               // remote sockaddr
+    uint8_t          raw[UDP_MTU + 1];   // raw data
 
     /* META */
-    int64_t              time_us;            // receive timestamp(us)
+    int64_t          time_us;            // receive timestamp(us)
+    void*            ex;
 
 
-    inline Frame* clone() {
-        Frame::ptr pfm = new Frame;
-        ::memcpy(pfm, this, sizeof(Frame));
-        return pfm;
-    }
-
-
-    static ptr get() {
-        return new Frame;
-    }
-
-
-    static void put(ptr f) {
-        delete f;
-    }
-
-
-protected:
-    Frame()
+    explicit Frame(const sockaddr_storage* addr = nullptr, socklen_t addrlen = sizeof(sockaddr_storage))
         : len(0)
-        , namelen(sizeof(sockaddr_storage))
-        , time_us(0) {
-        ::memset(&name, 0, sizeof(name));
+        , namelen(addrlen)
+        , time_us(0)
+        , ex(nullptr) {
+        if (addr) {
+            ::memcpy(&name, addr, addrlen);
+        }
+        else {
+            ::memset(&name, 0, sizeof(name));
+        }
+
         ::memset(raw, 0, sizeof(raw));
     }
 
 
-    ~Frame() {}
+    explicit Frame(const Frame& f)
+        : len(f.len)
+        , namelen(f.namelen)
+        , time_us(f.time_us)
+        , ex(f.ex) {
+        ::memcpy(&name, &f.name, namelen);
+        ::memcpy(raw, f.raw, len);
+    }
 
 
 private:
-    Frame(const Frame&) = delete;
     Frame(const Frame&&) = delete;
     Frame& operator=(const Frame&) = delete;
     Frame& operator=(const Frame&&) = delete;
 }; // struct Frame
 
 
-class Udx;
-struct UdxOption {
-    typedef void (*PrevRunEvent)(Udx*);
-    typedef void (*PostRunEvent)(Udx*);
-    typedef void (*PrevStopEvent)(Udx*);
-    typedef void (*PostStopEvent)(Udx*);
-
-
-#ifdef _WIN32
-    typedef void (*RecvFrameEvent)(Udx*, int, Frame::ptr);
-    typedef void (*PrevSendFrameEvent)(Udx*, Frame::ptr);
-    typedef void (*PostSendFrameEvent)(Udx*, int, Frame::ptr);
-#else
-    typedef void (*RecvFrameEvent)(Udx*, int, Frame::ptr*, int);
-    typedef void (*PrevSendFrameEvent)(Udx*, Frame::ptr*, int);
-    typedef void (*PostSendFrameEvent)(Udx*, int, Frame::ptr*, int);
-#endif // _WIN32
-
-
-    std::string         endpoint;                   // Endpoint: "0.0.0.0:6688", ":6688"
-    PrevRunEvent        prev_run_handler;           // before udx run
-    PostRunEvent        post_run_handler;           // after udx run
-    PrevStopEvent       prev_stop_handler;          // before udx stop
-    PostStopEvent       post_stop_handler;          // after udx stop
-    RecvFrameEvent      recv_frame_handler;         // received udx frame
-    PrevSendFrameEvent  prev_send_frame_handler;    // before send udx frame
-    PostSendFrameEvent  post_send_frame_handler;    // after send udx frame
-
-
-    UdxOption()
-        : endpoint("")
-        , prev_run_handler(nullptr)
-        , post_run_handler(nullptr)
-        , prev_stop_handler(nullptr)
-        , post_stop_handler(nullptr)
-        , recv_frame_handler(nullptr)
-        , prev_send_frame_handler(nullptr)
-        , post_send_frame_handler(nullptr)
-    {}
-}; // struct UdxOption;
-
-
+template<class TEvent>
 class Udx {
 public:
+    typedef Udx<TEvent>* ptr;
     typedef moodycamel::BlockingConcurrentQueue<Frame::ptr> FrameQueue;
-
-
     static constexpr int SND_QUE_SIZE = 4 * 1024;
 
 
-    explicit Udx(const UdxOption* option)
+    explicit Udx(const std::string& endpoint, TEvent* ev)
         : sockfd_(INVALID_SOCKET)
-        , on_prev_run_(option->prev_run_handler)
-        , on_post_run_(option->post_run_handler)
-        , on_prev_stop_(option->prev_stop_handler)
-        , on_post_stop_(option->post_stop_handler)
-        , on_recv_frame_(option->recv_frame_handler)
-        , on_prev_send_frame_(option->prev_send_frame_handler)
-        , on_post_send_frame_(option->post_send_frame_handler)
-        , snd_que_(SND_QUE_SIZE) {
-        ASSERT(option->endpoint.size() > 0);
+        , ev_(ev) {
+        ASSERT(endpoint.size() && ev);
 
-        size_t pos = option->endpoint.rfind(':');
+        size_t pos = endpoint.rfind(':');
         ASSERT(pos != std::string::npos);
-        
-        host_ = option->endpoint.substr(0, pos);
-        svc_ = option->endpoint.substr(pos + 1);
+
+        host_ = endpoint.substr(0, pos);
+        svc_ = endpoint.substr(pos + 1);
         if (host_.empty()) {
             host_ = "0.0.0.0";
         }
@@ -139,6 +86,10 @@ public:
 
     ~Udx() {
         this->shutdown();
+    }
+
+    inline FrameQueue& snd_que() {
+        return snd_que_;
     }
 
 
@@ -153,7 +104,17 @@ public:
     }
 
 
-    inline void run() {
+    inline TEvent& ex() {
+        return svc_;
+    }
+
+
+    inline bool running() const {
+        return sockfd_ != INVALID_SOCKET;
+    }
+
+
+    inline void run(bool async = true) {
         if (sockfd_ != INVALID_SOCKET) {
             return;
         }
@@ -161,24 +122,16 @@ public:
         sockfd_ = ::udp_bind(host_.c_str(), svc_.c_str());
         ASSERT(sockfd_ != INVALID_SOCKET);
 
-        if (on_prev_run_) {
-            on_prev_run_(this);
+        if (async) {
+            rcv_thread_ = std::thread(std::bind(&Udx::_rcv_thread, this));
+            return;
         }
-
-        snd_thread_ = std::thread(std::bind(&Udx::_snd_thread, this));
-        rcv_thread_ = std::thread(std::bind(&Udx::_rcv_thread, this));
-
-        if (on_post_run_) {
-            on_post_run_(this);
-        }
+        
+        _rcv_thread();
     }
 
 
-    inline void stop() {
-        if (on_prev_stop_) {
-            on_prev_stop_(this);
-        }
-
+    void stop() {
         if (sockfd_ != INVALID_SOCKET) {
             ::close(sockfd_);
             sockfd_ = INVALID_SOCKET;
@@ -186,18 +139,12 @@ public:
     }
 
 
-    inline void wait() {
+    void wait() {
         if (rcv_thread_.joinable()) {
             rcv_thread_.join();
         }
 
-        if (snd_thread_.joinable()) {
-            snd_thread_.join();
-        }
-
-        if (on_post_stop_) {
-            on_post_stop_(this);
-        }
+        this->clear_snd_que();
     }
 
 
@@ -235,13 +182,13 @@ public:
     }
 
 
-    inline std::string host() const {
-        return host_;
+    inline const char* host() const {
+        return host_.c_str();
     }
 
 
-    inline std::string svc() const {
-        return svc_;
+    inline const char* svc() const {
+        return svc_.c_str();
     }
 
 
@@ -272,13 +219,29 @@ public:
     }
 
 
+    void clear_snd_que() {
+        int n, i;
+        Frame::ptr pfms[128];
+
+        do {
+            n = snd_que_.try_dequeue_bulk(pfms, 128);
+            for (i = 0; i < n; i++) {
+                delete pfms[i];
+            }
+        } while (n > 0);
+    }
+
+
 private:
 #ifdef _WIN32
 
 
     void _rcv_thread() {
-        Frame::ptr pfm = Frame::get();
-        int n;
+        Frame::ptr pfm = new Frame;
+        int n, err;
+
+        std::thread snd_thread(std::bind(&Udx::_snd_thread, this));
+        ev_->on_run(this);
 
         while (INVALID_SOCKET != sockfd_) {
             n = ::recvfrom(sockfd_, (char*)pfm->raw, sizeof(pfm->raw), 0, (sockaddr *)&pfm->name, &pfm->namelen);
@@ -286,16 +249,25 @@ private:
                 continue;
             }
             
-            if (on_recv_frame_) {
-                if (n > 0) {
-                    pfm->len = n;
-                }
-                on_recv_frame_(this, n < 0 ? errcode : 0, pfm);
-                pfm = Frame::get();
+            if (n < 0) {
+                err = errcode;
             }
+            else if (n > UDP_MTU) {
+                err = -1;
+            }
+            else {
+                err = 0;
+                pfm->len = n;
+                pfm->time_us = sys_clock();
+            }
+
+            ev_->on_recv(this, err, pfm);
+            pfm = new Frame;
         }
 
-        Frame::put(pfm);
+        delete pfm;
+        snd_thread.join();
+        ev_->on_stop(this);
     }
 
 
@@ -312,25 +284,11 @@ private:
             n = snd_que_.wait_dequeue_bulk_timed(pfms, FRM_SIZE, TIMEOUT);
             for (i = 0; i < n; i++) {
                 pfm = pfms[i];
-                if (on_prev_send_frame_) {
-                    on_prev_send_frame_(this, pfm);
-                }
-
                 err = ::sendto(sockfd_, (char*)pfm->raw, pfm->len, 0, (sockaddr*)&pfm->name, pfm->namelen);
-                if (on_post_send_frame_) {
-                    on_post_send_frame_(this, err >= 0 ? 0 : errcode, pfm);
-                }
-
-                Frame::put(pfm);
+                ev_->on_send(this, err >= 0 ? 0 : errcode, pfm);
+                delete pfm;
             }
         }
-
-        do {
-            n = snd_que_.try_dequeue_bulk(pfms, FRM_SIZE);
-            for (i = 0; i < n; i++) {
-                Frame::put(pfms[i]);
-            }
-        } while (n > 0);
     }
 
 
@@ -343,6 +301,10 @@ private:
 
         ASSERT(!::setsockopt(sockfd_, SOL_SOCKET, SO_RCVTIMEO, &TIMEOUT, sizeof(TIMEOUT)));
 
+        std::thread snd_thread(std::bind(&Udx::_snd_thread, this));
+
+        ev_->on_run(this);
+
         mmsghdr msgs[RCVMMSG_SIZE];
         msghdr* hdr;
         ::memset(msgs, 0, sizeof(msgs));
@@ -354,10 +316,10 @@ private:
         Frame::ptr pfm;
 
         int i, n, err;
-//        int64_t now_us;
+        int64_t now_us;
 
         for (i = 0; i < RCVMMSG_SIZE; i++) {
-            pfm = pfms[i] = Frame::get();
+            pfm = pfms[i] = new Frame;
 
             hdr                 = &msgs[i].msg_hdr;
             hdr->msg_name       = &pfm->name;
@@ -369,28 +331,32 @@ private:
         }
 
         while(sockfd_ != INVALID_SOCKET) {
-            err = 0;
             n = ::recvmmsg(sockfd_, msgs, RCVMMSG_SIZE, MSG_WAITFORONE, nullptr);
             if (n == 0) {
                 continue;
-            } else if (n < 0) {
+            }
+            else if (n < 0) {
                 err = errcode;
                 if (err == EAGAIN || err == EINTR) {
                     continue;
                 }
             }
-
-            for (i = 0; i < n; i++) {
-                pfms[i]->len = msgs[i].msg_len;
-                // TODO
+            else {
+                err = 0;
             }
 
-            if (on_recv_frame_) {
-                on_recv_frame_(this, err, pfms, n);
-            }
+            now_us = sys_clock();
 
             for (i = 0; i < n; i++) {
-                pfm = pfms[i] = Frame::get();
+                pfm = pfms[i];
+                pfm->time_us = now_us;
+                pfm->len = msgs[i].msg_len;
+            }
+
+            ev_->on_recv(this, pfms, n);
+
+            for (i = 0; i < n; i++) {
+                pfm = pfms[i] = new Frame;
 
                 hdr                 = &msgs[i].msg_hdr;
                 hdr->msg_name       = &pfm->name;
@@ -403,8 +369,11 @@ private:
         }
 
         for (i = 0; i < RCVMMSG_SIZE; i++) {
-            Frame::put(pfms[i]);
+            delete pfms[i];
         }
+
+        snd_thread.join();
+        ev_->on_stop(this);
     }
 
 
@@ -437,48 +406,27 @@ private:
                 iovecs[i].iov_len   = pfm->len;
             }
 
-            if (on_prev_send_frame_) {
-                on_prev_send_frame_(this, pfms, (int)n);
-            }
-
             err = ::sendmmsg(sockfd_, msgs, n, 0);
-            if (on_post_send_frame_) {
-                on_post_send_frame_(this, err < 0 ? errcode : 0, pfms, n);
-            }
+            ev_->on_send(this, err < 0 ? errcode : 0, nullptr);
 
             for (i = 0; i < n; i++) {
-                Frame::put(pfms[i]);
+                delete pfms[i];
             }
         }
-
-        do {
-            n = snd_que_.try_dequeue_bulk(pfms, SNDMMSG_SIZE);
-            for (i = 0; i < n; i++) {
-                Frame::put(pfms[i]);
-            }
-        } while (n > 0);
     }
 
 
 #endif // _WIN32
 
 
-    SOCKET                          sockfd_;
+    SOCKET  sockfd_;
+    TEvent* ev_;
 
-    UdxOption::PrevRunEvent         on_prev_run_;
-    UdxOption::PostRunEvent         on_post_run_;
-    UdxOption::PrevStopEvent        on_prev_stop_;
-    UdxOption::PostStopEvent        on_post_stop_;
-    UdxOption::RecvFrameEvent       on_recv_frame_;
-    UdxOption::PrevSendFrameEvent   on_prev_send_frame_;
-    UdxOption::PostSendFrameEvent   on_post_send_frame_;
+    std::thread rcv_thread_;
+    std::string host_;
+    std::string svc_;
 
-    std::thread         rcv_thread_;
-    std::thread         snd_thread_;
-    std::string         host_;
-    std::string         svc_;
-
-    FrameQueue          snd_que_;
+    FrameQueue snd_que_;
 
 
     Udx(const Udx&) = delete;

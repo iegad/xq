@@ -2,195 +2,69 @@
 #define __XQ_NET_RUX_SERVER__
 
 
-#include <functional>
-#include <vector>
-#include <thread>
 #include <unordered_set>
+
 #include "xq/net/rux.hpp"
+#include "xq/net/udx.hpp"
 
 
 namespace xq {
 namespace net {
 
 
-// ############################################################################################################
-// Rux 服务端
-// ############################################################################################################
-template<class TEvent>
+template <class TService>
 class RuxServer {
 public:
+    typedef RuxServer* ptr;
+    typedef Udx<RuxServer<TService>> UDX;
 
 
-    // ========================================================================================================
-    // 构造函数.
-    // ========================================================================================================
-    RuxServer() 
-        : sockfd_(INVALID_SOCKET)
-        , nprocessor_(sys_cpus() - 1) {
-        constexpr int QUE_SIZE = 1024 * 4;
-        int i;
+    explicit RuxServer(TService* service)
+        : nprocessor_(sys_cpus() - 1) 
+        , running_(false)
+        , service_(service)
+    {}
 
-        for (i = 1; i <= RUX_RID_MAX; i++) {
-            sessions_.emplace_back(new Rux(i, 0, output_que_));
+
+    void on_run(UDX* udx) {
+        running_ = true;
+
+        for (int i = 1; i <= RUX_RID_MAX; i++) {
+            sessions_.emplace_back(new Rux(i, 0, udx->snd_que()));
         }
 
         if (nprocessor_ == 0) {
             nprocessor_ = 1;
         }
-        
-        for (i = 0; i < nprocessor_; i++) {
-            frm_ques_.emplace_back(new moodycamel::BlockingConcurrentQueue<PRUX_FRM>(QUE_SIZE));
+
+        update_thread_ = std::thread(std::bind(&RuxServer::_update_thread, this));
+        for (int i = 0; i < nprocessor_; i++) {
+            pfm_ques_.emplace_back(new Rux::FrameQueue(4096));
+            rux_thread_pool_.emplace_back(std::thread(std::bind(&RuxServer::_rux_thread, this, pfm_ques_[i])));
         }
     }
 
 
-    // ========================================================================================================
-    // 析构函数
-    // ========================================================================================================
     ~RuxServer() {
-        this->stop();
-        this->wait();
-
         for (auto s : sessions_) {
             delete s;
         }
 
-        for (auto que : frm_ques_) {
-            delete que;
+        for (auto q : pfm_ques_) {
+            delete q;
         }
     }
 
 
-    inline TEvent& event() {
-        return ev_;
+    TService& service() {
+        return service_;
     }
 
 
-    // ========================================================================================================
-    // 启动服务
-    //      该方法分为同步和异步启动.
-    //      异步启动需要通过 wait方法等待 run 的结束
-    // -------------------------------
-    // @host:   IP/domain
-    // @svc:    port/service
-    // @async:  是否异步启动
-    // ========================================================================================================
-    inline void run(const std::string &host, const std::string &svc, bool async = true) {
-        if (!async) {
-            _rcv_thread(host, svc);
-            return;
-        }
-        
-        rcv_thread_ = std::thread(std::bind(&RuxServer::_rcv_thread, this, host, svc));
-    }
+    void on_stop(UDX* udx) {
+        running_ = false;
 
-
-    inline bool running() const {
-        return sockfd_ != INVALID_SOCKET;
-    }
-
-
-    // ========================================================================================================
-    // 停止服务
-    // ========================================================================================================
-    void stop() {
-        if (sockfd_ != INVALID_SOCKET) {
-            close(sockfd_);
-            sockfd_ = INVALID_SOCKET;
-        }
-    }
-
-
-    // ========================================================================================================
-    // 等待异步服务结束
-    // ========================================================================================================
-    void wait() {
-        if (rcv_thread_.joinable()) {
-            rcv_thread_.join();
-        }
-    }
-
-
-private:
-#ifdef _WIN32
-    // ========================================================================================================
-    // input 线程
-    // ========================================================================================================
-    void _rcv_thread(const std::string& host, const std::string& svc) {
-        ASSERT(host.size() > 0 && svc.size() > 0);
-
-        /* ---------------------------------- 开启服务 ---------------------------------- */
-        // Step 1: make udp socket
-        sockfd_ = udp_bind(host.c_str(), svc.c_str());
-        ASSERT(sockfd_ != INVALID_SOCKET);
-
-        // Step 2: 启动 output线程
-        snd_thread_ = std::thread(std::bind(&RuxServer::_snd_thread, this));
-
-        // Step 3: 启动 rux update 线程
-        upd_thread_ = std::thread(std::bind(&RuxServer::_update_thread, this));
-
-        // Step 4: 启动 rux 协议 线程
-        //      启动线程的同时, 为每个 rux 线程分配 帧工作队列
-        for (int i = 0; i < nprocessor_; i++) {
-            rux_thread_pool_.emplace_back(std::thread(std::bind(&RuxServer::_rux_thread, this, i)));
-        }
-
-        // Step 5: loop recvfrom
-        PRUX_FRM    frm = new RUX_FRM;
-        int         qid = 0;            // rux queue id, RoundRobin方式
-        int         n;
-        Rux*        rux;
-
-        while (sockfd_ != INVALID_SOCKET) {
-            n = recvfrom(sockfd_, (char *)frm->raw, sizeof(frm->raw), 0, (sockaddr *)&frm->name, &frm->namelen);
-            if (n < 0) {
-                // IO recv error
-                ev_.on_error(ErrType::IO_RCV, (void*)((int64_t)errcode));
-                continue;
-            }
-
-            frm->len = n;
-            if (n > RUX_MTU || n < RUX_FRM_HDR_SIZE || frm->check()) {
-                // rux IO input error
-                ev_.on_error(ErrType::IO_RCV_FRAME, frm);
-                continue;
-            }
-
-            frm->time_us = sys_clock();
-            frm->rux = rux = sessions_[frm->rid - 1];
-            ev_.on_rcv_frame(frm);
-
-            if (rux->state() < 0) {
-                rux->set_qid(qid++);
-                rux->set_state(1);
-                if (qid == frm_ques_.size()) {
-                    qid = 0;
-                }
-
-                if (ev_.on_connected(rux)) {
-                    continue;
-                }
-                sess_lkr_.lock();
-                active_session_.insert(rux->rid());
-                sess_lkr_.unlock();
-            }
-
-            ASSERT(frm_ques_[rux->qid()]->try_enqueue(frm));
-            frm = new RUX_FRM;
-        }
-
-        /* ---------------------------------- 停止服务 ---------------------------------- */
-        delete frm;
-
-        // Step 1: join send thread
-        snd_thread_.join();
-        
-        // Step 2: join rux update thread
-        upd_thread_.join();
-
-        // Step 3: join rux worker threads
-        while (rux_thread_pool_.size() > 0) {
+        while (rux_thread_pool_.size()) {
             auto itr = rux_thread_pool_.begin();
             if (itr->joinable()) {
                 itr->join();
@@ -198,231 +72,84 @@ private:
             rux_thread_pool_.erase(itr);
         }
 
-        // Step 4: set all sessions'es states -1
-        active_session_.clear();
-        for (auto& r : sessions_) {
-            r->set_qid(-1);
-            r->set_state(-1);
+        if (update_thread_.joinable()) {
+            update_thread_.join();
         }
-    }
 
+        Frame::ptr pfms[128];
+        int n, i;
 
-    void _snd_thread() {
-        PRUX_FRM frms[128], frm;
-        size_t n, i;
-
-        while (sockfd_ != INVALID_SOCKET) {
-            n = output_que_.wait_dequeue_bulk_timed(frms, 128, 200 * 1000); // wait 200 milliseconds
-            for (i = 0; i < n; i++) {
-                frm = frms[i];
-                if (::sendto(sockfd_, (char*)frm->raw, frm->len, 0, (sockaddr*)&frm->name, frm->namelen) != frm->len) {
-                    ev_.on_error(ErrType::IO_SND, (void*)((int64_t)errcode));
+        for (auto q : pfm_ques_) {
+            do {
+                n = q->try_dequeue_bulk(pfms, 128);
+                for (i = 0; i < n; i++) {
+                    delete pfms[i];
                 }
-                delete frm;
-            }
-            _mm_pause();
+            } while (n > 0);
         }
 
-        // 清理数据
-        while (n = output_que_.try_dequeue_bulk(frms, 128), n > 0) {
-            for (i = 0; i < n; i++) {
-                delete frms[i];
-            }
-        } 
+        udx->clear_snd_que();
     }
 
 
+#ifdef _WIN32
+    void on_recv(UDX* udx, int err, Frame::ptr pfm) {
+        static int round_id = 0;
+        uint32_t rid = 0;
+
+        u24_decode(pfm->raw, &rid);
+        if (rid == 0 || rid > RUX_RID_MAX) {
+            return;
+        }
+        Rux::ptr rux = sessions_[rid - 1];
+        if (rux->state() < 0) {
+            rux->set_state(1);
+            rux->set_qid(round_id++);
+            if (round_id == nprocessor_) {
+                round_id = 0;
+            }
+            sess_lkr_.lock();
+            active_session_.insert(rid);
+            sess_lkr_.unlock();
+            service_->on_connected(rux);
+        }
+
+        pfm->ex = rux;
+        pfm_ques_[rux->qid()]->try_enqueue(pfm);
+    }
 #else
 
 
-    void _rcv_thread(const std::string &host, const std::string &svc) {
-        constexpr int RCVMMSG_SIZE = 128;
-        constexpr timeval TIMEOUT = { .tv_sec = 0, .tv_usec = 200 * 1000};
+    void on_recv(UDX*, Frame::ptr *pfms, int n) {
+        static int round_id = 0;
+        uint32_t rid = 0;
+        Frame::ptr pfm;
 
-        // Step 1: init socket
-        sockfd_ = udp_bind(host.c_str(), svc.c_str());
-        ASSERT(sockfd_ != INVALID_SOCKET);
-        ASSERT(!::setsockopt(sockfd_, SOL_SOCKET, SO_RCVTIMEO, &TIMEOUT, sizeof(TIMEOUT)));
-
-        // Step 2: start IO output thread
-        snd_thread_ = std::thread(std::bind(&RuxServer::_snd_thread, this));
-
-        // Step 3: start rux update thread
-        upd_thread_ = std::thread(std::bind(&RuxServer::_update_thread, this));
-
-        // Step 4: init frame's queues and start rux protocol work threads.
-        int i, n = RCVMMSG_SIZE, err, qid = 0, nproc = nprocessor_;
-        uint64_t now_us;
-
-        PRUX_FRM** rux_frms = new PRUX_FRM*[nproc];  //
-        int* rux_frms_count = new int[nproc]{};      //
-
-        for (i = 0; i < nproc; i++) {
-            rux_thread_pool_.emplace_back(std::thread(std::bind(&RuxServer::_rux_thread, this, i)));
-            rux_frms[i] = new RUX_FRM*[RCVMMSG_SIZE];
-        }
-
-        mmsghdr msgs[RCVMMSG_SIZE];
-        msghdr* hdr;
-        ::memset(msgs, 0, sizeof(msgs));
-
-        iovec iovecs[RCVMMSG_SIZE];
-        PRUX_FRM frms[RCVMMSG_SIZE] = {nullptr}, frm;
-        Rux* rux;
-
-        for (i = 0; i < n; i++) {
-            frm = frms[i] = new RUX_FRM;
-
-            hdr                 = &msgs[i].msg_hdr;
-            hdr->msg_name       = &frm->name;
-            hdr->msg_namelen    = frm->namelen;
-            hdr->msg_iov        = &iovecs[i];
-            hdr->msg_iovlen     = 1;
-            iovecs[i].iov_base  = frm->raw;
-            iovecs[i].iov_len   = sizeof(frm->raw);
-        }
-
-        while(sockfd_ != INVALID_SOCKET) {
-            n = ::recvmmsg(sockfd_, msgs, RCVMMSG_SIZE, MSG_WAITFORONE, nullptr);
-            if (n < 0) {
-                err = errcode;
-                if (err != EAGAIN && err != EINTR) {
-                    ev_.on_error(ErrType::IO_RCV, (void*)((int64_t)err));
-                    break;
-                }
+        for (int i = 0; i < n; i++) {
+            pfm = pfms[i];
+            if (pfm->len > UDP_MTU) {
                 continue;
             }
 
-            if (n == 0) {
-                continue;
+            u24_decode(pfm->raw, &rid);
+            if (rid == 0 || rid > RUX_RID_MAX) {
+                return;
+            }
+            Rux::ptr rux = sessions_[rid - 1];
+            if (rux->state() < 0) {
+                rux->set_state(1);
+                rux->set_qid(round_id++);
+                if (round_id == nprocessor_) {
+                    round_id = 0;
+                }
+                sess_lkr_.lock();
+                active_session_.insert(rid);
+                sess_lkr_.unlock();
+                service_->on_connected(rux);
             }
 
-            now_us = sys_clock();
-            for (i = 0; i < n; i++) {
-                frm = frms[i];
-                frm->len = msgs[i].msg_len;
-
-                if (frm->len > RUX_MTU || frm->len < RUX_FRM_HDR_SIZE || frm->check()) {
-                    ev_.on_error(ErrType::IO_RCV_FRAME, frm);
-                    continue;
-                }
-
-                frm->time_us = now_us;
-                frm->rux = rux = sessions_[frm->rid - 1];
-
-                if (rux->state() < 0) {
-                    rux->set_qid(qid++);
-                    rux->set_state(1);
-                    if (qid == nproc) {
-                        qid = 0;
-                    }
-
-                    if (ev_.on_connected(rux)) {
-                        continue;
-                    }
-
-                    sess_lkr_.lock();
-                    active_session_.insert(rux->rid());
-                    sess_lkr_.unlock();
-                }
-
-                rux_frms[rux->qid()][rux_frms_count[rux->qid()]++] = frm;
-
-                frm = frms[i] = new RUX_FRM;
-                hdr                 = &msgs[i].msg_hdr;
-                hdr->msg_name       = &frm->name;
-                hdr->msg_namelen    = frm->namelen;
-                hdr->msg_iov        = &iovecs[i];
-                hdr->msg_iovlen     = 1;
-                iovecs[i].iov_base  = frm->raw;
-                iovecs[i].iov_len   = sizeof(frm->raw);
-            }
-
-            for (i = 0; i < nproc; i++) {
-                if (rux_frms_count[i] > 0) {
-                    ASSERT(frm_ques_[i]->enqueue_bulk(rux_frms[i], rux_frms_count[i]));
-                    rux_frms_count[i] = 0;
-                }
-            }
-        } // while(sockfd_ != INVALID_SOCKET;
-
-        ASSERT(sockfd_ == INVALID_SOCKET);
-
-        for (i = 0; i < nproc; i++) {
-            delete[] rux_frms[i];
-        }
-        delete[] rux_frms;
-        delete[] rux_frms_count;
-
-        for (i = 0; i < RCVMMSG_SIZE; i++) {
-            delete frms[i];
-        }
-
-        snd_thread_.join();
-        upd_thread_.join();
-
-        while(rux_thread_pool_.size() > 0) {
-            auto itr = rux_thread_pool_.begin();
-            if (itr->joinable()) {
-                itr->join();
-            }
-            rux_thread_pool_.erase(itr);
-        }
-
-        // Step 4: set all sessions'es states -1
-        active_session_.clear();
-        for (auto& r : sessions_) {
-            r->set_qid(-1);
-            r->set_state(-1);
-        }
-    }
-
-
-    void _snd_thread() {
-        constexpr int SNDMMSG_SIZE = 128;
-        mmsghdr msgs[SNDMMSG_SIZE];
-        ::memset(msgs, 0, sizeof(msgs));
-
-        iovec iovecs[SNDMMSG_SIZE];
-        msghdr *hdr;
-        PRUX_FRM frm, frms[SNDMMSG_SIZE];
-
-        int err;
-        size_t i, n;
-
-        while(sockfd_ != INVALID_SOCKET) {
-            n = output_que_.wait_dequeue_bulk_timed(frms, SNDMMSG_SIZE, 200 * 1000); // wait 200 milliseconds
-            if (n > 0) {
-                for (i = 0; i < n; i++) {
-                    frm = frms[i];
-                    char buf[100] = {0};
-                    addr2str(&frm->name, buf, 100);
-
-                    hdr                 = &msgs[i].msg_hdr;
-                    hdr->msg_name       = &frm->name;
-                    hdr->msg_namelen    = frm->namelen;
-                    hdr->msg_iov        = &iovecs[i];
-                    hdr->msg_iovlen     = 1;
-                    iovecs[i].iov_base  = frm->raw;
-                    iovecs[i].iov_len   = frm->len;
-                }
-
-                err = ::sendmmsg(sockfd_, msgs, n, 0);
-                for (i = 0; i < n; i++) {
-                    delete frms[i];
-                }
-
-                if (err < 0) {
-                    ev_.on_error(ErrType::IO_SND, (void*)((int64_t)err));
-                }
-            }
-        }
-
-        // 清理数据
-        while (n = output_que_.try_dequeue_bulk(frms, SNDMMSG_SIZE), n > 0) {
-            for (i = 0; i < n; i++) {
-                delete frms[i];
-            }
+            pfm->ex = rux;
+            pfm_ques_[rux->qid()]->try_enqueue(pfm);
         }
     }
 
@@ -430,41 +157,42 @@ private:
 #endif
 
 
-    void _rux_thread(int idx) {
-        constexpr int FRMS_MAX = 128;
-        constexpr int QUE_TIMEOUT = 200 * 1000; // 200 milliseconds
+    void on_send(UDX*, int err, Frame::ptr) {
+        if (err) {
+            // TODO:
+        }
+    }
 
-        auto* que = frm_ques_[idx];
-        PRUX_FRM frms[FRMS_MAX], frm;
-        size_t nfrms, i, nmsg;
+
+private:
+    void _rux_thread(Rux::FrameQueue* que) {
+        constexpr int FRAME_SIZE = 128;
+        constexpr int TIMEOUT = 200 * 1000;
+
+        Frame::ptr pfms[FRAME_SIZE];
+        Frame::ptr pfm;
+        size_t npfms, i, nmsg;
         uint8_t* msg = new uint8_t[RUX_MSG_MAX];
-        Rux* rux;
+        Rux::ptr rux;
 
-        while (sockfd_ != INVALID_SOCKET) {
-            nfrms = que->wait_dequeue_bulk_timed(frms, FRMS_MAX, QUE_TIMEOUT);
-            for (i = 0; i < nfrms; i++) {
-                frm = frms[i];
-                rux = (Rux*)frm->rux;
-                if (rux->input(frm)) {
-                    ev_.on_error(ErrType::RUX_INPUT, frm);
-                    delete frm;
-                    continue;
+        while (running_) {
+            npfms = que->wait_dequeue_bulk_timed(pfms, FRAME_SIZE, TIMEOUT);
+            for (i = 0; i < npfms; i++) {
+                pfm = pfms[i];
+                rux = (Rux::ptr)pfm->ex;
+                ASSERT(rux);
+                if (rux->input(pfm) == 0) {
+                    do {
+                        nmsg = rux->recv(msg);
+                        if (nmsg > 0) {
+                            service_->on_message(rux, msg, nmsg);
+                        }
+                    } while (nmsg > 0);
                 }
 
-                while (nmsg = rux->recv(msg), nmsg > 0) {
-                    ev_.on_message(rux, msg, (int)nmsg);
-                }
-
-                delete frm;
+                delete pfm;
             }
             _mm_pause();
-        } // while(sockfd_ != INVALID_SOCKET);
-
-        // 清理数据
-        while (nfrms = output_que_.try_dequeue_bulk(frms, FRMS_MAX), nfrms > 0) {
-            for (i = 0; i < nfrms; i++) {
-                delete frms[i];
-            }
         }
 
         delete[] msg;
@@ -482,7 +210,7 @@ private:
 #endif
         std::unordered_set<uint32_t>::iterator itr;
 
-        while (sockfd_ != INVALID_SOCKET) {
+        while (running_) {
             now_us = sys_clock();
             sess_lkr_.lock();
             n = active_session_.size();
@@ -498,7 +226,7 @@ private:
                     sess_lkr_.lock();
                     active_session_.erase(itr++);
                     sess_lkr_.unlock();
-                    ev_.on_disconnected(rux);
+                    service_->on_disconnected(rux);
                 }
                 else {
                     itr++;
@@ -516,22 +244,19 @@ private:
     }
 
 
-    SOCKET                                                      sockfd_;            // 服务端 UDP 套接字
+    int nprocessor_;
+    bool running_;
+    TService* service_;
 
-    int                                                         nprocessor_;
-    std::thread                                                 rcv_thread_;        // input 线程
-    std::thread                                                 snd_thread_;        // output 线程
-    std::thread                                                 upd_thread_;        // rux update 线程
-    std::list<std::thread>                                      rux_thread_pool_;   // rux 线程
-
-    moodycamel::BlockingConcurrentQueue<PRUX_FRM>               output_que_;        // output 队列;
-    std::vector<moodycamel::BlockingConcurrentQueue<PRUX_FRM>*> frm_ques_;          // 帧工作队列;  input 线程为生产者, rux 线程为消费者
+    std::thread                  upd_thread_;        // rux update 线程
+    std::list<std::thread>       rux_thread_pool_;   // rux 线程
     
-    SPIN_LOCK                                                   sess_lkr_;
-    std::vector<Rux*>                                           sessions_;
-    std::unordered_set<uint32_t>                                active_session_;
+    SpinLock                     sess_lkr_;
+    std::vector<Rux*>            sessions_;
+    std::unordered_set<uint32_t> active_session_;
 
-    TEvent                                                      ev_;
+    std::thread update_thread_;
+    std::vector<Rux::FrameQueue*> pfm_ques_;
 
 
     RuxServer(const RuxServer&) = delete;

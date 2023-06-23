@@ -1,6 +1,5 @@
 #include "xq/net/net.in.h"
 #include <string.h>
-#include "xq/net/net.in.h"
 
 
 int 
@@ -230,10 +229,9 @@ sys_ips(struct sockaddr_storage *addrs, size_t n) {
 
 int 
 sys_ifs(struct SysInterface *ifs, size_t n) {
-    struct SysInterface *inf;
-
     ASSERT(ifs && n > 0);
 #ifdef _WIN32
+    struct SysInterface *inf;
     PIP_ADAPTER_INFO p;
     u_long nsize = 0, err;
 
@@ -257,6 +255,7 @@ sys_ifs(struct SysInterface *ifs, size_t n) {
     free(p);
     return n;
 #else
+    return 0;
 #endif
 }
 
