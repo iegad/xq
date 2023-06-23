@@ -10,34 +10,28 @@ namespace net {
 
 
 /* rux property */
-constexpr int      RUX_FRM_EX_SIZE      = 10;
-constexpr int      RUX_SEG_HDR_SIZE     = RUX_FRM_EX_SIZE + 13;                // cmd[1] + wnd[1] + rid[3] + sn[6] + us[6] + una[6];
-constexpr int      RUX_SEG_HDR_EX_SIZE  = RUX_SEG_HDR_SIZE + 3;                // RUX Segment Header extension size: RUX_HDR_SIZE[13] + len[2] + frg[1]
-constexpr int      RUX_MSS              = (UDP_MTU - RUX_SEG_HDR_EX_SIZE);     // RUX Maximum segment size
-constexpr int      RUX_SEG_HDR_MIN      = RUX_SEG_HDR_SIZE - RUX_FRM_EX_SIZE;
-constexpr int      RUX_SEG_HDR_MAX      = RUX_SEG_HDR_EX_SIZE - RUX_FRM_EX_SIZE;
-
-/* rux command */
-constexpr int      RUX_CMD_ACK       = 0x11;                            // ACK
-constexpr int      RUX_CMD_PIN       = 0x12;                            // Heart's beat: Ping
-constexpr int      RUX_CMD_CON       = 0x13;                            // Connection
-constexpr int      RUX_CMD_PSH       = 0x14;                            // Push
-
-/* rux limits */
-constexpr int      RUX_RID_MAX       = 100000;                          // Maximum rux id
-constexpr int      RUX_RWND_MAX      = 128;                             // Maximum receive window size
-constexpr int      RUX_SWND_MAX      = RUX_RWND_MAX / 8;                // Maximum send window size
-constexpr int      RUX_SWND_MIN      = 1;
-constexpr uint64_t RUX_SN_MAX        = 0x0000FFFFFFFFFFFF;              // Maximum sequnce number
-constexpr uint64_t RUX_US_MAX        = 0x0000FFFFFFFFFFFF;              // Maximum timestamp(us)
-constexpr int      RUX_FRM_MAX       = 92;                              // Maximum fragment size
-constexpr int      RUX_MSG_MAX       = RUX_FRM_MAX * RUX_MSS;           // Maximum signle massage's length
-constexpr int      RUX_RTO_MIN       = 200 * 1000;                      // RTO MIN 200ms
-constexpr int      RUX_RTO_MAX       = 1000 * 1000 * 30;                // RTO MAX 30s
-constexpr int      RUX_TIMEOUT       = RUX_RTO_MAX * 2 * 10;            // TIMEOUT: 10 min
-constexpr int      RUX_FAST_ACK      = 3;
-constexpr int      RUX_XMIT_MAX      = 10;
-constexpr int      RUX_SSTHRESH_INIT = 2;
+constexpr int      RUX_FRM_EX_SIZE     = 10;
+constexpr int      RUX_SEG_HDR_SIZE    = 13;                                                                    // cmd[1] + sn[6] + us[6];
+constexpr int      RUX_SEG_HDR_EX_SIZE = 3;                                                                     // len[2] + frg[1]
+constexpr int      RUX_MSS             = UDP_MTU - RUX_FRM_EX_SIZE - RUX_SEG_HDR_SIZE - RUX_SEG_HDR_EX_SIZE;    // RUX Maximum segment size
+constexpr int      RUX_CMD_ACK         = 0x11;                                                                  // CMD: ACK
+constexpr int      RUX_CMD_PIN         = 0x12;                                                                  // CMD: Heart's beat: Ping
+constexpr int      RUX_CMD_CON         = 0x13;                                                                  // CMD: Connection
+constexpr int      RUX_CMD_PSH         = 0x14;                                                                  // CMD: Push
+constexpr int      RUX_RID_MAX         = 100000;                                                                // Maximum rux id
+constexpr int      RUX_RWND_MAX        = 128;                                                                   // Maximum receive window size
+constexpr int      RUX_SWND_MAX        = RUX_RWND_MAX / 8;                                                      // Maximum send window size
+constexpr int      RUX_SWND_MIN        = 1;                                                                     // Minimun send window size
+constexpr uint64_t RUX_SN_MAX          = 0x0000FFFFFFFFFFFF;                                                    // Maximum sequnce number
+constexpr uint64_t RUX_US_MAX          = 0x0000FFFFFFFFFFFF;                                                    // Maximum timestamp(us)
+constexpr int      RUX_FRM_MAX         = 92;                                                                    // Maximum fragment size
+constexpr int      RUX_MSG_MAX         = RUX_FRM_MAX * RUX_MSS;                                                 // Maximum signle massage's length
+constexpr int      RUX_RTO_MIN         = 200 * 1000;                                                            // RTO MIN 200ms
+constexpr int      RUX_RTO_MAX         = 1000 * 1000 * 30;                                                      // RTO MAX 30s
+constexpr int      RUX_TIMEOUT         = RUX_RTO_MAX * 2 * 10;                                                  // TIMEOUT: 10 min
+constexpr int      RUX_FAST_ACK        = 3;
+constexpr int      RUX_XMIT_MAX        = 10;
+constexpr int      RUX_SSTHRESH_INIT   = 2;
 
 
 class Rux {
@@ -95,7 +89,7 @@ public:
             int ret = -1;
 
             do {
-                if (!buf || buflen < RUX_SEG_HDR_MIN) {
+                if (!buf || buflen < RUX_SEG_HDR_SIZE) {
                     break;
                 }
 
@@ -117,7 +111,7 @@ public:
                 }
 
                 if (cmd == RUX_CMD_CON || cmd == RUX_CMD_PSH) {
-                    if (buflen < RUX_SEG_HDR_EX_SIZE) {
+                    if (buflen < RUX_SEG_HDR_SIZE + RUX_SEG_HDR_EX_SIZE) {
                         break;
                     }
 
@@ -126,7 +120,7 @@ public:
                         break;
                     }
 
-                    if (buflen < len + RUX_SEG_HDR_MAX) {
+                    if (buflen < len + RUX_SEG_HDR_SIZE + RUX_SEG_HDR_EX_SIZE) {
                         break;
                     }
 
@@ -147,17 +141,16 @@ public:
 
 
         int encode(uint8_t* buf, int buflen) {
-            ASSERT(buf && buflen > RUX_SEG_HDR_SIZE);
+            ASSERT(buf && buflen > RUX_SEG_HDR_SIZE + RUX_FRM_EX_SIZE);
 
             int ret = -1;
 
             do {
                 if (cmd < RUX_CMD_ACK || cmd > RUX_CMD_PSH ||
-                    ((cmd == RUX_CMD_PSH || cmd == RUX_CMD_CON) && buflen < RUX_SEG_HDR_EX_SIZE) ||
+                    ((cmd == RUX_CMD_PSH || cmd == RUX_CMD_CON) && buflen < RUX_SEG_HDR_SIZE + RUX_SEG_HDR_EX_SIZE + len) ||
                     sn > RUX_SN_MAX ||
                     us > RUX_US_MAX ||
                     len > RUX_MSS ||
-                    (len > 0 && buflen < RUX_SEG_HDR_MAX + len) ||
                     frg > RUX_FRM_MAX) {
                     break;
                 }
@@ -616,7 +609,7 @@ public:
             // ACK
             while (ack_que_.size() > 0 && npfms < FRAME_MAX) {
                 ack_itr = ack_que_.begin();
-                if (pfm && nleft < RUX_SEG_HDR_SIZE) {
+                if (pfm && nleft < RUX_SEG_HDR_SIZE + RUX_FRM_EX_SIZE) {
                     pfm->len = uint16_t(p - pfm->raw);
                     pfms[npfms++] = pfm;
 
@@ -672,7 +665,7 @@ public:
                     seg.sn = ack_itr->first;
                     seg.us = ack_itr->second;
                     n = seg.encode(p, nleft);
-                    ASSERT(n == RUX_SEG_HDR_MIN);
+                    ASSERT(n == RUX_SEG_HDR_SIZE);
                     p += n;
                     nleft -= n;
                 }
@@ -686,7 +679,7 @@ public:
             while (already_snd < snd_wnd && psh_itr != snd_buf_.end() && npfms < FRAME_MAX) {
                 pseg = psh_itr->second;
 
-                if (pfm && nleft < RUX_SEG_HDR_EX_SIZE + pseg->len) {
+                if (pfm && nleft < RUX_FRM_EX_SIZE + RUX_SEG_HDR_SIZE + RUX_SEG_HDR_EX_SIZE + pseg->len) {
                     pfm->len = uint16_t(p - pfm->raw);
                     pfms[npfms++] = pfm;
 
@@ -787,7 +780,7 @@ public:
                     }
 
                     n = pseg->encode(p, nleft);
-                    ASSERT(n > 0);
+                    ASSERT(n == pseg->len + RUX_SEG_HDR_SIZE + RUX_SEG_HDR_EX_SIZE);
                     p += n;
                     nleft -= n;
                     already_snd++;

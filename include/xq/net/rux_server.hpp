@@ -93,12 +93,18 @@ public:
 #ifdef _WIN32
     void on_recv(UDX* udx, int err, Frame::ptr pfm) {
         static int round_id = 0;
+
+        if (pfm->len < RUX_FRM_EX_SIZE) {
+            return;
+        }
+
         uint32_t rid = 0;
 
         u24_decode(pfm->raw, &rid);
         if (rid == 0 || rid > RUX_RID_MAX) {
             return;
         }
+
         Rux::ptr rux = sessions_[rid - 1];
         if (rux->state() < 0) {
             rux->set_state(1);
@@ -134,7 +140,7 @@ public:
 
         for (int i = 0; i < n; i++) {
             pfm = pfms[i];
-            if (pfm->len > UDP_MTU) {
+            if (pfm->len > UDP_MTU || pfm->len < RUX_FRM_EX_SIZE) {
                 continue;
             }
 
@@ -216,14 +222,9 @@ private:
 
 
     void _update_thread() {
-//        constexpr int TIMOUT_US = 500;
-
         uint64_t now_us;
         size_t n;
         Rux* rux;
-//#ifndef _WIN32
-//        timeval timeout = {0, 0};
-//#endif
         std::unordered_set<uint32_t>::iterator itr;
 
         while (running_) {
@@ -250,12 +251,7 @@ private:
 
                 n--;
             }
-// #ifdef _WIN32
-//             std::this_thread::sleep_for(std::chrono::microseconds(TIMOUT_US));
-// #else
-//             timeout.tv_usec = TIMOUT_US;
-//             ::select(0, nullptr, nullptr, nullptr, &timeout);
-// #endif
+
             std::this_thread::yield();
         }
     }
