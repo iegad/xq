@@ -9,7 +9,7 @@ class EchoService {
 public:
     void on_message(xq::net::Rux::ptr rux, uint8_t* msg, int msglen) {
         msg[msglen] = 0;
-        DLOG("%s\n", (char*)msg);
+        //DLOG("%s\n", (char*)msg);
         rux->send(msg, msglen);
     }
 

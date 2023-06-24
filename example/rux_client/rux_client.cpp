@@ -3,7 +3,7 @@
 //#define SERVER_ENDPOINT ("192.168.0.104:6688")
 #define SERVER_ENDPOINT ("127.0.0.1:6688")
 //#define SERVER_ENDPOINT ("1.15.81.179:6688")
-#define LIMIT (10)
+#define LIMIT (500)
 
 
 class EchoService;
@@ -17,7 +17,7 @@ public:
         msg[msglen] = 0;
         DLOG("recv: %s\n", (char*)msg);
         if (++count == LIMIT) {
-            pUdx->stop();
+            // pUdx->stop();
         }
     }
 };

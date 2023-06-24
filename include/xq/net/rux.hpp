@@ -168,28 +168,9 @@ public:
     typedef std::map<uint64_t, uint64_t>     AckQue;
 
 
-    explicit Rux(uint32_t rid, uint64_t now_us, FrameQueue& snd_que)
+    Rux(uint32_t rid, uint64_t now_us, FrameQueue& snd_que)
         : rid_(rid)
-        , cwnd_(RUX_SWND_MIN)
-        , ssthresh_(RUX_SSTHRESH_INIT)
-        , rmt_wnd_(RUX_SWND_MIN)
-
-        , state_(-1)
-        , qid_(-1)
-        , rto_(RUX_RTO_MIN)
-        , srtt_(0)
-        , rttval_(0)
-        , nlost_(0)
         , base_us_(now_us)
-
-        , rcv_nxt_(0)
-        , snd_nxt_(0)
-        , last_us_(0)
-        , last_rcv_us_(0)
-
-        , addrlen_(sizeof(addr_))
-        , addr_({0,{0},0})
-
         , snd_que_(snd_que) {
         ASSERT(rid > 0 && rid <= RUX_RID_MAX);
     }
@@ -212,34 +193,34 @@ public:
     }
 
 
-    inline void set_rmt_addr(const sockaddr_storage* addr, socklen_t addrlen) {
+    void set_rmt_addr(const sockaddr_storage* addr, socklen_t addrlen) {
         lkr_.lock();
         _set_remote_addr(addr, addrlen);
         lkr_.unlock();
     }
 
 
-    inline int qid() const {
+    int qid() const {
         return qid_;
     }
 
 
-    inline void set_qid(int qid) {
+    void set_qid(int qid) {
         qid_ = qid;
     }
 
 
-    inline uint32_t rid() const {
+    uint32_t rid() const {
         return rid_;
     }
 
 
-    inline int state() const {
+    int state() const {
         return state_;
     }
 
 
-    inline void set_state(int state) {
+    void set_state(int state) {
         ASSERT(state == 0 || state == -1 || state == 1);
         state_ = state;
     }
@@ -262,7 +243,7 @@ public:
         uint64_t una = 0;
 
         Segment::ptr pseg;
-        int n, rtt, delta;
+        int n, update_rmt_wnd = 0;
         uint64_t sn, us;
 
         SndBuf::iterator itr;
@@ -293,8 +274,15 @@ public:
             if (itr->first >= una) {
                 break;
             }
+
+            _update_ack(itr->second, now_us);
+
             delete itr->second;
             snd_buf_.erase(itr);
+
+            if (!update_rmt_wnd) {
+                update_rmt_wnd = 1;
+            }
         }
 
         do {
@@ -328,38 +316,17 @@ public:
 
                     itr = snd_buf_.find(sn);
                     if (snd_buf_.end() != itr) {
+                        _update_ack(itr->second, now_us);
+
                         delete itr->second;
                         snd_buf_.erase(itr);
+
+                        if (!update_rmt_wnd) {
+                            update_rmt_wnd = 1;
+                        }
                     }
 
-                    /* ---------------------
-                     * 这里可能会出现负值.
-                     * 例如:
-                     *    1, 发送端发 psh[sn:1, us:1] 的包.
-                     *    2, 对端收到后响应 ack[sn:1, us:1], 但是该响但在网络中滞留.
-                     *    3, 发送端触发重传(可能是超时重传, 也可能是快速重传) re psh[sn:1, ts:2].
-                     *    4, 发送端此时收到滞留的 ack[sn:1, ts: 1], 这时就会出现RTT时间负数的情况.
-                     */
-                    rtt = int(now_us - us + 1);
                     delete pseg;
-
-                    if (rtt > 0) {
-                        if (srtt_ == 0) {
-                            srtt_ = rtt;
-                            rttval_ = rtt / 2;
-                        }
-                        else {
-                            delta = rtt - srtt_;
-                            if (delta < 0) {
-                                delta = -delta;
-                            }
-
-                            rttval_ = (3 * rttval_ + delta) >> 2;
-                            srtt_ = (7 * srtt_ + rtt) >> 4;
-                        }
-
-                        rto_ = MID(RUX_RTO_MIN, srtt_ + (rttval_ << 2), RUX_RTO_MAX);
-                    }
                 }break;
 
                 case RUX_CMD_PIN: {
@@ -383,6 +350,10 @@ public:
                     if (ack_que_.count(sn) == 0) {
                         ack_que_.insert(std::make_pair(sn, us));
                     }
+
+                    if (!update_rmt_wnd) {
+                        update_rmt_wnd = 1;
+                    }
                 }break;
 
                 case RUX_CMD_CON: {
@@ -402,6 +373,10 @@ public:
 
                     if (ack_que_.count(sn) == 0) {
                         ack_que_.insert(std::make_pair(sn, us));
+                    }
+
+                    if (!update_rmt_wnd) {
+                        update_rmt_wnd = 1;
                     }
                 }break;
 
@@ -423,26 +398,27 @@ public:
                 break;
             }
 
-            // Step 3: 设置新的 remote window
-            if (last_us_ < last_us) {
-                last_us_ = last_us;
-            }
-
             // Step 4: 拥塞控制
-            rmt_wnd_ = rmt_wnd;
-            if (rmt_wnd > cwnd_) {
-                if (cwnd_ < ssthresh_) {
-                    cwnd_ <<= 1;
-                }
-                else if (cwnd_ < RUX_SWND_MAX) {
-                    cwnd_++;
+            if (update_rmt_wnd) {
+                rmt_wnd_ = rmt_wnd;
+                if (rmt_wnd > cwnd_) {
+                    cwnd_ = 6;
                 }
             }
 
-            rmt_wnd_ = rmt_wnd;
-            last_rcv_us_ = pfm->time_us;
-            _set_remote_addr(&pfm->name, pfm->namelen);
+            int64_t diff = pfm->time_us - last_rcv_us_;
+            if (diff > 1000) {
+                if (delivered_ > 0) {
+                    bw_ = delivered_ * 1000000 / diff;
+                    DLOG("min_rtt: %llu, delivered: %llu, diff: %lld, bandwidth: %llu Bytes/s\n", min_rtt_, delivered_, diff, delivered_ * 1000000 / diff);
+                    delivered_ = 0;
+                }
+                
+                
+                last_rcv_us_ = pfm->time_us;
+            }
 
+            _set_remote_addr(&pfm->name, pfm->namelen);
             ret = 0;
         } while (0);
         lkr_.unlock();
@@ -817,13 +793,23 @@ private:
             delete itr->second;
             snd_buf_.erase(itr);
         }
-
-        nlost_ = rttval_ = srtt_ = 0;
-        rmt_wnd_ = cwnd_ = RUX_SWND_MIN;
-        rto_ = RUX_RTO_MIN;
-
-        last_rcv_us_ = rcv_nxt_ = snd_nxt_ = last_us_ = 0;
+        
         base_us_ = now_us;
+        cwnd_ = RUX_SWND_MIN;
+        ssthresh_ = RUX_SSTHRESH_INIT;
+        rmt_wnd_ = RUX_SWND_MIN;
+        min_rtt_ = 0;
+        bw_ = 0;    
+        delivered_ = 0;
+
+        rto_ = RUX_RTO_MIN;
+        srtt_ = 0;
+        rttval_ = 0;
+        nlost_ = 0;
+
+        rcv_nxt_ = 0;
+        snd_nxt_ = 0;
+        last_rcv_us_ = 0;
     }
 
     
@@ -838,34 +824,67 @@ private:
     }
 
 
-    uint32_t         rid_;             // rux id
+    void _update_ack(Segment::ptr pseg, uint64_t now_us) {
+        int64_t rtt = int64_t(now_us - pseg->us) + 1;
 
-    uint8_t          cwnd_;            // 拥塞控制
-    uint8_t          ssthresh_;
-    uint8_t          rmt_wnd_;         // 对端窗口
+        if (rtt > 0) {
+            if (srtt_ == 0) {
+                srtt_ = rtt;
+                rttval_ = rtt >> 1;
+            }
+            else {
+                int64_t delta = rtt - srtt_;
+                if (delta < 0) {
+                    delta = -delta;
+                }
 
-    LockType         lkr_;
-    std::atomic<int> state_;
-    std::atomic<int> qid_;             // rux_que index
-    int              rto_;             // RTO
-    int              srtt_;            // smooth RTT
-    int              rttval_;          
-    int              nlost_;
-    uint64_t         base_us_;         // 启始时间(微秒)
+                rttval_ = (3 * rttval_ + delta) >> 2;
+                srtt_ = (7 * srtt_ + rtt) >> 4;
+            }
+
+            rto_ = MID(RUX_RTO_MIN, srtt_ + (rttval_ << 2), RUX_RTO_MAX);
+
+            if (rtt < min_rtt_ || min_rtt_ == 0) {
+                min_rtt_ = rtt;
+            }
+        }
+
+        delivered_ += pseg->len;
+    }
+
+
+    uint32_t    rid_;       // rux id
+    uint64_t    base_us_;   // 启始时间(微秒)
+    FrameQueue& snd_que_;   // io output queue 引用
+
+    uint8_t  cwnd_      = RUX_SWND_MIN;
+    uint8_t  ssthresh_  = RUX_SSTHRESH_INIT;
+    uint8_t  rmt_wnd_   = RUX_SWND_MIN;
+    uint64_t min_rtt_   = 0;
+    uint64_t bw_        = 0;    // 带宽
+    uint64_t delivered_ = 0;
     
-    uint64_t         rcv_nxt_;         // 下一次接收 sn
-    uint64_t         snd_nxt_;         // 下一次发送 sn
-    uint64_t         last_us_;         // 上一次sn
-    uint64_t         last_rcv_us_;     // 最后一次接收时间
+    int rto_    = RUX_RTO_MIN;   // RTO
+    int srtt_   = 0;             // smooth RTT
+    int rttval_ = 0;          
+    int nlost_  = 0;
+    
+    uint64_t rcv_nxt_     = 0;    // 下一次接收 sn
+    uint64_t snd_nxt_     = 0;    // 下一次发送 sn
+    uint64_t last_rcv_us_ = 0;    // 最后一次接收时间
 
-    socklen_t        addrlen_;         // 对端地址长度
-    sockaddr_storage addr_;            // 对端地址
+    socklen_t        addrlen_ = sizeof(sockaddr_storage);
+    sockaddr_storage addr_    = {};
 
-    AckQue ack_que_;                   // ACK队列
-    SndBuf snd_buf_;                   // 发送缓冲区
-    RcvBuf rcv_buf_;                   // 接收缓冲区
+    std::atomic<int> state_ = -1;
+    std::atomic<int> qid_   = -1;  // rux_que index
 
-    FrameQueue& snd_que_;               // io output queue 引用
+    LockType lkr_;
+    AckQue   ack_que_;             // ACK队列
+    SndBuf   snd_buf_;             // 发送缓冲区
+    RcvBuf   rcv_buf_;             // 接收缓冲区
+
+    
 }; // class Rux;
 
 
