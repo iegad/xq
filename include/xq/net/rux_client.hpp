@@ -56,6 +56,7 @@ public:
             }
 
             Rux::ptr rux = itr->second;
+            pfm->ex = rux;
             if (rux->input(pfm)) {
                 break;
             }
@@ -132,7 +133,7 @@ public:
     }
 
 
-    inline void connect_node(const std::string &endpoint, uint64_t now_us, Rux::FrameQueue &snd_que) {
+    inline void connect_node(const std::string &endpoint, uint64_t now_us, FrameQueue &snd_que) {
         Rux* rux = new Rux(rid_, now_us, snd_que);
         sockaddr_storage addr;
         socklen_t addrlen = sizeof(addr);
@@ -141,7 +142,7 @@ public:
         if (ip.empty()) {
             ip = "0.0.0.0";
         }
-        addr.ss_family = check_ip_type(ip);
+        addr.ss_family = check_ip_family(ip);
         ASSERT(!str2addr(endpoint.c_str(), &addr, &addrlen));
         rux->set_rmt_addr(&addr, addrlen);
         rux->set_state(0);

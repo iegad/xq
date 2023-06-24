@@ -123,11 +123,13 @@ inline int rux_env_release() {
 }
 
 
-
-/// @brief Make udp socket then bind <host:svc>
+/// @brief Make udp socket then bind [host:svc];
 /// @param host host/ip
 /// @param svc  svc/port
 /// @return sockfd on success or INVALID_SOCKET on failure.
+/// @remark:
+///     Complexity:  O(n)
+///     System call: bind, socket
 SOCKET udp_bind(const char* host, const char* svc);
 
 
@@ -136,6 +138,9 @@ SOCKET udp_bind(const char* host, const char* svc);
 /// @param buf      [out] string buf
 /// @param buflen   [out] string buf's length
 /// @return 0 on success or -1 on failure.
+/// @remark:
+///     Complexity:  O(1)
+///     System call: inet_ntop
 int addr2str(const struct sockaddr_storage* addr, char* buf, size_t buflen);
 
 
@@ -145,25 +150,34 @@ int addr2str(const struct sockaddr_storage* addr, char* buf, size_t buflen);
 /// @param addrlen  [out] sockaddrlen's pointer
 /// @return 0 on success or -1 on failure.
 /// @note 'addr.ss_family' must be set AF_INET / AF_INET6
+/// @remark:
+///     Complexity:  O(1)
+///     System call: inet_pton
 int str2addr(const char *endpoint, struct sockaddr_storage *addr, socklen_t* addrlen);
 
 
 /// @brief Set sockfd nonblocking
 /// @param sockfd the sockfd to be set nonblocking
 /// @return 0 on success or -1 on failure.
+/// @remark:
+///     Complexity:  O(1)
+///     System call: fcntl/ioctlsocket
 inline int make_nonblocking(SOCKET sockfd) {
-#ifndef _WIN32
-    int opts = fcntl(sockfd, F_GETFL);
-    return opts < 0 ? -1 : fcntl(sockfd, F_SETFL, opts | O_NONBLOCK);
-#else
+#ifdef _WIN32
     static u_long ON = 1;
     return ioctlsocket(sockfd, FIONBIO, &ON);
-#endif // !_WIN32
+#else
+    int opts = fcntl(sockfd, F_GETFL);
+    return opts < 0 ? -1 : fcntl(sockfd, F_SETFL, opts | O_NONBLOCK);
+#endif
 }
 
 
 /// @brief Get clock(us) of since the system started.
 /// @note  It's not unix timetamp.
+/// @remark:
+///     Complexity:  O(1)
+///     System call: clock_gettime / QueryPerformanceFrequency, QueryPerformanceCounter
 inline int64_t sys_clock() {
 #ifdef _WIN32
     static int64_t FREQ = 0;
@@ -184,8 +198,11 @@ inline int64_t sys_clock() {
 }
 
 
-/// @brief  Get timestamp(us)
+/// @brief  Get unix timestamp(us)
 /// @return Current unix timestamp
+/// @remark:
+///     Complexity:  O(1)
+///     System call: gettimeofday / GetSystemTimeAsFileTime
 inline int64_t sys_time() {
 #ifdef _WIN32
 #define EPOCHFILETIME (116444736000000000)
@@ -205,6 +222,9 @@ inline int64_t sys_time() {
 
 /// @brief Get number of cpu's cores.
 /// @return number of cpu's cores.
+/// @remark:
+///     Complexity:  O(1)
+///     System call: sysconf / GetSystemInfo
 inline int sys_cpus() {
 #ifdef _WIN32
     SYSTEM_INFO si;
@@ -220,27 +240,10 @@ inline int sys_cpus() {
 /// @param addrs    [out] sockaddr_storage array
 /// @param n        number of sockaddr_storage array
 /// @return         number of local ip address on success or -1 on failure.
+/// @remark:
+///     Complexity:  O(n)
+///     System call: gethostname, getaddrinfo
 int sys_ips(struct sockaddr_storage *addrs, size_t n);
-
-
-/// @brief system network interface
-struct SysInterface {
-    uint32_t    if_flag;        // win: Type, !win: flag
-    char        if_ip[16];      
-    char        if_mask[16];
-    char        if_gw[16];
-    char        if_desc[132];   // 网卡描述
-    char        if_name[260];   // 网卡名称
-};
-
-/// @brief [Alpha] get system network interfaces
-/// @param ifs [out] SysInterface's pointer
-/// @param n   ifs'es length
-/// @return number of system network interface on success or -1 on failure.
-/// @note   还未解决问题: 1, linux平台 gw, mask, ip都是sockaddr 而windows是字符串
-///                      2, windows无法获取ipv6
-///                      3, linux平台无法通过一个接口获取mac地址
-int sys_ifs(struct SysInterface* ifs, size_t n);
 
 
 /// @brief Convert binary data to hex string.
@@ -249,6 +252,9 @@ int sys_ifs(struct SysInterface* ifs, size_t n);
 /// @param buf      [out] string buffer
 /// @param buflen   string buffer's length
 /// @return The length after converting to a hexadecimal string or -1 on failure.
+/// @remark:
+///     Complexity:  O(n)
+///     System call: 
 int bin2hex(const uint8_t* data, size_t datalen, char* buf, size_t buflen);
 
 
@@ -258,6 +264,9 @@ int bin2hex(const uint8_t* data, size_t datalen, char* buf, size_t buflen);
 /// @param buf      [out] binary buffer
 /// @param buflen   binary buffer's length
 /// @return The length after conversion to binary data or -1 on failure.
+/// @remark:
+///     Complexity:  O(n)
+///     System call: 
 int hex2bin(const char* data, size_t datalen, uint8_t* buf, size_t buflen);
 
 

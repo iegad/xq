@@ -2,6 +2,7 @@
 #define __XQ_NET_RUX__
 
 
+#include <map>
 #include "xq/net/udx.hpp"
 
 
@@ -37,7 +38,6 @@ constexpr int      RUX_SSTHRESH_INIT   = 2;
 class Rux {
 public:
     typedef Rux* ptr;
-    typedef moodycamel::BlockingConcurrentQueue<Frame::ptr> FrameQueue;
     typedef std::mutex LockType;
 
 
@@ -246,7 +246,7 @@ public:
 
 
     int input(Frame::ptr pfm) {
-        ASSERT(pfm);
+        ASSERT(pfm && pfm->ex == this);
 
         int ret     = -1;
         int err     = 0;
@@ -268,7 +268,6 @@ public:
         SndBuf::iterator itr;
 
         n = u24_decode(p, &rid);
-        ASSERT(rid == rid_);
         p += n;
         datalen -= n;
 
@@ -700,7 +699,7 @@ public:
                     needsnd = 1;
                 }
                 else if (pseg->xmit >= RUX_XMIT_MAX) {
-                    DLOG(" state changed, rux xmit limit\n");
+                    DLOG("state changed, rux xmit limit\n");
                     state_ = -1;
                     for (i = 0; i < npfms; i++) {
                         delete pfms[i];

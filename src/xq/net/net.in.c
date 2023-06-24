@@ -161,39 +161,6 @@ sys_ips(struct sockaddr_storage *addrs, size_t n) {
 }
 
 
-int 
-sys_ifs(struct SysInterface *ifs, size_t n) {
-    ASSERT(ifs && n > 0);
-#ifdef _WIN32
-    struct SysInterface *inf;
-    PIP_ADAPTER_INFO p;
-    u_long nsize = 0, err;
-
-    GetAdaptersInfo(NULL, &nsize);
-    p = (PIP_ADAPTER_INFO)malloc(nsize);
-    if (GetAdaptersInfo(p, &nsize)) {
-        return -1;
-    }
-
-    n = nsize / sizeof(IP_ADAPTER_INFO);
-    for (size_t i = 0; i < n && p; i++, p = p->Next) {
-        inf = &ifs[i];
-        memcpy(inf->if_name, p->AdapterName, sizeof(p->AdapterName));
-        memcpy(inf->if_desc, p->Description, sizeof(p->Description));
-        inf->if_flag = p->Type;
-        memcpy(inf->if_ip, p->IpAddressList.IpAddress.String, sizeof(p->IpAddressList.IpAddress.String));
-        memcpy(inf->if_mask, p->IpAddressList.IpAddress.String, sizeof(p->IpAddressList.IpMask.String));
-        memcpy(inf->if_gw, p->IpAddressList.IpAddress.String, sizeof(p->GatewayList.IpAddress.String));
-    }
-
-    free(p);
-    return n;
-#else
-    return 0;
-#endif
-}
-
-
 int
 bin2hex(const uint8_t *data, size_t datalen, char *buf, size_t buflen) {
     ASSERT(data && buf && datalen > 0 && buflen >= datalen << 1);
@@ -213,8 +180,10 @@ bin2hex(const uint8_t *data, size_t datalen, char *buf, size_t buflen) {
             tmp >>= 4;
         }
     }
+
     return datalen << 1;
 }
+
 
 int 
 hex2bin(const char* data, size_t datalen, uint8_t* buf, size_t buflen) {

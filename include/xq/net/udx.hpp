@@ -4,7 +4,7 @@
 
 #include <functional>
 #include <xq/third/blockingconcurrentqueue.h>
-#include "xq/net/basic.hpp"
+#include "xq/net/net.hpp"
 
 
 namespace xq {
@@ -25,10 +25,14 @@ struct Frame {
     void*            ex      = nullptr; // extension
 
 
+    /// @brief Default constructor.
     explicit Frame() 
     {}
 
 
+    /// @brief Constructor
+    /// @param addr     remote address
+    /// @param addrlen  remote address' length
     explicit Frame(const sockaddr_storage* addr, socklen_t addrlen)
         : namelen(addrlen) {
         ASSERT(addr && addrlen >= sizeof(sockaddr))
@@ -36,6 +40,7 @@ struct Frame {
     }
 
 
+    /// @brief Copy constructor
     explicit Frame(const Frame& f)
         : len(f.len)
         , namelen(f.namelen)
@@ -53,19 +58,26 @@ private:
 }; // struct Frame
 
 
+/// @brief  UDP extension
+/// @tparam TEvent event class
+/// @note   TEvent must implement: 
+///          1, void on_run(Udx<T>* provider); 
+///          2, void on_stop(Udx<T>* provider);
+///          3, WIN: void on_recv(Udx<T>* provider, int err, Frame::ptr pFrame); / !WIN: void on_recv(Udx<T>* provider, Frame::ptr pFrameArray, int nArray);
+///          4, void on_send(Udx<T>* provider, int err, Frame::ptr pFrame);
 template<class TEvent>
 class Udx {
 public:
     typedef Udx<TEvent>* ptr;
-    typedef moodycamel::BlockingConcurrentQueue<Frame::ptr> FrameQueue;
-
-    static constexpr int SND_QUE_SIZE = 128 * 1024;
 
 
+    /// @brief Constructor
+    /// @param endpoint Local endpoint
+    /// @param ev       Event object's pointer
     explicit Udx(const std::string& endpoint, TEvent* ev)
         : sockfd_(INVALID_SOCKET)
         , ev_(ev)
-        , snd_que_(SND_QUE_SIZE) {
+        , snd_que_(FRAME_QUE_SIZE) {
         ASSERT(endpoint.size() && ev);
 
         size_t pos = endpoint.rfind(':');
@@ -81,37 +93,46 @@ public:
     }
 
 
+    /// @brief Destructor
     ~Udx() {
         this->shutdown();
     }
 
-    inline FrameQueue& snd_que() {
+
+    /// @brief  Udx's send queue's reference
+    FrameQueue& snd_que() {
         return snd_que_;
     }
 
 
-    inline SOCKET sockfd() const {
+    /// @brief raw sockfd
+    SOCKET sockfd() const {
         return sockfd_;
     }
 
 
-    inline void shutdown() {
+    /// @brief Event's reference
+    TEvent& ev() {
+        return svc_;
+    }
+
+
+    /// @brief Shutdown udx
+    void shutdown() {
         stop();
         wait();
     }
 
 
-    inline TEvent& ex() {
-        return svc_;
-    }
-
-
-    inline bool running() const {
+    /// @brief check udx is running
+    bool running() const {
         return sockfd_ != INVALID_SOCKET;
     }
 
 
-    inline void run(bool async = true) {
+    /// @brief Run udx
+    /// @param async Run asynchronously default true
+    void run(bool async = true) {
         if (sockfd_ != INVALID_SOCKET) {
             return;
         }
@@ -128,6 +149,7 @@ public:
     }
 
 
+    /// @brief Stop udx
     void stop() {
         if (sockfd_ != INVALID_SOCKET) {
             ::close(sockfd_);
@@ -136,6 +158,7 @@ public:
     }
 
 
+    /// @brief Wait for UDX to stop running
     void wait() {
         if (rcv_thread_.joinable()) {
             rcv_thread_.join();
@@ -145,15 +168,19 @@ public:
     }
 
 
-    inline int join_multicast(const std::string& multi_local_ip, const std::string& multi_route_ip) {
+    /// @brief Udx join the multi cast address
+    /// @param multi_local_ip local ip
+    /// @param multi_cast_ip multi cast ip
+    /// @return 0 on success or -1 on failure.
+    int join_multicast(const std::string& multi_local_ip, const std::string& multi_cast_ip) {
         ASSERT(multi_local_ip.size() > 0 && multi_route_ip.size() > 0);
 
-        int af = xq::net::check_ip_type(multi_route_ip);
+        int af = xq::net::check_ip_family(multi_cast_ip);
         ASSERT(af == AF_INET/* || af == AF_INET6*/);
 
         ip_mreq mreq;
         ::memset(&mreq, 0, sizeof(mreq));
-        if (::inet_pton(af, multi_route_ip.c_str(), &mreq.imr_multiaddr) != 1) {
+        if (::inet_pton(af, multi_cast_ip.c_str(), &mreq.imr_multiaddr) != 1) {
             return -1;
         }
 
@@ -169,12 +196,19 @@ public:
     }
 
 
-    inline int send(Frame::ptr pfm) {
+    /// @brief Send frame
+    /// @param pfm Frame to be sended
+    /// @return 0 on success or -1 on failure.
+    int send(Frame::ptr pfm) {
         return snd_que_.try_enqueue(pfm) ? 0 : -1;
     }
 
 
-    inline int send(Frame::ptr* pfms, size_t n) {
+    /// @brief Send multible frames.
+    /// @param pfms Frames to be sended
+    /// @param n    Size of pfms
+    /// @return 0 on success or -1 on failure.
+    int send(Frame::ptr* pfms, size_t n) {
         return snd_que_.try_enqueue_bulk(pfms, n) ? 0 : -1;
     }
 
@@ -230,6 +264,8 @@ public:
 
 
 private:
+
+
 #ifdef _WIN32
 
 

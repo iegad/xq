@@ -36,7 +36,7 @@ public:
 
         update_thread_ = std::thread(std::bind(&RuxServer::_update_thread, this));
         for (int i = 0; i < nprocessor_; i++) {
-            pfm_ques_.emplace_back(new Rux::FrameQueue(1024 * 100));
+            pfm_ques_.emplace_back(new FrameQueue(FRAME_QUE_SIZE));
             rux_thread_pool_.emplace_back(std::thread(std::bind(&RuxServer::_rux_thread, this, pfm_ques_[i])));
         }
     }
@@ -186,7 +186,7 @@ public:
 
 
 private:
-    void _rux_thread(Rux::FrameQueue* que) {
+    void _rux_thread(FrameQueue* que) {
         constexpr int FRAME_SIZE = 128;
         constexpr int TIMEOUT    = 200 * 1000;
 
@@ -268,7 +268,7 @@ private:
     std::unordered_set<uint32_t> active_session_;
 
     std::thread update_thread_;
-    std::vector<Rux::FrameQueue*> pfm_ques_;
+    std::vector<FrameQueue*> pfm_ques_;
 
 
     RuxServer(const RuxServer&) = delete;
