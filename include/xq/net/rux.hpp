@@ -402,18 +402,17 @@ public:
             if (update_rmt_wnd) {
                 rmt_wnd_ = rmt_wnd;
                 if (rmt_wnd > cwnd_) {
-                    cwnd_ = 6;
+                    cwnd_ = 12;
                 }
             }
 
             int64_t diff = pfm->time_us - last_rcv_us_;
-            if (diff > 1000) {
+            if (diff > 100000) {
                 if (delivered_ > 0) {
                     bw_ = delivered_ * 1000000 / diff;
-                    DLOG("min_rtt: %llu, delivered: %llu, diff: %lld, bandwidth: %llu Bytes/s\n", min_rtt_, delivered_, diff, delivered_ * 1000000 / diff);
+                    DLOG("min_rtt: %llu, delivered: %llu, diff: %lld, bandwidth: %llu Bytes/s\n", min_rtt_, delivered_, diff, bw_);
                     delivered_ = 0;
                 }
-                
                 
                 last_rcv_us_ = pfm->time_us;
             }

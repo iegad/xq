@@ -15,7 +15,7 @@ public:
         static int count = 0;
 
         msg[msglen] = 0;
-        DLOG("recv: %s\n", (char*)msg);
+        //DLOG("recv: %s\n", (char*)msg);
         if (++count == LIMIT) {
             // pUdx->stop();
         }
