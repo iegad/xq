@@ -241,10 +241,10 @@ public:
         uint32_t rid = 0;
         uint8_t  rmt_wnd = 0;
         uint64_t una = 0;
+        uint64_t sn, us;
 
         Segment::ptr pseg;
-        int n, update_rmt_wnd = 0;
-        uint64_t sn, us;
+        int n, update_rmt_wnd = 0, acked = 0;
 
         SndBuf::iterator itr;
 
@@ -275,13 +275,17 @@ public:
                 break;
             }
 
-            _update_ack(itr->second, now_us);
+            _update_ack(itr->second, int64_t(now_us - itr->second->us + 1));
 
             delete itr->second;
             snd_buf_.erase(itr);
 
             if (!update_rmt_wnd) {
                 update_rmt_wnd = 1;
+            }
+
+            if (!acked) {
+                acked = 1;
             }
         }
 
@@ -316,13 +320,17 @@ public:
 
                     itr = snd_buf_.find(sn);
                     if (snd_buf_.end() != itr) {
-                        _update_ack(itr->second, now_us);
+                        _update_ack(itr->second, int64_t(now_us - itr->second->us + 1));
 
                         delete itr->second;
                         snd_buf_.erase(itr);
 
                         if (!update_rmt_wnd) {
                             update_rmt_wnd = 1;
+                        }
+
+                        if (!acked) {
+                            acked = 1;
                         }
                     }
 
@@ -402,21 +410,20 @@ public:
             if (update_rmt_wnd) {
                 rmt_wnd_ = rmt_wnd;
                 if (rmt_wnd > cwnd_) {
-                    cwnd_ = 12;
+                    cwnd_ = 2;
                 }
             }
 
-            int64_t diff = pfm->time_us - last_rcv_us_;
-            if (diff > 100000) {
-                if (delivered_ > 0) {
-                    bw_ = delivered_ * 1000000 / diff;
-                    DLOG("min_rtt: %llu, delivered: %llu, diff: %lld, bandwidth: %llu Bytes/s\n", min_rtt_, delivered_, diff, bw_);
+            if (acked && last_rcv_us_ > 0) {
+                int64_t diff = pfm->time_us - last_rcv_us_;
+                if (diff > 0 && delivered_ > 0) {
+                    //bw_ = delivered_ * 8 / diff;
+                    DLOG("min_rtt: %lu, srtt: %d, delivered: %lu, diff: %ld, bandwidth: %lf Mbps, total: %lu Bytes\n", min_rtt_, srtt_, delivered_, diff, double(delivered_ * 8) / (double)diff, total_delivered_);
                     delivered_ = 0;
                 }
-                
-                last_rcv_us_ = pfm->time_us;
             }
 
+            last_rcv_us_ = pfm->time_us;
             _set_remote_addr(&pfm->name, pfm->namelen);
             ret = 0;
         } while (0);
@@ -809,6 +816,7 @@ private:
         rcv_nxt_ = 0;
         snd_nxt_ = 0;
         last_rcv_us_ = 0;
+        total_delivered_ = 0;
     }
 
     
@@ -823,13 +831,11 @@ private:
     }
 
 
-    void _update_ack(Segment::ptr pseg, uint64_t now_us) {
-        int64_t rtt = int64_t(now_us - pseg->us) + 1;
-
+    void _update_ack(Segment::ptr pseg, int64_t rtt) {
         if (rtt > 0) {
             if (srtt_ == 0) {
                 srtt_ = rtt;
-                rttval_ = rtt >> 1;
+                rttval_ = rtt / 2;
             }
             else {
                 int64_t delta = rtt - srtt_;
@@ -837,18 +843,19 @@ private:
                     delta = -delta;
                 }
 
-                rttval_ = (3 * rttval_ + delta) >> 2;
-                srtt_ = (7 * srtt_ + rtt) >> 4;
+                rttval_ = int(3 * rttval_ + delta) / 4;
+                srtt_ = int(7 * srtt_ + rtt) / 8;
             }
 
-            rto_ = MID(RUX_RTO_MIN, srtt_ + (rttval_ << 2), RUX_RTO_MAX);
+            rto_ = MID(RUX_RTO_MIN, srtt_ + (rttval_ * 4), RUX_RTO_MAX);
 
-            if (rtt < min_rtt_ || min_rtt_ == 0) {
+            if (rtt < int64_t(min_rtt_) || min_rtt_ == 0) {
                 min_rtt_ = rtt;
             }
         }
 
         delivered_ += pseg->len;
+        total_delivered_ += pseg->len;
     }
 
 
@@ -883,7 +890,7 @@ private:
     SndBuf   snd_buf_;             // 发送缓冲区
     RcvBuf   rcv_buf_;             // 接收缓冲区
 
-    
+    uint64_t total_delivered_ = 0;
 }; // class Rux;
 
 

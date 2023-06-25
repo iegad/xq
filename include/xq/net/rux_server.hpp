@@ -2,6 +2,7 @@
 #define __XQ_NET_RUX_SERVER__
 
 
+#include <list>
 #include <unordered_set>
 #include "xq/net/rux.hpp"
 

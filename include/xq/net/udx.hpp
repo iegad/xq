@@ -173,7 +173,7 @@ public:
     /// @param multi_cast_ip multi cast ip
     /// @return 0 on success or -1 on failure.
     int join_multicast(const std::string& multi_local_ip, const std::string& multi_cast_ip) {
-        ASSERT(multi_local_ip.size() > 0 && multi_route_ip.size() > 0);
+        ASSERT(multi_local_ip.size() > 0 && multi_cast_ip.size() > 0);
 
         int af = xq::net::check_ip_family(multi_cast_ip);
         ASSERT(af == AF_INET/* || af == AF_INET6*/);
@@ -213,17 +213,17 @@ public:
     }
 
 
-    inline const char* host() const {
+    const char* host() const {
         return host_.c_str();
     }
 
 
-    inline const char* svc() const {
+    const char* svc() const {
         return svc_.c_str();
     }
 
 
-    inline int local_addr(sockaddr* addr, socklen_t* addrlen) const {
+    int local_addr(sockaddr* addr, socklen_t* addrlen) const {
         if (sockfd_ == INVALID_SOCKET) {
             return -1;
         }
@@ -232,7 +232,7 @@ public:
     }
 
 
-    inline std::string local_addr_str() const {
+    std::string local_addr_str() const {
         sockaddr_storage addr;
         socklen_t addrlen = sizeof(addr);
         ::memset(&addr, 0, addrlen);
@@ -305,8 +305,8 @@ private:
 
 
     void _snd_thread() {
-        constexpr int TIMEOUT   = 200 * 1000; // 200 ms
-        constexpr int FRM_SIZE  = 128;
+        constexpr int TIMEOUT  = 200 * 1000; // 200 ms
+        constexpr int FRM_SIZE = 128;
 
         int         err;
         size_t      n, i;
