@@ -242,9 +242,10 @@ public:
         uint8_t  rmt_wnd = 0;
         uint64_t una = 0;
         uint64_t sn, us;
+        int64_t rtt = 0;
 
         Segment::ptr pseg;
-        int n, update_rmt_wnd = 0, acked = 0;
+        int n, update_rmt_wnd = 0;
 
         SndBuf::iterator itr;
 
@@ -275,17 +276,14 @@ public:
                 break;
             }
 
-            _update_ack(itr->second, int64_t(now_us - itr->second->us + 1));
+            rtt = int64_t(now_us - itr->second->us + 1);
+            _update_ack(itr->second, rtt);
 
             delete itr->second;
             snd_buf_.erase(itr);
 
             if (!update_rmt_wnd) {
                 update_rmt_wnd = 1;
-            }
-
-            if (!acked) {
-                acked = 1;
             }
         }
 
@@ -320,17 +318,14 @@ public:
 
                     itr = snd_buf_.find(sn);
                     if (snd_buf_.end() != itr) {
-                        _update_ack(itr->second, int64_t(now_us - itr->second->us + 1));
+                        rtt = int64_t(now_us - itr->second->us + 1);
+                        _update_ack(itr->second, rtt);
 
                         delete itr->second;
                         snd_buf_.erase(itr);
 
                         if (!update_rmt_wnd) {
                             update_rmt_wnd = 1;
-                        }
-
-                        if (!acked) {
-                            acked = 1;
                         }
                     }
 
@@ -410,15 +405,15 @@ public:
             if (update_rmt_wnd) {
                 rmt_wnd_ = rmt_wnd;
                 if (rmt_wnd > cwnd_) {
-                    cwnd_ = 2;
+                    cwnd_ = 1;
                 }
             }
 
-            if (acked && last_rcv_us_ > 0) {
-                int64_t diff = pfm->time_us - last_rcv_us_;
-                if (diff > 0 && delivered_ > 0) {
-                    //bw_ = delivered_ * 8 / diff;
-                    DLOG("min_rtt: %lu, srtt: %d, delivered: %lu, diff: %ld, bandwidth: %lf Mbps, total: %lu Bytes\n", min_rtt_, srtt_, delivered_, diff, double(delivered_ * 8) / (double)diff, total_delivered_);
+            if (last_rcv_us_ > 0) {
+                int64_t diff = int64_t(pfm->time_us - last_rcv_us_);
+                if (diff > 10000 && delivered_ > 0) {
+                    bw_ = delivered_ * 1000 / uint64_t(diff);
+                    DLOG("min_rtt: %lu, srtt: %d, delivered: %lu, bandwidth: %lf Mbps, bw: %lu\n", min_rtt_, srtt_, delivered_, double(delivered_ * 8) / (double)diff, bw_);
                     delivered_ = 0;
                 }
             }
@@ -523,11 +518,8 @@ public:
 
 
     int output(uint64_t now_us) {
-        constexpr int LOST_LIMIT = 50;
         constexpr int FRAME_MAX = RUX_RWND_MAX << 1;
-        constexpr uint64_t LOST_INTERVAL = 1000 * 1000 * 10;
 
-        int already_snd = 0;
         int err         = 0;
         int needsnd     = 0;
         int npfms       = 0;
@@ -552,22 +544,8 @@ public:
         uint64_t una = rcv_nxt_;
 
         do {
-            if (now_us > last_rcv_us_) {
-                uint64_t diff_us = now_us - last_rcv_us_;
-                if (last_rcv_us_ > 0) {
-                    if (diff_us > RUX_TIMEOUT) {
-                        state_ = -1;
-                    }
-                    else if (diff_us >= LOST_INTERVAL) {
-                        if (nlost_ > LOST_LIMIT) {
-                            DLOG(" state changed, rux closed\n");
-                            state_ = -1;
-                        }
-                        else {
-                            nlost_ = 0;
-                        }
-                    }
-                }
+            if (now_us > last_rcv_us_ && last_rcv_us_ > 0 && now_us > last_rcv_us_ && now_us - last_rcv_us_ > RUX_TIMEOUT) {
+                state_ = -1;
             }
 
             if (state_ == -1) {
@@ -645,8 +623,9 @@ public:
 
             // PSH
             int snd_wnd = MIN3(rmt_wnd_, cwnd_, (int)snd_buf_.size());
+            int nsave = npfms;
             psh_itr = snd_buf_.begin();
-            while (already_snd < snd_wnd && psh_itr != snd_buf_.end() && npfms < FRAME_MAX) {
+            while (npfms - nsave < snd_wnd && npfms < FRAME_MAX  && psh_itr != snd_buf_.end()) {
                 pseg = psh_itr->second;
 
                 if (pfm && nleft < RUX_FRM_EX_SIZE + RUX_SEG_HDR_SIZE + RUX_SEG_HDR_EX_SIZE + pseg->len) {
@@ -697,7 +676,7 @@ public:
                 else {
                     if (pseg->resend_us <= now_us) {
                         DLOG("-------------------------------------------------------: %lu\n", pseg->sn);
-                        pseg->rto += rto_ + rto_ / 2;
+                        pseg->rto *= 1.5;
                         ssthresh_ = cwnd_ / 2;
                         cwnd_ = 1;
                         snd_wnd = 1;
@@ -753,8 +732,11 @@ public:
                     ASSERT(n == pseg->len + RUX_SEG_HDR_SIZE + RUX_SEG_HDR_EX_SIZE);
                     p += n;
                     nleft -= n;
-                    already_snd++;
                     needsnd = 0;
+
+                    if (pseg->sn == 0) {
+                        break;
+                    }
                 }
 
                 psh_itr++;
@@ -816,7 +798,6 @@ private:
         rcv_nxt_ = 0;
         snd_nxt_ = 0;
         last_rcv_us_ = 0;
-        total_delivered_ = 0;
     }
 
     
@@ -832,6 +813,8 @@ private:
 
 
     void _update_ack(Segment::ptr pseg, int64_t rtt) {
+        delivered_ += pseg->len;
+
         if (rtt > 0) {
             if (srtt_ == 0) {
                 srtt_ = rtt;
@@ -853,9 +836,6 @@ private:
                 min_rtt_ = rtt;
             }
         }
-
-        delivered_ += pseg->len;
-        total_delivered_ += pseg->len;
     }
 
 
@@ -889,8 +869,6 @@ private:
     AckQue   ack_que_;             // ACK队列
     SndBuf   snd_buf_;             // 发送缓冲区
     RcvBuf   rcv_buf_;             // 接收缓冲区
-
-    uint64_t total_delivered_ = 0;
 }; // class Rux;
 
 

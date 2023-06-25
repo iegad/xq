@@ -200,7 +200,7 @@ public:
     /// @param pfm Frame to be sended
     /// @return 0 on success or -1 on failure.
     int send(Frame::ptr pfm) {
-        return snd_que_.try_enqueue(pfm) ? 0 : -1;
+        return snd_que_.enqueue(pfm) ? 0 : -1;
     }
 
 
@@ -209,7 +209,7 @@ public:
     /// @param n    Size of pfms
     /// @return 0 on success or -1 on failure.
     int send(Frame::ptr* pfms, size_t n) {
-        return snd_que_.try_enqueue_bulk(pfms, n) ? 0 : -1;
+        return snd_que_.enqueue_bulk(pfms, n) ? 0 : -1;
     }
 
 
@@ -439,11 +439,12 @@ private:
                 iovecs[i].iov_len   = pfm->len;
             }
 
-            err = ::sendmmsg(sockfd_, msgs, n, 0);
-            ev_->on_send(this, err < 0 ? errcode : 0, nullptr);
-
-            for (i = 0; i < n; i++) {
-                delete pfms[i];
+            if (n > 0) {
+                err = ::sendmmsg(sockfd_, msgs, n, 0);
+                ev_->on_send(this, err < 0 ? errcode : 0, nullptr);
+                for (i = 0; i < n; i++) {
+                    delete pfms[i];
+                }
             }
         }
     }

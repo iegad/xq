@@ -72,6 +72,8 @@ public:
 
         delete pfm;
     }
+
+
 #else
 
 
@@ -95,6 +97,7 @@ public:
                     }
 
                     Rux::ptr rux = itr->second;
+                    pfm->ex = rux;
                     if (rux->input(pfm)) {
                         break;
                     }
@@ -117,7 +120,7 @@ public:
 #endif
 
 
-    void on_run(UDX* udx) {
+    void on_run(UDX*) {
         running_ = true;
         update_thread_ = std::thread(std::bind(&RuxClient::_update_thread, this));
     }

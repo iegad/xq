@@ -27,6 +27,11 @@ udp_bind(const char* host, const char* svc) {
             continue;
         }
 
+#ifdef _WIN32
+        static const int RCVBUF_SIZE = INT_MAX;
+        ASSERT(!setsockopt(fd, SOL_SOCKET, SO_RCVBUF, (char*)&RCVBUF_SIZE, sizeof(RCVBUF_SIZE)));
+#endif // _WIN32
+
         if (!bind(fd, rp->ai_addr, (int)rp->ai_addrlen)) {
             break;
         }

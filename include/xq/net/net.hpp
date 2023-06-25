@@ -15,7 +15,7 @@ namespace net {
 
 struct Frame;
 typedef moodycamel::BlockingConcurrentQueue<Frame*> FrameQueue;
-constexpr int FRAME_QUE_SIZE = 128 * 1024;
+constexpr int FRAME_QUE_SIZE = 1024 * 1024;
 
 // IPv4 regex
 constexpr char REG_IPV4[] = "^((25[0-5]|(2[0-4]|1\\d|[1-9]|)\\d)\\.?\\b){4}$";
