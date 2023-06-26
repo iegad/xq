@@ -252,7 +252,7 @@ private:
                 n--;
             }
 
-            std::this_thread::yield();
+            std::this_thread::sleep_for(std::chrono::milliseconds(100));
         }
     }
 
@@ -261,14 +261,12 @@ private:
     int       nprocessor_;
     TService* service_;
 
-    std::thread                  upd_thread_;        // rux update 线程
-    std::list<std::thread>       rux_thread_pool_;   // rux 线程
-    
     SpinLock                     sess_lkr_;
     std::vector<Rux*>            sessions_;
     std::unordered_set<uint32_t> active_session_;
 
-    std::thread update_thread_;
+    std::thread              update_thread_;
+    std::list<std::thread>   rux_thread_pool_;   // rux 线程
     std::vector<FrameQueue*> pfm_ques_;
 
 

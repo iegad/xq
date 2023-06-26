@@ -26,7 +26,7 @@ struct Frame {
 
 
     /// @brief Default constructor.
-    explicit Frame() 
+    explicit Frame()
     {}
 
 
@@ -49,6 +49,9 @@ struct Frame {
         ::memcpy(&name, &f.name, namelen);
         ::memcpy(raw, f.raw, len);
     }
+
+
+    ~Frame() {}
 
 
 private:
@@ -321,6 +324,8 @@ private:
                 ev_->on_send(this, err >= 0 ? 0 : errcode, pfm);
                 delete pfm;
             }
+
+            _mm_pause();
         }
     }
 
@@ -446,6 +451,8 @@ private:
                     delete pfms[i];
                 }
             }
+
+            _mm_pause();
         }
     }
 

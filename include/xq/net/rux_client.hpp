@@ -184,19 +184,20 @@ private:
                 itr++;
             }
 #ifdef _WIN32
-            std::this_thread::sleep_for(std::chrono::microseconds(500));
+            std::this_thread::sleep_for(std::chrono::milliseconds(200));
 #else
-            timeout.tv_usec = 500;
+            timeout.tv_usec = 200 * 1000;
             ::select(0, nullptr, nullptr, nullptr, &timeout);
 #endif
         }
     }
 
 
-    bool running_;
-    uint32_t rid_;
-    TService* service_;
+    bool        running_;
+    uint32_t    rid_;
+    TService*   service_;
     std::thread update_thread_;    // update 线程
+
     std::unordered_map<std::string, Rux::ptr> node_map_;      // service node's map
 
 
