@@ -136,6 +136,15 @@ public:
     }
 
 
+    uint64_t xmit() const {
+        uint64_t xmit = 0;
+        for (auto& n : node_map_) {
+            xmit += n.second->xmit();
+        }
+        return xmit;
+    }
+
+
     inline void connect_node(const std::string &endpoint, uint64_t now_us, FrameQueue &snd_que) {
         Rux* rux = new Rux(rid_, now_us, snd_que);
         sockaddr_storage addr;

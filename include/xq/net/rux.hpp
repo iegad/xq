@@ -21,7 +21,7 @@ constexpr int      RUX_CMD_CON         = 0x13;                                  
 constexpr int      RUX_CMD_PSH         = 0x14;                                                                  // CMD: Push
 constexpr int      RUX_RID_MAX         = 100000;                                                                // Maximum rux id
 constexpr int      RUX_RWND_MAX        = 64;                                                                   // Maximum receive window size
-constexpr int      RUX_SWND_MAX        = 4;                                                                    // Maximum send window size
+constexpr int      RUX_SWND_MAX        = 12;                                                                    // Maximum send window size
 constexpr int      RUX_SWND_MIN        = 1;                                                                     // Minimun send window size
 constexpr uint64_t RUX_SN_MAX          = 0x0000FFFFFFFFFFFF;                                                    // Maximum sequnce number
 constexpr uint64_t RUX_US_MAX          = 0x0000FFFFFFFFFFFF;                                                    // Maximum timestamp(us)
@@ -246,6 +246,11 @@ public:
     void set_state(int state) {
         ASSERT(state == 0 || state == -1 || state == 1);
         state_ = state;
+    }
+
+
+    uint64_t xmit() const {
+        return xmit_;
     }
 
 
@@ -488,8 +493,9 @@ public:
         ASSERT(msg && msglen <= RUX_MSG_MAX);
 
         int ret = -1;
-        int len, i, n;
+        
         uint8_t cmd;
+        int len, i, n;
         Segment::ptr seg;
 
         lkr_.lock();
@@ -585,6 +591,7 @@ private:
         ssthresh_ = RUX_SSTHRESH_INIT;
         rmt_wnd_ = RUX_SWND_MIN;
 
+        xmit_ = 0;
         rto_ = RUX_RTO_MIN;
         srtt_ = 0;
         rttval_ = 0;
@@ -770,9 +777,10 @@ private:
             }
             else if (pseg->xmit < RUX_XMIT_MAX) {
                 if (pseg->resend_us <= now_us) {
-                    DLOG("-------------------------------------------------------: SN[%lu], US[%lu] now: %lu, resnd_us: %lu\n", pseg->sn, pseg->us, now_us, pseg->resend_us);
+                    //DLOG("-------------------------------------------------------: SN[%lu], US[%lu] now: %lu, resnd_us: %lu\n", pseg->sn, pseg->us, now_us, pseg->resend_us);
                     pseg->rto *= 1.5;
                     needsnd = 1;
+                    xmit_++;
                 }
                 else if (pseg->fastack >= RUX_FAST_ACK) {
                     DLOG("########################################################\n");
@@ -780,6 +788,7 @@ private:
                     pseg->rto = rto_;
 
                     needsnd = 1;
+                    xmit_++;
                 }
                 else if (pseg->sn == 0) {
                     break;
@@ -830,6 +839,7 @@ private:
     int srtt_   = 0;             // smooth RTT
     int rttval_ = 0;          
     
+    uint64_t xmit_        = 0;
     uint64_t rcv_nxt_     = 0;    // 下一次接收 sn
     uint64_t snd_nxt_     = 0;    // 下一次发送 sn
     uint64_t last_rcv_us_ = 0;    // 最后一次接收时间
