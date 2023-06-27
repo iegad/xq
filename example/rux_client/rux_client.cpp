@@ -16,7 +16,7 @@ public:
         DLOG("recv: %s\n", (char*)msg);
         if (++count == LIMIT) {
              pUdx->stop();
-             DLOG("xmit: %lu\n", rux->xmit());
+             DLOG("xmit: %lu£¬ srtt: %d\n", rux->xmit(), rux->srtt());
         }
     }
 };

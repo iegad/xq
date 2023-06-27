@@ -20,7 +20,7 @@ public:
 
 
     void on_disconnected(xq::net::Rux::ptr rux) {
-        DLOG("%u has disconnected\n", rux->rid());
+        DLOG("%u has disconnected: srtt: %d, xmit: %lu\n", rux->rid(), rux->srtt(), rux->xmit());
     }
 };
 

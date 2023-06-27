@@ -249,6 +249,11 @@ public:
     }
 
 
+    int srtt() const {
+        return srtt_;
+    }
+
+
     uint64_t xmit() const {
         return xmit_;
     }

@@ -269,7 +269,7 @@ public:
 private:
 
 
-#ifdef _WIN32
+#if defined(_WIN32) || defined(__ANDROID__)
 
 
     void _rcv_thread() {
@@ -280,11 +280,11 @@ private:
         ev_->on_run(this);
 
         while (INVALID_SOCKET != sockfd_) {
-            n = ::recvfrom(sockfd_, (char*)pfm->raw, sizeof(pfm->raw), 0, (sockaddr *)&pfm->name, &pfm->namelen);
+            n = ::recvfrom(sockfd_, (char*)pfm->raw, sizeof(pfm->raw), 0, (sockaddr*)&pfm->name, &pfm->namelen);
             if (n == 0) {
                 continue;
             }
-            
+
             if (n < 0) {
                 err = errcode;
             }
@@ -308,7 +308,7 @@ private:
 
 
     void _snd_thread() {
-        constexpr int TIMEOUT  = 200 * 1000; // 200 ms
+        constexpr int TIMEOUT = 200 * 1000; // 200 ms
         constexpr int FRM_SIZE = 128;
 
         int         err;
