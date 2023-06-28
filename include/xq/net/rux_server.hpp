@@ -222,6 +222,9 @@ private:
 
 
     void _update_thread() {
+#ifndef _WIN32
+        timeval timeout = { 0, 0 };
+#endif
         uint64_t now_us;
         size_t n;
         Rux* rux;
@@ -252,7 +255,12 @@ private:
                 n--;
             }
 
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+#ifdef _WIN32
+            std::this_thread::sleep_for(std::chrono::milliseconds(20));
+#else
+            timeout.tv_usec = 20000;
+            ::select(0, nullptr, nullptr, nullptr, &timeout);
+#endif
         }
     }
 
