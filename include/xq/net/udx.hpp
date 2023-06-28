@@ -216,16 +216,22 @@ public:
     }
 
 
+    /// @brief  host/ip string
     const char* host() const {
         return host_.c_str();
     }
 
 
+    /// @brief  svc/port string
     const char* svc() const {
         return svc_.c_str();
     }
 
 
+    /// @brief  Get local address
+    /// @param addr    [out] 
+    /// @param addrlen [in | out]
+    /// @return 
     int local_addr(sockaddr* addr, socklen_t* addrlen) const {
         if (sockfd_ == INVALID_SOCKET) {
             return -1;
@@ -235,6 +241,7 @@ public:
     }
 
 
+    /// @brief Get string of local address
     std::string local_addr_str() const {
         sockaddr_storage addr;
         socklen_t addrlen = sizeof(addr);
@@ -253,6 +260,7 @@ public:
     }
 
 
+    /// @brief Clear the send queue. The item will be deleted.
     void clear_snd_que() {
         int n, i;
         Frame::ptr pfms[128];
@@ -269,70 +277,10 @@ public:
 private:
 
 
-#if defined(_WIN32) || defined(__ANDROID__)
+#if defined(__linux__) && !defined(__ANDROID__)
 
 
-    void _rcv_thread() {
-        Frame::ptr pfm = new Frame;
-        int n, err;
-
-        std::thread snd_thread(std::bind(&Udx::_snd_thread, this));
-        ev_->on_run(this);
-
-        while (INVALID_SOCKET != sockfd_) {
-            n = ::recvfrom(sockfd_, (char*)pfm->raw, sizeof(pfm->raw), 0, (sockaddr*)&pfm->name, &pfm->namelen);
-            if (n == 0) {
-                continue;
-            }
-
-            if (n < 0) {
-                err = errcode;
-            }
-            else if (n > UDP_MTU) {
-                err = -1;
-            }
-            else {
-                err = 0;
-                pfm->len = n;
-                pfm->time_us = sys_time();
-            }
-
-            ev_->on_recv(this, err, pfm);
-            pfm = new Frame;
-        }
-
-        delete pfm;
-        snd_thread.join();
-        ev_->on_stop(this);
-    }
-
-
-    void _snd_thread() {
-        constexpr int TIMEOUT = 200 * 1000; // 200 ms
-        constexpr int FRM_SIZE = 128;
-
-        int         err;
-        size_t      n, i;
-        Frame::ptr  pfm;
-        Frame::ptr  pfms[FRM_SIZE];
-
-        while (sockfd_ != INVALID_SOCKET) {
-            n = snd_que_.wait_dequeue_bulk_timed(pfms, FRM_SIZE, TIMEOUT);
-            for (i = 0; i < n; i++) {
-                pfm = pfms[i];
-                err = ::sendto(sockfd_, (char*)pfm->raw, pfm->len, 0, (sockaddr*)&pfm->name, pfm->namelen);
-                ev_->on_send(this, err >= 0 ? 0 : errcode, pfm);
-                delete pfm;
-            }
-
-            _mm_pause();
-        }
-    }
-
-
-#else
-
-
+    /// @brief Receive thread
     void _rcv_thread() {
         constexpr int       RCVMMSG_SIZE    = 128;
         constexpr timeval   TIMEOUT         = { .tv_sec = 0, .tv_usec = 200 * 1000};
@@ -415,6 +363,7 @@ private:
     }
 
 
+    /// @brief send thread
     void _snd_thread() {
         constexpr int SNDMMSG_SIZE  = 128;
         constexpr int TIMEOUT       = 200 * 1000;
@@ -457,17 +406,80 @@ private:
     }
 
 
+#else
+
+
+    /// @brief Receive thread
+    void _rcv_thread() {
+        Frame::ptr pfm = new Frame;
+        int n, err;
+
+        std::thread snd_thread(std::bind(&Udx::_snd_thread, this));
+        ev_->on_run(this);
+
+        while (INVALID_SOCKET != sockfd_) {
+            n = ::recvfrom(sockfd_, (char*)pfm->raw, sizeof(pfm->raw), 0, (sockaddr*)&pfm->name, &pfm->namelen);
+            if (n == 0) {
+                continue;
+            }
+
+            if (n < 0) {
+                err = errcode;
+            }
+            else if (n > UDP_MTU) {
+                err = -1;
+            }
+            else {
+                err = 0;
+                pfm->len = n;
+                pfm->time_us = sys_time();
+            }
+
+            ev_->on_recv(this, err, pfm);
+            pfm = new Frame;
+        }
+
+        delete pfm;
+        snd_thread.join();
+        ev_->on_stop(this);
+    }
+
+
+    /// @brief send thread
+    void _snd_thread() {
+        constexpr int TIMEOUT = 200 * 1000; // 200 ms
+        constexpr int FRM_SIZE = 128;
+
+        int         err;
+        size_t      n, i;
+        Frame::ptr  pfm;
+        Frame::ptr  pfms[FRM_SIZE];
+
+        while (sockfd_ != INVALID_SOCKET) {
+            n = snd_que_.wait_dequeue_bulk_timed(pfms, FRM_SIZE, TIMEOUT);
+            for (i = 0; i < n; i++) {
+                pfm = pfms[i];
+                err = ::sendto(sockfd_, (char*)pfm->raw, pfm->len, 0, (sockaddr*)&pfm->name, pfm->namelen);
+                ev_->on_send(this, err >= 0 ? 0 : errcode, pfm);
+                delete pfm;
+            }
+
+            _mm_pause();
+        }
+    }
+
+
 #endif // _WIN32
 
 
-    SOCKET  sockfd_;
-    TEvent* ev_;
+    SOCKET  sockfd_;            // udp sockfd
+    TEvent* ev_;                // event
 
-    std::thread rcv_thread_;
-    std::string host_;
-    std::string svc_;
+    std::thread rcv_thread_;    // receive thread handler
+    std::string host_;          // host/ip
+    std::string svc_;           // service/port
 
-    FrameQueue snd_que_;
+    FrameQueue snd_que_;        // send queue
 
 
     Udx(const Udx&) = delete;

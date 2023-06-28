@@ -90,38 +90,7 @@ public:
     }
 
 
-#ifdef _WIN32
-    void on_recv(UDX* udx, int err, Frame::ptr pfm) {
-        static int round_id = 0;
-
-        if (pfm->len < RUX_FRM_EX_SIZE) {
-            return;
-        }
-
-        uint32_t rid = 0;
-
-        u24_decode(pfm->raw, &rid);
-        if (rid == 0 || rid > RUX_RID_MAX) {
-            return;
-        }
-
-        Rux::ptr rux = sessions_[rid - 1];
-        if (rux->state() < 0) {
-            rux->set_state(1);
-            rux->set_qid(round_id++);
-            if (round_id == nprocessor_) {
-                round_id = 0;
-            }
-            sess_lkr_.lock();
-            active_session_.insert(rid);
-            sess_lkr_.unlock();
-            service_->on_connected(rux);
-        }
-
-        pfm->ex = rux;
-        pfm_ques_[rux->qid()]->try_enqueue(pfm);
-    }
-#else
+#if defined(__linux__) && !defined(__ANDROID__)
 
 
     void on_recv(UDX*, Frame::ptr *pfms, int n) {
@@ -173,6 +142,41 @@ public:
             }
             qi.clear();
         }
+    }
+
+
+#else
+
+
+    void on_recv(UDX* udx, int err, Frame::ptr pfm) {
+        static int round_id = 0;
+
+        if (pfm->len < RUX_FRM_EX_SIZE) {
+            return;
+        }
+
+        uint32_t rid = 0;
+
+        u24_decode(pfm->raw, &rid);
+        if (rid == 0 || rid > RUX_RID_MAX) {
+            return;
+        }
+
+        Rux::ptr rux = sessions_[rid - 1];
+        if (rux->state() < 0) {
+            rux->set_state(1);
+            rux->set_qid(round_id++);
+            if (round_id == nprocessor_) {
+                round_id = 0;
+            }
+            sess_lkr_.lock();
+            active_session_.insert(rid);
+            sess_lkr_.unlock();
+            service_->on_connected(rux);
+        }
+
+        pfm->ex = rux;
+        pfm_ques_[rux->qid()]->try_enqueue(pfm);
     }
 
 

@@ -12,24 +12,24 @@ namespace net {
 
 /* rux property */
 constexpr int      RUX_FRM_EX_SIZE     = 10;
-constexpr int      RUX_SEG_HDR_SIZE    = 13;                                                                    // cmd[1] + sn[6] + us[6];
-constexpr int      RUX_SEG_HDR_EX_SIZE = 3;                                                                     // len[2] + frg[1]
-constexpr int      RUX_MSS             = UDP_MTU - RUX_FRM_EX_SIZE - RUX_SEG_HDR_SIZE - RUX_SEG_HDR_EX_SIZE;    // RUX Maximum segment size
-constexpr int      RUX_CMD_ACK         = 0x11;                                                                  // CMD: ACK
-constexpr int      RUX_CMD_PIN         = 0x12;                                                                  // CMD: Heart's beat: Ping
-constexpr int      RUX_CMD_CON         = 0x13;                                                                  // CMD: Connection
-constexpr int      RUX_CMD_PSH         = 0x14;                                                                  // CMD: Push
-constexpr int      RUX_RID_MAX         = 100000;                                                                // Maximum rux id
-constexpr int      RUX_RWND_MAX        = 64;                                                                   // Maximum receive window size
-constexpr int      RUX_SWND_MAX        = 2;                                                                    // Maximum send window size
-constexpr int      RUX_SWND_MIN        = 1;                                                                     // Minimun send window size
-constexpr uint64_t RUX_SN_MAX          = 0x0000FFFFFFFFFFFF;                                                    // Maximum sequnce number
-constexpr uint64_t RUX_US_MAX          = 0x0000FFFFFFFFFFFF;                                                    // Maximum timestamp(us)
-constexpr int      RUX_FRM_MAX         = 92;                                                                    // Maximum fragment size
-constexpr int      RUX_MSG_MAX         = RUX_FRM_MAX * RUX_MSS;                                                 // Maximum signle massage's length
-constexpr int      RUX_RTO_MIN         = 500 * 1000;                                                            // RTO MIN 200ms
-constexpr int      RUX_RTO_MAX         = 1000 * 1000 * 30;                                                      // RTO MAX 30s
-constexpr int      RUX_TIMEOUT         = RUX_RTO_MAX * 2 * 10;                                                  // TIMEOUT: 10 min
+constexpr int      RUX_SEG_HDR_SIZE    = 13;                                                                 // cmd[1] + sn[6] + us[6];
+constexpr int      RUX_SEG_HDR_EX_SIZE = 3;                                                                  // len[2] + frg[1]
+constexpr int      RUX_MSS             = UDP_MTU - RUX_FRM_EX_SIZE - RUX_SEG_HDR_SIZE - RUX_SEG_HDR_EX_SIZE; // RUX Maximum segment size
+constexpr int      RUX_CMD_ACK         = 0x11;                                                               // CMD: ACK
+constexpr int      RUX_CMD_PIN         = 0x12;                                                               // CMD: Heart's beat: Ping
+constexpr int      RUX_CMD_CON         = 0x13;                                                               // CMD: Connection
+constexpr int      RUX_CMD_PSH         = 0x14;                                                               // CMD: Push
+constexpr int      RUX_RID_MAX         = 100000;                                                             // Maximum rux id
+constexpr int      RUX_RWND_MAX        = 64;                                                                 // Maximum receive window size
+constexpr int      RUX_SWND_MAX        = 2;                                                                  // Maximum send window size
+constexpr int      RUX_SWND_MIN        = 1;                                                                  // Minimun send window size
+constexpr uint64_t RUX_SN_MAX          = 0x0000FFFFFFFFFFFF;                                                 // Maximum sequnce number
+constexpr uint64_t RUX_US_MAX          = 0x0000FFFFFFFFFFFF;                                                 // Maximum timestamp(us)
+constexpr int      RUX_FRM_MAX         = 92;                                                                 // Maximum fragment size
+constexpr int      RUX_MSG_MAX         = RUX_FRM_MAX * RUX_MSS;                                              // Maximum signle massage's length
+constexpr int      RUX_RTO_MIN         = 500 * 1000;                                                         // RTO MIN 200ms
+constexpr int      RUX_RTO_MAX         = 1000 * 1000 * 30;                                                   // RTO MAX 30s
+constexpr int      RUX_TIMEOUT         = RUX_RTO_MAX * 2 * 10;                                               // TIMEOUT: 10 min
 constexpr int      RUX_FAST_ACK        = 3;
 constexpr int      RUX_XMIT_MAX        = 20;
 constexpr int      RUX_SSTHRESH_INIT   = 2;
@@ -41,6 +41,13 @@ public:
     typedef SpinLock LockType;
 
 
+    /// @brief Decode rux header
+    /// @param p       raw data
+    /// @param datalen raw data's length
+    /// @param rid     [out] rux id
+    /// @param wnd     [out] remote window
+    /// @param una     [out] remote receive una
+    /// @return        return header' size on success or -1 on failure.
     static int decode_hdr(const uint8_t* p, int datalen, uint32_t* rid, uint8_t* wnd, uint64_t* una) {
         ASSERT(p && datalen >= RUX_FRM_EX_SIZE);
 
@@ -64,6 +71,7 @@ public:
     }
 
 
+    /// @brief RUX Segment
     struct Segment {
         typedef Segment* ptr;
 
@@ -77,9 +85,9 @@ public:
 
         /* META */
         uint8_t  fastack   = 0;       //
-        uint16_t xmit      = 0;       //
+        uint16_t xmit      = 0;       // resend times
         uint32_t rto       = 0;       //
-        uint64_t resend_us = 0;       //
+        uint64_t resend_us = 0;       // next resend unix timestamp(us)
 
 
         Segment()
@@ -97,6 +105,10 @@ public:
         }
 
 
+        /// @brief Decode segment from buffer
+        /// @param buf 
+        /// @param buflen 
+        /// @return decode size on success or -1 on failure
         int decode(const uint8_t* buf, int buflen) {
             int ret = -1;
 
@@ -152,6 +164,10 @@ public:
         }
 
 
+        /// @brief Encode segment into buffer
+        /// @param buf     [in | out]
+        /// @param buflen 
+        /// @return encode size on success or -1 on failure
         int encode(uint8_t* buf, int buflen) {
             ASSERT(buf && buflen > RUX_SEG_HDR_SIZE + RUX_FRM_EX_SIZE);
 
@@ -832,28 +848,27 @@ private:
         return npfms - nsave;
     }
 
-    uint32_t    rid_;       // rux id
-    uint64_t    base_us_;   // 启始时间(微秒)
-    FrameQueue& snd_que_;   // io output queue 引用
-
-    uint8_t  cwnd_      = RUX_SWND_MIN;
-    uint8_t  ssthresh_  = RUX_SSTHRESH_INIT;
-    uint8_t  rmt_wnd_   = RUX_SWND_MIN;
-    
-    int rto_    = RUX_RTO_MIN;   // RTO
-    int srtt_   = 0;             // smooth RTT
-    int rttval_ = 0;          
-    
-    uint64_t xmit_        = 0;
-    uint64_t rcv_nxt_     = 0;    // 下一次接收 sn
-    uint64_t snd_nxt_     = 0;    // 下一次发送 sn
-    uint64_t last_rcv_us_ = 0;    // 最后一次接收时间
-
-    socklen_t        addrlen_ = sizeof(sockaddr_storage);
-    sockaddr_storage addr_    = {};
-
-    std::atomic<int> state_ = -1;
-    std::atomic<int> qid_   = -1;  // rux_que index
+    /* rux basic */
+    uint32_t         rid_;                              // rux id
+    uint64_t         base_us_;                          // 启始时间(微秒)
+    uint64_t         xmit_        = 0;
+    uint64_t         rcv_nxt_     = 0;                  // 下一次接收 sn
+    uint64_t         snd_nxt_     = 0;                  // 下一次发送 sn
+    uint64_t         last_rcv_us_ = 0;                  // 最后一次接收时间
+    /* congestion control */
+    uint8_t          cwnd_        = RUX_SWND_MIN;
+    uint8_t          ssthresh_    = RUX_SSTHRESH_INIT;
+    uint8_t          rmt_wnd_     = RUX_SWND_MIN;
+    /* RTO SRTT */
+    int              rto_         = RUX_RTO_MIN;        // RTO
+    int              srtt_        = 0;                  // smooth RTT
+    int              rttval_      = 0;          
+    /* IO */
+    socklen_t        addrlen_     = sizeof(sockaddr_storage);
+    sockaddr_storage addr_        = {};
+    FrameQueue&      snd_que_;                          // io output queue 引用
+    std::atomic<int> state_       = -1;
+    std::atomic<int> qid_         = -1;  // rux_que index
 
     LockType lkr_;
     AckQue   ack_que_;             // ACK队列
