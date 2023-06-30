@@ -11,28 +11,28 @@ namespace net {
 
 
 /* rux property */
-constexpr int      RUX_FRM_EX_SIZE     = 10;
-constexpr int      RUX_SEG_HDR_SIZE    = 13;                                                                 // cmd[1] + sn[6] + us[6];
-constexpr int      RUX_SEG_HDR_EX_SIZE = 3;                                                                  // len[2] + frg[1]
-constexpr int      RUX_MSS             = UDP_MTU - RUX_FRM_EX_SIZE - RUX_SEG_HDR_SIZE - RUX_SEG_HDR_EX_SIZE; // RUX Maximum segment size
-constexpr int      RUX_CMD_ACK         = 0x11;                                                               // CMD: ACK
-constexpr int      RUX_CMD_PIN         = 0x12;                                                               // CMD: Heart's beat: Ping
-constexpr int      RUX_CMD_CON         = 0x13;                                                               // CMD: Connection
-constexpr int      RUX_CMD_PSH         = 0x14;                                                               // CMD: Push
-constexpr int      RUX_RID_MAX         = 100000;                                                             // Maximum rux id
-constexpr int      RUX_RWND_MAX        = 64;                                                                 // Maximum receive window size
-constexpr int      RUX_SWND_MAX        = 2;                                                                  // Maximum send window size
-constexpr int      RUX_SWND_MIN        = 1;                                                                  // Minimun send window size
-constexpr uint64_t RUX_SN_MAX          = 0x0000FFFFFFFFFFFF;                                                 // Maximum sequnce number
-constexpr uint64_t RUX_US_MAX          = 0x0000FFFFFFFFFFFF;                                                 // Maximum timestamp(us)
-constexpr int      RUX_FRM_MAX         = 92;                                                                 // Maximum fragment size
-constexpr int      RUX_MSG_MAX         = RUX_FRM_MAX * RUX_MSS;                                              // Maximum signle massage's length
-constexpr int      RUX_RTO_MIN         = 500 * 1000;                                                         // RTO MIN 200ms
-constexpr int      RUX_RTO_MAX         = 1000 * 1000 * 30;                                                   // RTO MAX 30s
-constexpr int      RUX_TIMEOUT         = RUX_RTO_MAX * 2 * 10;                                               // TIMEOUT: 10 min
-constexpr int      RUX_FAST_ACK        = 3;
-constexpr int      RUX_XMIT_MAX        = 20;
-constexpr int      RUX_SSTHRESH_INIT   = 2;
+constexpr int     RUX_FRM_EX_SIZE     = 10;
+constexpr int     RUX_SEG_HDR_SIZE    = 13;                                                                 // cmd[1] + sn[6] + us[6];
+constexpr int     RUX_SEG_HDR_EX_SIZE = 3;                                                                  // len[2] + frg[1]
+constexpr int     RUX_MSS             = UDP_MTU - RUX_FRM_EX_SIZE - RUX_SEG_HDR_SIZE - RUX_SEG_HDR_EX_SIZE; // RUX Maximum segment size
+constexpr int     RUX_CMD_ACK         = 0x11;                                                               // CMD: ACK
+constexpr int     RUX_CMD_PIN         = 0x12;                                                               // CMD: Heart's beat: Ping
+constexpr int     RUX_CMD_CON         = 0x13;                                                               // CMD: Connection
+constexpr int     RUX_CMD_PSH         = 0x14;                                                               // CMD: Push
+constexpr int     RUX_RID_MAX         = 100000;                                                             // Maximum rux id
+constexpr int     RUX_RWND_MAX        = 64;                                                                 // Maximum receive window size
+constexpr int     RUX_SWND_MAX        = 3;                                                                  // Maximum send window size
+constexpr int     RUX_SWND_MIN        = 1;                                                                  // Minimun send window size
+constexpr int64_t RUX_SN_MAX          = 0x0000FFFFFFFFFFFF;                                                 // Maximum sequnce number
+constexpr int64_t RUX_US_MAX          = 0x0000FFFFFFFFFFFF;                                                 // Maximum timestamp(us)
+constexpr int     RUX_FRM_MAX         = 92;                                                                 // Maximum fragment size
+constexpr int     RUX_MSG_MAX         = RUX_FRM_MAX * RUX_MSS;                                              // Maximum signle massage's length
+constexpr int64_t RUX_RTO_MIN         = 500 * 1000;                                                         // RTO MIN 200ms
+constexpr int64_t RUX_RTO_MAX         = 1000 * 1000 * 30;                                                   // RTO MAX 30s
+constexpr int     RUX_TIMEOUT         = RUX_RTO_MAX * 2 * 10;                                               // TIMEOUT: 10 min
+constexpr int     RUX_FAST_ACK        = 3;
+constexpr int     RUX_XMIT_MAX        = 20;
+constexpr int     RUX_SSTHRESH_INIT   = 2;
 
 
 class Rux {
@@ -48,7 +48,7 @@ public:
     /// @param wnd     [out] remote window
     /// @param una     [out] remote receive una
     /// @return        return header' size on success or -1 on failure.
-    static int decode_hdr(const uint8_t* p, int datalen, uint32_t* rid, uint8_t* wnd, uint64_t* una) {
+    static int decode_hdr(const uint8_t* p, int datalen, uint32_t* rid, uint8_t* wnd, int64_t* una) {
         ASSERT(p && datalen >= RUX_FRM_EX_SIZE);
 
         const uint8_t* ps = p;
@@ -62,7 +62,7 @@ public:
             return -1;
         }
 
-        p += u48_decode(p, una);
+        p += s48_decode(p, una);
         if (*una > RUX_SN_MAX) {
             return -1;
         }
@@ -75,26 +75,33 @@ public:
     struct Segment {
         typedef Segment* ptr;
 
-        uint8_t  cmd = 0;             // command
-        uint64_t sn  = 0;             // sequence number
-        uint64_t us  = 0;             // timestamp(us)
+        uint8_t cmd = 0;             // command
+        int64_t sn  = 0;             // sequence number
+        int64_t us  = 0;             // timestamp(us)
 
-        uint16_t len = 0;             // segment's length
-        uint8_t  frg = 0;             // fragment
-        uint8_t  data[RUX_MSS] = {};  // data: 1424
+        int16_t len = 0;             // segment's length
+        uint8_t frg = 0;             // fragment
+        uint8_t data[RUX_MSS] = {};  // data: 1424
 
         /* META */
-        uint8_t  fastack   = 0;       //
-        uint16_t xmit      = 0;       // resend times
-        uint32_t rto       = 0;       //
-        uint64_t resend_us = 0;       // next resend unix timestamp(us)
+        uint8_t fastack   = 0;       //
+        int16_t xmit      = 0;       // resend times
+        int32_t rto       = 0;       //
+        int64_t resend_us = 0;       // next resend unix timestamp(us)
 
 
+        /// @brief Default constructor
         Segment()
         {}
 
 
-        Segment(uint8_t cmd, uint64_t sn, uint16_t len, uint8_t frg, const uint8_t *data)
+        /// @brief Constructor
+        /// @param cmd RUX CMD
+        /// @param sn  RUX SN
+        /// @param len RUX Data's length
+        /// @param frg RUX Fregment
+        /// @param data data
+        Segment(uint8_t cmd, int64_t sn, int16_t len, uint8_t frg, const uint8_t *data)
           : cmd(cmd)
           , sn(sn)
           , len(len)
@@ -124,12 +131,12 @@ public:
                     break;
                 }
 
-                p += u48_decode(p, &sn);
+                p += s48_decode(p, &sn);
                 if (sn > RUX_SN_MAX) {
                     break;
                 }
 
-                p += u48_decode(p, &us);
+                p += s48_decode(p, &us);
                 if (us > RUX_US_MAX) {
                     break;
                 }
@@ -139,7 +146,7 @@ public:
                         break;
                     }
 
-                    p += u16_decode(p, &len);
+                    p += s16_decode(p, &len);
                     if (len > RUX_MSS) {
                         break;
                     }
@@ -185,10 +192,10 @@ public:
 
                 uint8_t* p = buf;
                 p += u8_encode(cmd, p);
-                p += u48_encode(sn, p);
-                p += u48_encode(us, p);
+                p += s48_encode(sn, p);
+                p += s48_encode(us, p);
                 if (len > 0) {
-                    p += u16_encode(len, p);
+                    p += s16_encode(len, p);
                     p += u8_encode(frg, p);
                     ::memcpy(p, data, len);
                     p += len;
@@ -202,12 +209,16 @@ public:
     }; // struct Segment;
 
 
-    typedef std::map<uint64_t, Segment::ptr> RcvBuf;
-    typedef std::map<uint64_t, Segment::ptr> SndBuf;
-    typedef std::map<uint64_t, uint64_t>     AckQue;
+    typedef std::map<int64_t, Segment::ptr> RcvBuf;
+    typedef std::map<int64_t, Segment::ptr> SndBuf;
+    typedef std::map<int64_t, int64_t>      AckQue;
 
 
-    Rux(uint32_t rid, uint64_t now_us, FrameQueue& snd_que)
+    /// @brief Constructor
+    /// @param rid RUX ID
+    /// @param now_us current unix timestamp(us)
+    /// @param snd_que Reference of FrameQueue for send.
+    Rux(uint32_t rid, int64_t now_us, FrameQueue& snd_que)
         : rid_(rid)
         , base_us_(now_us)
         , snd_que_(snd_que) {
@@ -232,6 +243,7 @@ public:
     }
 
 
+    /// @brief set remote address
     void set_rmt_addr(const sockaddr_storage* addr, socklen_t addrlen) {
         lkr_.lock();
         _set_remote_addr(addr, addrlen);
@@ -239,55 +251,70 @@ public:
     }
 
 
+    /// @brief rux worker queue
     int qid() const {
         return qid_;
     }
 
 
+    /// @brief set worker queue
     void set_qid(int qid) {
         qid_ = qid;
     }
 
 
+    /// @brief rux id 
     uint32_t rid() const {
         return rid_;
     }
 
 
+    /// @brief State of rux.
+    /// @note -1: invalid state. disconnected.
+    ///        1: active  state  connected
+    ///        0: init    state  init but do not send RUX_CMD_CON.
     int state() const {
         return state_;
     }
 
 
+    /// @brief Set state
+    /// @note  Developer(Coder) should not call this function.
     void set_state(int state) {
         ASSERT(state == 0 || state == -1 || state == 1);
         state_ = state;
     }
 
 
-    int srtt() const {
+    /// @brief Smooth RTT
+    int64_t srtt() const {
         return srtt_;
     }
 
 
+    /// @brief  Retransmition
     uint64_t xmit() const {
         return xmit_;
     }
 
 
+    /// @brief Rux input will process raw frame
+    /// @param pfm Raw frame
+    /// @return 0 on success or -1 on failure.
     int input(Frame::ptr pfm) {
         ASSERT(pfm && pfm->ex == this);
 
-        int ret         = -1;
-        int err         = 0;
-        int datalen     = pfm->len;
-        uint8_t* p      = pfm->raw;
-        uint64_t now_us = pfm->time_us - base_us_;
+        int ret        = -1;
+        int err        = 0;
+
+        int datalen    = pfm->len;
+        uint8_t* p     = pfm->raw;
+        int64_t now_us = pfm->time_us - base_us_;
 
         // Step 1: Decode rux header
         uint32_t rid = 0;
         uint8_t  rmt_wnd = 0;
-        uint64_t una = 0;
+        int64_t  una = 0;
 
         int n = decode_hdr(p, datalen, &rid, &rmt_wnd, &una);
         if (n < 0) {
@@ -297,7 +324,7 @@ public:
         p += n;
         datalen -= n;
 
-        uint64_t sn, us;
+        int64_t sn, us;
         Segment::ptr pseg;
 
         lkr_.lock();
@@ -339,16 +366,20 @@ public:
                         break;
                     }
 
-                    auto itr = snd_buf_.find(sn);
-                    if (snd_buf_.end() != itr) {
-                        int64_t rtt = int64_t(now_us - us + 1);
-                        delete itr->second;
-                        snd_buf_.erase(itr);
+                    auto ack_itr = snd_buf_.find(sn);
+                    if (snd_buf_.end() != ack_itr) {
+                        int64_t rtt = now_us - us + 1;
+                        for (auto itr = snd_buf_.begin(); itr != ack_itr; ++itr) {
+                            itr->second->fastack++;
+                        }
+
+                        delete ack_itr->second;
+                        snd_buf_.erase(ack_itr);
 
                         if (rtt > 0) {
                             if (srtt_ == 0) {
                                 srtt_ = rtt;
-                                rttval_ = rtt / 2;
+                                rttval_ = rtt >> 1;
                             }
                             else {
                                 int64_t delta = rtt - srtt_;
@@ -356,11 +387,11 @@ public:
                                     delta = -delta;
                                 }
 
-                                rttval_ = int(3 * rttval_ + delta) / 4;
-                                srtt_ = int(7 * srtt_ + rtt) / 8;
+                                rttval_ = (3 * rttval_ + delta) >> 2;
+                                srtt_ = (7 * srtt_ + rtt) >> 3;
                             }
-
-                            rto_ = MID(RUX_RTO_MIN, srtt_ + (rttval_ * 4), RUX_RTO_MAX);
+                            DLOG("[INPUT ACK] rtt: %ld, srtt: %ld\n", rtt, srtt_);
+                            rto_ = MID(RUX_RTO_MIN, srtt_ + rttval_ * 4, RUX_RTO_MAX);
                         }
                     }
 
@@ -460,18 +491,24 @@ public:
     }
 
 
+    /// @brief Receive data into msg
+    /// @param msg [out]
+    /// @return The number of message on success or -1 on failure.
     int recv(uint8_t* msg) {
         int      n  = 0;
         int      ok = 0;
         uint8_t* p  = msg;
 
-        int i;
-        uint16_t len;
+        int     i;
+        int16_t len;
+
+        Segment::ptr pseg;
+        Segment::ptr psegs[RUX_FRM_MAX];
+
         RcvBuf::iterator itr;
-        Segment::ptr psegs[RUX_FRM_MAX], pseg;
 
         lkr_.lock();
-        uint64_t nxt = rcv_nxt_;
+        int64_t nxt = rcv_nxt_;
         itr = rcv_buf_.begin();
 
         while (itr != rcv_buf_.end()) {
@@ -510,13 +547,15 @@ public:
     }
 
 
+    /// @brief send data
+    /// @param msg 
+    /// @param msglen 
+    /// @return 0 on success or -1 on failure
     int send(const uint8_t* msg, int msglen) {
         ASSERT(msg && msglen <= RUX_MSG_MAX);
 
-        int ret = -1;
-        
-        uint8_t cmd;
-        int len, i, n;
+        uint8_t cmd;        
+        int len, i, n, ret = -1;
         Segment::ptr seg;
 
         lkr_.lock();
@@ -550,7 +589,10 @@ public:
     }
 
 
-    int output(uint64_t now_us) {
+    /// @brief Pacing to update
+    /// @param now_us current unix timestamp(us)
+    /// @return 0 on success or -1 on failure.
+    int update(int64_t now_us) {
         int n   = 0;
         int ret = -1;
 
@@ -592,7 +634,7 @@ public:
 
 
 private:
-    void _reset(uint64_t now_us) {
+    void _reset(int64_t now_us) {
         ack_que_.clear();
 
         while (rcv_buf_.size()) {
@@ -607,18 +649,16 @@ private:
             snd_buf_.erase(itr);
         }
         
-        base_us_ = now_us;
-        cwnd_ = RUX_SWND_MIN;
-        ssthresh_ = RUX_SSTHRESH_INIT;
-        rmt_wnd_ = RUX_SWND_MIN;
-
-        xmit_ = 0;
-        rto_ = RUX_RTO_MIN;
-        srtt_ = 0;
-        rttval_ = 0;
-
-        rcv_nxt_ = 0;
-        snd_nxt_ = 0;
+        base_us_     = now_us;
+        cwnd_        = RUX_SWND_MIN;
+        ssthresh_    = RUX_SSTHRESH_INIT;
+        rmt_wnd_     = RUX_SWND_MIN;
+        xmit_        = 0;
+        rto_         = RUX_RTO_MIN;
+        srtt_        = 0;
+        rttval_      = 0;
+        rcv_nxt_     = 0;
+        snd_nxt_     = 0;
         last_rcv_us_ = 0;
     }
 
@@ -637,9 +677,10 @@ private:
     int _flush_ack(Frame::ptr *pfms, int npfms) {
         npfms = 0;
 
-        uint8_t  wnd;
-        int      nleft = UDP_MTU;
-        uint64_t una   = rcv_nxt_;
+        uint8_t wnd;
+        int     nleft = UDP_MTU;
+        int64_t una   = rcv_nxt_;
+        size_t  nrcv;
 
         Frame::ptr pfm = new Frame(&addr_, addrlen_);
         ASSERT(pfm);
@@ -652,8 +693,11 @@ private:
         p += n;
         nleft -= n;
 
-        wnd = RUX_RWND_MAX - (int)rcv_buf_.size();
-        if (wnd <= 0) {
+        nrcv = rcv_buf_.size();
+        if (RUX_RWND_MAX > nrcv) {
+            wnd = uint8_t(RUX_RWND_MAX - (int)nrcv);
+        }
+        else {
             wnd = 1;
         }
 
@@ -661,7 +705,7 @@ private:
         p += n;
         nleft -= n;
 
-        n = u48_encode(una, p);
+        n = s48_encode(una, p);
         p += n;
         nleft -= n;
 
@@ -672,7 +716,7 @@ private:
 
         while (ack_que_.size()) {
             if (pfm && nleft < RUX_SEG_HDR_SIZE + RUX_FRM_EX_SIZE) {
-                pfm->len = uint16_t(p - pfm->raw);
+                pfm->len = int16_t(p - pfm->raw);
 
                 pfms[npfms++] = pfm = new Frame(&addr_, addrlen_);
                 ASSERT(pfm);
@@ -683,16 +727,19 @@ private:
                 p += n;
                 nleft -= n;
 
-                wnd = RUX_RWND_MAX - (int)rcv_buf_.size();
-                if (wnd <= 0) {
+                nrcv = rcv_buf_.size();
+                if (RUX_RWND_MAX > nrcv) {
+                    wnd = uint8_t(RUX_RWND_MAX - (int)nrcv);
+                }
+                else {
                     wnd = 1;
                 }
 
-                n = u8_encode((uint8_t)wnd, p);
+                n = u8_encode(wnd, p);
                 p += n;
                 nleft -= n;
 
-                n = u48_encode(una, p);
+                n = s48_encode(una, p);
                 p += n;
                 nleft -= n;
             }
@@ -714,21 +761,23 @@ private:
     }
 
 
-    int _flush_psh(uint64_t now_us, Frame::ptr *pfms, int npfms) {
+    int _flush_psh(int64_t now_us, Frame::ptr *pfms, int npfms) {
         int snd_wnd = MIN3(rmt_wnd_, cwnd_, (int)snd_buf_.size());
         if (snd_wnd == 0) {
             return 0;
         }
 
-        int      nleft;
-        int      nsave   = npfms;
-        int      needsnd = 0;
-        uint64_t una     = rcv_nxt_;
+        int     nleft;
+        int     nsave   = npfms;
+        int     needsnd = 0;
+        int64_t una     = rcv_nxt_;
 
         int          n, i;
         uint8_t      wnd;
-        Segment::ptr pseg;
+        size_t       nrcv;
         Frame::ptr   pfm;
+        Segment::ptr pseg;
+        
         uint8_t* p = nullptr;
 
         if (nsave > 0) {
@@ -746,9 +795,9 @@ private:
             p += n;
             nleft -= n;
 
-            
-            if (RUX_RWND_MAX > rcv_buf_.size()) {
-                wnd = RUX_RWND_MAX - int(rcv_buf_.size());
+            nrcv = rcv_buf_.size();
+            if (RUX_RWND_MAX > nrcv) {
+                wnd = uint8_t(RUX_RWND_MAX - (int)nrcv);
             }
             else {
                 wnd = 1;
@@ -758,7 +807,7 @@ private:
             p += n;
             nleft -= n;
 
-            n = u48_encode(una, p);
+            n = s48_encode(una, p);
             p += n;
             nleft -= n;
         }
@@ -768,7 +817,7 @@ private:
             pseg = itr->second;
 
             if (nleft < RUX_SEG_HDR_SIZE + RUX_SEG_HDR_EX_SIZE + pseg->len) {
-                pfm->len = uint16_t(p - pfm->raw);
+                pfm->len = int16_t(p - pfm->raw);
                 pfms[npfms++] = pfm = new Frame(&addr_, addrlen_);
                 ASSERT(pfm);
                 p = pfm->raw;
@@ -778,8 +827,11 @@ private:
                 p += n;
                 nleft -= n;
 
-                wnd = RUX_RWND_MAX - (int)rcv_buf_.size();
-                if (wnd <= 0) {
+                nrcv = rcv_buf_.size();
+                if (RUX_RWND_MAX > nrcv) {
+                    wnd = uint8_t(RUX_RWND_MAX - (int)nrcv);
+                }
+                else {
                     wnd = 1;
                 }
 
@@ -787,7 +839,7 @@ private:
                 p += n;
                 nleft -= n;
 
-                n = u48_encode(una, p);
+                n = s48_encode(una, p);
                 p += n;
                 nleft -= n;
             }
@@ -798,13 +850,14 @@ private:
             }
             else if (pseg->xmit < RUX_XMIT_MAX) {
                 if (pseg->resend_us <= now_us) {
-                    //DLOG("-------------------------------------------------------: SN[%lu], US[%lu] now: %lu, resnd_us: %lu\n", pseg->sn, pseg->us, now_us, pseg->resend_us);
+                    DLOG("----- SN[%lu] resend\n", pseg->sn);
                     pseg->rto *= 1.5;
                     needsnd = 1;
                     xmit_++;
                 }
                 else if (pseg->fastack >= RUX_FAST_ACK) {
-                    DLOG("########################################################\n");
+                    DLOG("+++++ SN[%lu] fastack\n", pseg->sn);
+
                     pseg->fastack = 0;
                     pseg->rto = rto_;
 
@@ -816,7 +869,6 @@ private:
                 }
             }
             else {
-                DLOG("state changed, rux xmit limit\n");
                 state_ = -1;
 
                 if (pfm != pfms[npfms - 1]) {
@@ -850,19 +902,19 @@ private:
 
     /* rux basic */
     uint32_t         rid_;                              // rux id
-    uint64_t         base_us_;                          // 启始时间(微秒)
+    int64_t          base_us_;                          // 启始时间(微秒)
+    int64_t          rcv_nxt_     = 0;                  // 下一次接收 sn
+    int64_t          snd_nxt_     = 0;                  // 下一次发送 sn
+    int64_t          last_rcv_us_ = 0;                  // 最后一次接收时间
     uint64_t         xmit_        = 0;
-    uint64_t         rcv_nxt_     = 0;                  // 下一次接收 sn
-    uint64_t         snd_nxt_     = 0;                  // 下一次发送 sn
-    uint64_t         last_rcv_us_ = 0;                  // 最后一次接收时间
     /* congestion control */
     uint8_t          cwnd_        = RUX_SWND_MIN;
     uint8_t          ssthresh_    = RUX_SSTHRESH_INIT;
     uint8_t          rmt_wnd_     = RUX_SWND_MIN;
     /* RTO SRTT */
-    int              rto_         = RUX_RTO_MIN;        // RTO
-    int              srtt_        = 0;                  // smooth RTT
-    int              rttval_      = 0;          
+    int64_t          rto_         = RUX_RTO_MIN;        // RTO
+    int64_t          srtt_        = 0;                  // smooth RTT
+    int64_t          rttval_      = 0;          
     /* IO */
     socklen_t        addrlen_     = sizeof(sockaddr_storage);
     sockaddr_storage addr_        = {};

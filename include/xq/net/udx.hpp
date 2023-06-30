@@ -323,9 +323,10 @@ private:
             }
             else if (n < 0) {
                 err = errcode;
-                if (err == EAGAIN || err == EINTR) {
-                    continue;
+                if (err != EAGAIN && err != EINTR) {
+                    // TODO: error
                 }
+                continue;
             }
             else {
                 err = 0;

@@ -246,7 +246,7 @@ private:
 
             while (n > 0) {
                 rux = sessions_[*itr - 1];
-                if (rux->output(now_us) < 0) {
+                if (rux->update(now_us) < 0) {
                     sess_lkr_.lock();
                     active_session_.erase(itr++);
                     sess_lkr_.unlock();

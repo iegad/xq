@@ -190,7 +190,7 @@ private:
             itr = node_map_.begin();
             while (itr != node_map_.end()) {
                 rux = itr->second;
-                if (rux->output(now_us) < 0) {
+                if (rux->update(now_us) < 0) {
                     rux->set_state(1);
                 }
                 itr++;
