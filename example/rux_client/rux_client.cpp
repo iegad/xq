@@ -1,7 +1,7 @@
 #include "xq/net/rux_client.hpp"
 
 
-#define LIMIT (10)
+#define LIMIT (10000)
 
 
 class EchoService;

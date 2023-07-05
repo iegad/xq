@@ -196,9 +196,9 @@ private:
                 itr++;
             }
 #ifdef _WIN32
-            std::this_thread::sleep_for(std::chrono::milliseconds(25));
+            std::this_thread::sleep_for(std::chrono::milliseconds(15));
 #else
-            timeout.tv_usec = 25 * 1000;
+            timeout.tv_usec = 15000;
             ::select(0, nullptr, nullptr, nullptr, &timeout);
 #endif
         }

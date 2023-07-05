@@ -15,7 +15,7 @@ namespace net {
 struct Frame {
     typedef Frame* ptr;
 
-    uint16_t         len              = 0;                          // raw data's length
+    int16_t          len              = 0;                          // raw data's length
     socklen_t        namelen          = sizeof(sockaddr_storage);   // remote sockaddr's length
     sockaddr_storage name             = {};                         // remote sockaddr
     uint8_t          raw[UDP_MTU + 1] = {};                         // raw data
