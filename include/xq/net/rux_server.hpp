@@ -109,7 +109,7 @@ public:
 
         for (int i = 0; i < n; i++) {
             pfm = pfms[i];
-            if (pfm->len > UDP_MTU || pfm->len < RUX_FRM_EX_SIZE) {
+            if (pfm->rawlen > UDX_MTU || pfm->rawlen < RUX_FRM_EX_SIZE) {
                 continue;
             }
 
@@ -131,7 +131,7 @@ public:
                 service_->on_connected(rux);
             }
 
-            pfm->ex = rux;
+            pfm->user_ex = rux;
             q_pfms[rux->qid()].emplace_back(pfm);
         }
 
@@ -151,7 +151,7 @@ public:
     void on_recv(UDX* udx, int err, Frame::ptr pfm) {
         static int round_id = 0;
 
-        if (pfm->len < RUX_FRM_EX_SIZE) {
+        if (pfm->rawlen < RUX_FRM_EX_SIZE) {
             return;
         }
 
@@ -175,7 +175,7 @@ public:
             service_->on_connected(rux);
         }
 
-        pfm->ex = rux;
+        pfm->user_ex = rux;
         pfm_ques_[rux->qid()]->try_enqueue(pfm);
     }
 
@@ -205,7 +205,7 @@ private:
             npfms = que->wait_dequeue_bulk_timed(pfms, FRAME_SIZE, TIMEOUT);
             for (i = 0; i < npfms; i++) {
                 pfm = pfms[i];
-                rux = (Rux::ptr)pfm->ex;
+                rux = (Rux::ptr)pfm->user_ex;
                 ASSERT(rux);
                 if (rux->input(pfm) == 0) {
                     do {

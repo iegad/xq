@@ -15,14 +15,14 @@ namespace net {
 struct Frame {
     typedef Frame* ptr;
 
-    int16_t          len              = 0;                          // raw data's length
+    int16_t          rawlen           = 0;                          // raw data's length
     socklen_t        namelen          = sizeof(sockaddr_storage);   // remote sockaddr's length
     sockaddr_storage name             = {};                         // remote sockaddr
-    uint8_t          raw[UDP_MTU + 1] = {};                         // raw data
+    uint8_t          raw[UDX_MTU + 1] = {};                         // raw data
 
     /* META */
     int64_t          time_us = 0;       // receive timestamp(us)
-    void*            ex      = nullptr; // extension
+    void*            user_ex = nullptr; // user's extension data
 
 
     /// @brief Default constructor.
@@ -35,19 +35,19 @@ struct Frame {
     /// @param addrlen  remote address' length
     explicit Frame(const sockaddr_storage* addr, socklen_t addrlen)
         : namelen(addrlen) {
-        ASSERT(addr && addrlen >= sizeof(sockaddr))
+        ASSERT(addr && addrlen >= sizeof(sockaddr) && addrlen <= sizeof(sockaddr_storage))
         ::memcpy(&name, addr, addrlen);
     }
 
 
     /// @brief Copy constructor
     explicit Frame(const Frame& f)
-        : len(f.len)
+        : rawlen(f.rawlen)
         , namelen(f.namelen)
         , time_us(f.time_us)
-        , ex(f.ex) {
+        , user_ex(f.user_ex) {
         ::memcpy(&name, &f.name, namelen);
-        ::memcpy(raw, f.raw, len);
+        ::memcpy(raw, f.raw, rawlen);
     }
 
 
@@ -114,9 +114,9 @@ public:
     }
 
 
-    /// @brief Event's reference
-    TEvent& ev() {
-        return svc_;
+    /// @brief Event's pointer
+    TEvent* ev() {
+        return ev_;
     }
 
 
@@ -233,6 +233,8 @@ public:
     /// @param addrlen [in | out]
     /// @return 
     int local_addr(sockaddr* addr, socklen_t* addrlen) const {
+        ASSERT(addr && addrlen)
+
         if (sockfd_ == INVALID_SOCKET) {
             return -1;
         }
@@ -243,15 +245,14 @@ public:
 
     /// @brief Get string of local address
     std::string local_addr_str() const {
-        sockaddr_storage addr;
-        socklen_t addrlen = sizeof(addr);
-        ::memset(&addr, 0, addrlen);
+        sockaddr_storage addr    = {};
+        socklen_t        addrlen = sizeof(addr);
 
         if (local_addr((sockaddr*)&addr, &addrlen)) {
             return "";
         }
 
-        char buf[ENDPOINT_STR_LEN] = {0};
+        char buf[ENDPOINT_STR_LEN] = {};
         if (addr2str(&addr, buf, ENDPOINT_STR_LEN)) {
             return "";
         }
@@ -282,8 +283,8 @@ private:
 
     /// @brief Receive thread
     void _rcv_thread() {
-        constexpr int       RCVMMSG_SIZE    = 128;
-        constexpr timeval   TIMEOUT         = { .tv_sec = 0, .tv_usec = 200 * 1000};
+        constexpr int     RCVMMSG_SIZE = 128;
+        constexpr timeval TIMEOUT      = { .tv_sec = 0, .tv_usec = 200 * 1000};
 
         ASSERT(!::setsockopt(sockfd_, SOL_SOCKET, SO_RCVTIMEO, &TIMEOUT, sizeof(TIMEOUT)));
 
@@ -291,14 +292,11 @@ private:
 
         ev_->on_run(this);
 
-        mmsghdr msgs[RCVMMSG_SIZE];
-        msghdr* hdr;
-        ::memset(msgs, 0, sizeof(msgs));
+        mmsghdr    msgs[RCVMMSG_SIZE]   = {};
+        iovec      iovecs[RCVMMSG_SIZE] = {};
+        Frame::ptr pfms[RCVMMSG_SIZE]   = {};
 
-        iovec iovecs[RCVMMSG_SIZE];
-        ::memset(iovecs, 0, sizeof(iovecs));
-
-        Frame::ptr pfms[RCVMMSG_SIZE] = {nullptr};
+        msghdr*    hdr;
         Frame::ptr pfm;
 
         int i, n, err;
@@ -335,9 +333,9 @@ private:
             now_us = sys_time();
 
             for (i = 0; i < n; i++) {
-                pfm = pfms[i];
+                pfm          = pfms[i];
+                pfm->rawlen  = msgs[i].msg_len;
                 pfm->time_us = now_us;
-                pfm->len = msgs[i].msg_len;
             }
 
             ev_->on_recv(this, pfms, n);
@@ -353,7 +351,7 @@ private:
                 iovecs[i].iov_base  = pfm->raw;
                 iovecs[i].iov_len   = sizeof(pfm->raw);
             }
-        }
+        } // while(sockfd_ != INVALID_SOCKET);
 
         for (i = 0; i < RCVMMSG_SIZE; i++) {
             delete pfms[i];
@@ -369,13 +367,12 @@ private:
         constexpr int SNDMMSG_SIZE  = 128;
         constexpr int TIMEOUT       = 200 * 1000;
 
-        mmsghdr msgs[SNDMMSG_SIZE];
-        msghdr* hdr;
-        ::memset(msgs, 0, sizeof(msgs));
+        mmsghdr    msgs[SNDMMSG_SIZE]   = {};
+        iovec      iovecs[SNDMMSG_SIZE] = {};
+        Frame::ptr pfms[SNDMMSG_SIZE]   = {};
 
-        iovec iovecs[SNDMMSG_SIZE];
+        msghdr*    hdr;
         Frame::ptr pfm;
-        Frame::ptr pfms[SNDMMSG_SIZE] = {nullptr};
 
         int err;
         size_t i, n;
@@ -391,7 +388,7 @@ private:
                 hdr->msg_iov        = &iovecs[i];
                 hdr->msg_iovlen     = 1;
                 iovecs[i].iov_base  = pfm->raw;
-                iovecs[i].iov_len   = pfm->len;
+                iovecs[i].iov_len   = pfm->rawlen;
             }
 
             if (n > 0) {
@@ -423,16 +420,15 @@ private:
             if (n == 0) {
                 continue;
             }
-
-            if (n < 0) {
+            else if (n < 0) {
                 err = errcode;
             }
-            else if (n > UDP_MTU) {
+            else if (n > UDX_MTU) {
                 err = -1;
             }
             else {
                 err = 0;
-                pfm->len = n;
+                pfm->rawlen = n;
                 pfm->time_us = sys_time();
             }
 
@@ -454,13 +450,13 @@ private:
         int         err;
         size_t      n, i;
         Frame::ptr  pfm;
-        Frame::ptr  pfms[FRM_SIZE];
+        Frame::ptr  pfms[FRM_SIZE] = {};
 
         while (sockfd_ != INVALID_SOCKET) {
             n = snd_que_.wait_dequeue_bulk_timed(pfms, FRM_SIZE, TIMEOUT);
             for (i = 0; i < n; i++) {
                 pfm = pfms[i];
-                err = ::sendto(sockfd_, (char*)pfm->raw, pfm->len, 0, (sockaddr*)&pfm->name, pfm->namelen);
+                err = ::sendto(sockfd_, (char*)pfm->raw, pfm->rawlen, 0, (sockaddr*)&pfm->name, pfm->namelen);
                 ev_->on_send(this, err >= 0 ? 0 : errcode, pfm);
                 delete pfm;
             }

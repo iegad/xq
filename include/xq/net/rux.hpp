@@ -14,7 +14,7 @@ namespace net {
 constexpr int     RUX_FRM_EX_SIZE     = 10;
 constexpr int     RUX_SEG_HDR_SIZE    = 13;                                                                 // cmd[1] + sn[6] + us[6];
 constexpr int     RUX_SEG_HDR_EX_SIZE = 3;                                                                  // len[2] + frg[1]
-constexpr int     RUX_MSS             = UDP_MTU - RUX_FRM_EX_SIZE - RUX_SEG_HDR_SIZE - RUX_SEG_HDR_EX_SIZE; // RUX Maximum segment size
+constexpr int     RUX_MSS             = UDX_MTU - RUX_FRM_EX_SIZE - RUX_SEG_HDR_SIZE - RUX_SEG_HDR_EX_SIZE; // RUX Maximum segment size
 constexpr int     RUX_CMD_ACK         = 0x11;                                                               // CMD: ACK
 constexpr int     RUX_CMD_PIN         = 0x12;                                                               // CMD: Heart's beat: Ping
 constexpr int     RUX_CMD_CON         = 0x13;                                                               // CMD: Connection
@@ -71,6 +71,13 @@ public:
     }
 
 
+    /// @brief Encode rux's header.
+    /// @param buf 
+    /// @param buflen 
+    /// @param rid 
+    /// @param wnd 
+    /// @param una 
+    /// @return Size of header on success or -1 on failure.
     static int encode_hdr(uint8_t* buf, socklen_t buflen, uint32_t rid, uint8_t wnd, int64_t una) {
         ASSERT(buf && buflen >= RUX_FRM_EX_SIZE);
 
@@ -326,12 +333,12 @@ public:
     /// @param pfm Raw frame
     /// @return 0 on success or -1 on failure.
     int input(Frame::ptr pfm) {
-        ASSERT(pfm && pfm->ex == this);
+        ASSERT(pfm && pfm->user_ex == this);
 
         int ret        = -1;
         int err        = 0;
 
-        int datalen    = pfm->len;
+        int datalen    = pfm->rawlen;
         uint8_t* p     = pfm->raw;
         int64_t now_us = pfm->time_us - base_us_;
 
@@ -662,7 +669,7 @@ public:
 
                 do {
                     if (nleft < RUX_SEG_HDR_SIZE + RUX_FRM_EX_SIZE) {
-                        pfm->len = int16_t(p - pfm->raw);
+                        pfm->rawlen = int16_t(p - pfm->raw);
 
                         pfms[npfms++] = pfm = new Frame(&addr_, addrlen_);
                         ASSERT(pfm);
@@ -714,7 +721,7 @@ public:
                 pseg = psh_itr->second;
 
                 if (nleft < RUX_SEG_HDR_EX_SIZE + RUX_SEG_HDR_SIZE + (int)pseg->len) {
-                    pfm->len = int16_t(p - pfm->raw);
+                    pfm->rawlen = int16_t(p - pfm->raw);
 
                     if (npfms == snd_wnd) {
                         break;
@@ -795,7 +802,7 @@ public:
         lkr_.unlock();
 
         if (ret == 0 && npfms > 0) {
-            pfm->len = int16_t(p - pfm->raw);
+            pfm->rawlen = int16_t(p - pfm->raw);
             ASSERT(snd_que_.enqueue_bulk(pfms, npfms));
         }
 

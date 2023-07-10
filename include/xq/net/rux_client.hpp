@@ -47,7 +47,7 @@ public:
 
         for (int i = 0; i < n; i++) {
             pfm = pfms[i];
-            if (pfm->len <= UDP_MTU) {
+            if (pfm->rawlen <= UDX_MTU) {
                 do {
                     if (addr2str(&pfm->name, endpoint, ENDPOINT_STR_LEN)) {
                         break;
@@ -59,7 +59,7 @@ public:
                     }
 
                     Rux::ptr rux = itr->second;
-                    pfm->ex = rux;
+                    pfm->user_ex = rux;
                     if (rux->input(pfm)) {
                         break;
                     }
@@ -102,7 +102,7 @@ public:
             }
 
             Rux::ptr rux = itr->second;
-            pfm->ex = rux;
+            pfm->user_ex = rux;
             if (rux->input(pfm)) {
                 break;
             }

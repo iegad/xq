@@ -96,7 +96,7 @@ extern "C" {
 #define IPV6_HDR_SIZE       (40)                                            // IPv6 Header size
 #define UDP_HDR_SIZE        (8)                                             // UDP Header size
 #define ETH_FRM_SIZE        (1500)                                          // Ethernet payload size
-#define UDP_MTU             (ETH_FRM_SIZE - UDP_HDR_SIZE - IPV6_HDR_SIZE)   // RUX Maximum Transmission Unit: 1452
+#define UDX_MTU             (ETH_FRM_SIZE - UDP_HDR_SIZE - IPV6_HDR_SIZE)   // Udx Maximum Transmission Unit: 1452
 #define ENDPOINT_STR_LEN    (INET6_ADDRSTRLEN + 7)                          // Endpoint' string max size
 
 
