@@ -21,7 +21,7 @@ constexpr int     RUX_CMD_CON         = 0x13;                                   
 constexpr int     RUX_CMD_PSH         = 0x14;                                                               // CMD: Push
 constexpr int     RUX_RID_MAX         = 100000;                                                             // Maximum rux id
 constexpr int     RUX_RWND_MAX        = 64;                                                                 // Maximum receive window size
-constexpr int     RUX_SWND_MAX        = 3;                                                                  // Maximum send window size
+constexpr int     RUX_SWND_MAX        = 1;                                                                  // Maximum send window size
 constexpr int     RUX_SWND_MIN        = 1;                                                                  // Minimun send window size
 constexpr int64_t RUX_SN_MAX          = 0x0000FFFFFFFFFFFF;                                                 // Maximum sequnce number
 constexpr int64_t RUX_US_MAX          = 0x0000FFFFFFFFFFFF;                                                 // Maximum timestamp(us)
@@ -367,6 +367,24 @@ public:
                 break;
             }
 
+            int64_t rtt = now_us - itr->second->us + 1;
+            if (rtt > 0) {
+                if (srtt_ == 0) {
+                    srtt_ = rtt;
+                    rttval_ = rtt >> 1;
+                }
+                else {
+                    int64_t delta = rtt - srtt_;
+                    if (delta < 0) {
+                        delta = -delta;
+                    }
+
+                    rttval_ = (3 * rttval_ + delta) >> 2;
+                    srtt_ = (7 * srtt_ + rtt) >> 3;
+                }
+                rto_ = MID(RUX_RTO_MIN, srtt_ + rttval_ * 4, RUX_RTO_MAX);
+            }
+
             delete itr->second;
             snd_buf_.erase(itr);
         }
@@ -406,7 +424,6 @@ public:
 
                         delete ack_itr->second;
                         snd_buf_.erase(ack_itr);
-
                         if (rtt > 0) {
                             if (srtt_ == 0) {
                                 srtt_ = rtt;
@@ -421,7 +438,6 @@ public:
                                 rttval_ = (3 * rttval_ + delta) >> 2;
                                 srtt_ = (7 * srtt_ + rtt) >> 3;
                             }
-
                             rto_ = MID(RUX_RTO_MIN, srtt_ + rttval_ * 4, RUX_RTO_MAX);
                         }
                     }
@@ -752,6 +768,8 @@ public:
 
                         needsnd = 1;
                         xmit_++;
+                        ssthresh_ = cwnd_ >> 1;
+                        cwnd_ = 1;
                     }
                     else if (pseg->fastack >= RUX_FAST_ACK) {
                         DLOG("+++++ SN[%lu] fastack\n", pseg->sn);
@@ -761,6 +779,7 @@ public:
 
                         needsnd = 1;
                         xmit_++;
+                        cwnd_ -= 3;
                     }
                     else if (pseg->sn == 0) {
                         break;
@@ -787,6 +806,14 @@ public:
                     nleft -= n;
 
                     needsnd = 0;
+                }
+
+                if (cwnd_ < RUX_SWND_MIN) {
+                    cwnd_ = RUX_SWND_MIN;
+                }
+
+                if (cwnd_ > snd_wnd) {
+                    snd_wnd = cwnd_;
                 }
 
                 psh_itr++;

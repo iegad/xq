@@ -54,6 +54,8 @@ public:
     }
 
 
+    /// @brief 获取服务引用
+    /// @return 
     TService& service() {
         return service_;
     }
@@ -182,7 +184,10 @@ public:
 
 #endif
 
-
+    /// @brief 发送事件
+    /// @param  
+    /// @param err 
+    /// @param  
     void on_send(UDX*, int err, Frame::ptr) {
         if (err) {
             // TODO:
